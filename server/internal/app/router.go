@@ -27,6 +27,37 @@ type Deps struct {
 	StaticFS fs.FS
 }
 
+// allowedMethods 是「路由 pattern → 允许方法」的静态映射。
+// chi 的默认 405 处理器会自动回填 Allow 头；一旦自定义 MethodNotAllowed 就必须自己补，
+// 否则响应缺少 Allow，与契约 §6.1 的「405 + Allow + JSON 外壳」不一致。
+var allowedMethods = map[string]string{
+	contract.RouteBuilds:    "GET, POST",
+	contract.RouteStage:     "POST",
+	contract.RouteBuildByID: "GET",
+	contract.RouteBuildFile: "GET",
+}
+
+// allowedMethodsFor 返回该请求应回填的 Allow 值。
+// 优先用 chi 已匹配的 pattern；方法不匹配时 chi 不会设置 pattern，退回按 URL 路径推导（第一版只有 4 条路径）。
+func allowedMethodsFor(req *http.Request) string {
+	if pattern := chi.RouteContext(req.Context()).RoutePattern(); pattern != "" {
+		if allow, ok := allowedMethods[pattern]; ok {
+			return allow
+		}
+	}
+	path := strings.TrimSuffix(req.URL.Path, "/")
+	switch {
+	case path == contract.RouteBuilds:
+		return "GET, POST"
+	case path == contract.RouteStage:
+		return "POST"
+	case strings.HasPrefix(path, contract.RouteBuilds+"/"):
+		return "GET"
+	default:
+		return "GET"
+	}
+}
+
 // NewRouter 组装完整 HTTP 处理链。
 func NewRouter(d Deps) http.Handler {
 	r := chi.NewRouter()
@@ -40,14 +71,14 @@ func NewRouter(d Deps) http.Handler {
 	})
 	r.Get(contract.RouteHealth, middleware.Wrap(d.Health.Health))
 
-	// 方法不匹配与未知路径都统一走错误格式化；未知 API 绝不回 index.html。
+	// 方法不匹配统一回 405 + Allow + JSON 外壳。
 	r.MethodNotAllowed(func(w http.ResponseWriter, req *http.Request) {
+		w.Header().Set("Allow", allowedMethodsFor(req))
 		handler.WriteError(w, req, handler.MethodNotAllowed("请求方法不支持"))
 	})
-	r.NotFound(func(w http.ResponseWriter, req *http.Request) {
-		handler.WriteError(w, req, handler.NotFound("接口不存在"))
-	})
-	r.HandleFunc("/*", spaHandler(d.StaticFS))
+	// 未命中任何路由（含 /、/upload、/d/{id}）交给 SPA fallback：
+	// 不用 "/*" 通配，避免它抢走「路径存在但方法不允许」的请求、把 405 变成 404。
+	r.NotFound(spaHandler(d.StaticFS))
 
 	// 错误中间件最后挂载：作为最外层包装，兜住全部 handler 的 panic。
 	return middleware.ErrorHandler(r)
@@ -69,6 +100,7 @@ func spaHandler(static fs.FS) http.HandlerFunc {
 			return
 		}
 		if r.Method != http.MethodGet && r.Method != http.MethodHead {
+			w.Header().Set("Allow", "GET")
 			handler.WriteError(w, r, handler.MethodNotAllowed("请求方法不支持"))
 			return
 		}

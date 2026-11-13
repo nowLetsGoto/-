@@ -288,7 +288,7 @@ graph LR
 | 10 | 点下载得到一致文件；Android `application/vnd.android.package-archive`；`.ipa` 得 `application/octet-stream`；中文下载名双重编码不乱码 | P0-6、§6.5⑤ |
 | 11 | **成功下载 1 次后列表与下载页均显示 1**；**模拟客户端中断 / copy 出错 / 字节不足时计数不变**；浏览/扫码/复制/404 不增加；故意让计数失败仍成功下载 | P0-10、§6.7 |
 | 12 | **重启服务 / 重建容器后**包仍可查可下载；`pg_dump` 备份 + `pg_restore` 恢复可用 | N6、§10.3 |
-| 13 | 非法环境 / 超限 / 平台×扩展名不一致 / token 失效分别 400 / 413 / 400 / 400，且 `tmp/` 无残留；1 小时孤儿文件被清理 | P0-7、stage 治理 |
+| 13 | 非法环境 / 超限 / 平台×扩展名不一致 / token 失效 / **commit 请求体含未知字段**（`file` / `metaSource` / `touchedFields` 任一）分别 **400 / 413 / 400 / 400 / 400**（未知字段文案固定为「请求体包含未知字段（仅允许 stageToken/environment/platform/appName/packageId/version/buildNumber/changelog）」）；**正常 8 字段 → 201**；且 `tmp/` 无残留；1 小时孤儿文件被清理 | P0-7、stage 治理、D-2 |
 | 14 | `make gen:api` 重生成后 `git diff --exit-code` 通过；`go test ./...` 通过；**把 yaml `pre` 改成 `pre2` 契约测试必须失败**；全仓搜 `'hotfix'` **只允许 4 处**：`api/openapi.yaml`（SSOT）、`web/src/api/schema.d.ts`（生成物）、`server/internal/contract/contract.go`（Go 常量镜像，需注释标注来源）、`web/src/utils/format.ts`（前端标签镜像，需注释标注来源）；后两处由契约测试校验一致；**禁止**出现在其他业务代码 / SQL / 页面 / 部署配置 | ADR-07（主理人裁决：不新增代码生成器） |
 | 15 | **push 相关代码行数 = 0**：无 Publisher/EventBus/Event 类型、无 outbox/events/subscriptions 表、无预留列、无 MQ、无 `TODO`；**`CGO_ENABLED=0 go build` 成功（无 cgo）**；无外部命令解析 | §11、§6 |
 | 16 | **负面清单逐条核对**：无 `apps`/`upd_bundles`/`modules` 表与判别列、无占位菜单/空页面/空目录、`/d/:id` 路径与二维码内容未被板块化改动、列表页无二维码入口、依赖与 §3 完全一致、`contract/urls.go` 与 `/builds/parse` 均不存在 | §6 负面清单 |

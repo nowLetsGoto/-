@@ -46,7 +46,7 @@ Makefile                 gen:api / dev / build / test / up / down
 
 ## 3. 快速开始（本地）
 
-前置：Go 1.22+、Node 20+、Docker（仅用于起 PostgreSQL 16）。
+前置：Go 1.22+、Node 20+、PostgreSQL 16+（用 Docker 起，或用本机已装实例，见下）。
 
 ```bash
 docker compose -f deploy/docker-compose.yml up -d db   # 必须先起数据库
@@ -59,6 +59,22 @@ make dev                                               # 同时起 :8080（Go）
 - 手机扫码请访问 `PUBLIC_BASE_URL` 指向的**局域网地址**（Vite 已监听 `0.0.0.0`），并确保手机与开发机同网段、防火墙放行 5173。
 - 契约变更后执行 `make gen:api` 重生成 `web/src/api/schema.d.ts` 并提交入库；生成物入库后，前端 dev 不需要 Go、后端 build 不需要 Node。
 - 纯静态自检：`make test`（Go 契约一致性测试）、`npm --prefix web run build`（前端类型检查 + 构建）。
+
+### 无 Docker：使用本机 PostgreSQL
+
+本机已装 PostgreSQL 时不必用 Docker。**建表 DDL 已 `//go:embed` 进二进制、进程启动时幂等执行**，所以只需先建一个空库，**不需要手工导入 `schema.sql`**：
+
+```bash
+createdb dandelion                                     # 本机 PostgreSQL 已有实例时
+export DATABASE_URL="postgres://$(whoami)@localhost:5432/dandelion?sslmode=disable"
+export PUBLIC_BASE_URL="http://<你的局域网IP>:5173"
+npm --prefix web install
+make dev
+```
+
+- 若本机 PG 需要密码或使用非默认端口，把 `DATABASE_URL` 换成实际凭证与端口（如 `postgres://user:pass@localhost:5433/dandelion?sslmode=disable`）。
+- `GO_ENV=development` 下 `PUBLIC_BASE_URL` 允许填本机地址，但下载页会提示「当前对外基址不可被手机访问」；**要让手机扫码，必须填开发机的局域网 IP**（见 §4 的三场景表）。
+- 只想跑后端、不启 Vite：先 `npm --prefix web run build` 生成 `server/public/`，再 `cd server && go run ./cmd/server`（DDL 与静态资源都已内嵌，不依赖当前工作目录）；或直接 `make build && ./bin/dandelion`，用单进程跑全部。
 
 生产/单机一键构建（顺序不可颠倒，Go 的 `//go:embed public/*` 需要前端产物先存在）：
 

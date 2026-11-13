@@ -52,7 +52,7 @@
 | `cmd/server/main.go` | **装配层**：读配置 → 建 DB 连接池 → 注入 → 启 HTTP → 优雅退出 | 环境变量、`config` | 运行中的进程 | 不写业务逻辑、不写 SQL、不做参数校验 |
 | `embed.go` | 前端产物编译期绑定（`//go:embed public/*`） | `server/public/` 构建产物 | `embed.FS` | 不读环境变量、不访问磁盘、不含业务；**只能放在 `public/` 同级包内**（`embed` 指令技术约束，属合规例外，见 §8-D2） |
 | `internal/app/router.go` | 路由表、静态托管、SPA fallback、挂载中间件 | handler、middleware、`embed.FS` | `http.Handler` | 不做业务判断、不写 SQL、不拼磁盘路径 |
-| `internal/handler/*.go` | **HTTP 语义**：取参、校验、调 service、设响应头/状态码 | `*http.Request`、service | 响应 JSON / 二进制流 | **不写 SQL**、不拼文件系统路径、不调 repository/parser、不直接 `os.Open` |
+| `internal/handler/*.go` | **HTTP 语义**：取参、校验、调 service、设响应头/状态码 | `*http.Request`、service | 响应 JSON / 二进制流 | **禁止**：写 SQL、调 `parser`、自行拼接或信任客户端传入的路径、做业务规则判断。**流式 I/O 与探活属允许的例外，见下方专段** |
 | `internal/service/*.go` | **业务编排**：stage/commit 流程、字段兜底、失败补偿、URL 生成、计数旁路 | handler 传入的 DTO、repository/parser/storage | 领域对象（`Build` 等） | **不触碰 `*http.Request` / `http.ResponseWriter`**、不写 SQL、不解析 multipart |
 | `internal/repository/*.go` | **唯一 SQL 出入口**、行 ↔ DTO 映射 | 连接池、查询条件 | DTO / 受影响行数 | **不调 service**、不做业务校验、不碰文件系统、不生成 URL |
 | **`internal/repository/schema.sql`** | **DDL 唯一来源**：`builds` 表 + 索引，`//go:embed` 进二进制、启动幂等执行（不依赖 CWD） | — | 表结构 | 不放业务查询 SQL（查询在 `build_repository.go`）、不含环境相关密码、不做数据迁移 |
@@ -64,6 +64,15 @@
 | `public/` | 前端构建产物（`npm run build` 输出） | — | — | **不手写**、不入库（保留兜底 `index.html`） |
 
 **后端四条硬约束**：① handler 无 SQL；② repository 不调 service；③ parser 不落盘/不写库/不碰 HTTP；④ service 不碰 `*http.Request`/`ResponseWriter`。
+
+**handler 允许的例外（第一版，含边界与前提 —— 避免以后误判为越界）**
+
+| 例外 | 允许做什么 | 前提 / 边界 | 仍然禁止 |
+| --- | --- | --- | --- |
+| **流式 I/O** | `stage` 用 `os.OpenFile` 把 multipart 流直接写入 `storage/tmp/`；`download` 用 `os.Open` + `io.Copy` 流式输出 | **路径必须由 `storage.Paths` 生成**，且**存在性/安全校验（含 `safeResolve` 前缀校验）已由 `service` 完成**；handler 不得自行拼接路径、**不得信任客户端传入的路径** | 不得在 handler 内决定落盘目录、不得跳过 service 的校验后直接落盘 |
+| **健康探活** | `health_handler` 直接访问 `repository` 取 `dbOk` / `storageWritable` | 探活**不属于业务编排**、不经 service；`repository.DB()` **仅为探活暴露**，不得在 handler 中用它执行业务查询 | 不得借此在 handler 内查业务数据、不得执行业务 SQL |
+
+> **判定口径**：handler 可以「搬运字节」与「报告依赖状态」，**但不可以「决定业务规则」**。凡涉及枚举合法性、平台×扩展名一致性、token 有效期、字段兜底、元数据变更，一律在 `service`。若不满足上表「前提」列，即视为越界。
 
 **特殊情况说明（4 项，均属合规，不是越界）**
 

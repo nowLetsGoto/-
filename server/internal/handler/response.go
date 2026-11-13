@@ -10,10 +10,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"log"
 	"net/http"
 	"os"
+	"strings"
 
 	"dandelion/server/internal/contract"
 )
@@ -122,12 +122,18 @@ func cleanupStageFiles(r *http.Request) {
 	}
 }
 
-// DecodeJSON 限制请求体大小并解码，避免超大 JSON 打满内存。
+// DecodeJSON 限制请求体大小、拒绝未知字段并解码。
+// 契约里 CommitBuildRequest 声明了 additionalProperties: false，这里用 DisallowUnknownFields 把它落实：
+// 多传 file / metaSource / touchedFields 等一律 400，而不是被静默忽略后照常 201。
 func DecodeJSON(w http.ResponseWriter, r *http.Request, target any) error {
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(target); err != nil {
-		return BadRequest(fmt.Sprintf("请求体不是合法的 JSON: %v", err))
+		if strings.Contains(err.Error(), "unknown field") {
+			return BadRequest("请求体包含未知字段（仅允许 stageToken/environment/platform/appName/packageId/version/buildNumber/changelog）")
+		}
+		return BadRequest("请求体不是合法的 JSON")
 	}
 	return nil
 }

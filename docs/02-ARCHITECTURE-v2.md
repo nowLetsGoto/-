@@ -155,7 +155,7 @@ flowchart TB
 | `web/src/api/` | HTTP 请求、FormData、统一解包、**消费**服务端返回的 URL | **不拼 origin**、不写业务判断、不缓存 |
 | `web/src/pages/` | 一个页面：取数 → 三态渲染 → 交互 | 不直接 `fetch`、不拼 API 路径字符串 |
 | `web/src/components/` | 纯展示 / 纯输入（含三段式 Layout 与导航数组） | 不发请求、不持有跨页状态、不写占位菜单 |
-| `handler/` | HTTP 语义：取参、校验、调 service、设头与状态码 | 不写 SQL、不拼磁盘路径、不直接操作文件 |
+| `handler/` | HTTP 语义：取参、校验、调 service、设头与状态码 | 不写 SQL、不调 `parser`、不拼磁盘路径、不信任客户端传入路径、不做业务规则判断。**例外（第一版允许，须满足前提）**：① 为流式 I/O 可直接读写**由 `storage.Paths` 生成、且存在性/安全校验已由 `service` 完成**的路径（stage 写 tmp、download 流式输出）；② `health_handler` 可直接访问 `repository` 探活（`dbOk` / `storageWritable`，`repository.DB()` 仅为此暴露）。**不满足前提即越界**，详见 `06-FOLDER-LAYOUT.md §3`「handler 允许的例外」 |
 | `app/router.go` | 路由注册、静态托管、SPA fallback、挂载错误中间件 | 不做业务判断 |
 | `middleware/error.go` | 统一错误格式化、panic 恢复、失败时清理 tmp | 不做业务判断 |
 | `service/` | 业务编排：stage 暂存 → 解析 → 返回 token；提交：token 校验 → rename → 写库 → **生成 3 个 URL** → 计数旁路 | 不写 SQL（交 repository）、不解析 multipart（交 handler）、不拼路径（交 storage） |
@@ -614,11 +614,13 @@ interface ApiResponse<T> { code: number; data: T | null; message: string }
 
 | HTTP / code | 触发 | 示例 message |
 | --- | --- | --- |
-| 400 | 缺文件 / 环境或平台缺失或非法 / 平台×扩展名不一致 / 字段超长 / `stageToken` 非法·过期·文件不存在 | `请选择 .apk 或 .ipa 文件` / `环境参数不合法` / `暂存文件已失效，请重新选择文件` |
+| 400 | 缺文件 / 环境或平台缺失或非法 / 平台×扩展名不一致 / 字段超长 / `stageToken` 非法·过期·文件不存在 / **请求体含未知字段**（见下方 400 子项） | `请选择 .apk 或 .ipa 文件` / `环境参数不合法` / `暂存文件已失效，请重新选择文件` / `请求体包含未知字段（仅允许 stageToken/environment/platform/appName/packageId/version/buildNumber/changelog）` |
 | 404 | 包不存在、文件缺失、路径校验失败 | `包不存在或已被移除` |
 | 405 | 方法不匹配（chi 自动带 Allow 头） | `请求方法不支持` |
 | 413 | 超过 `MAX_UPLOAD_MB`（默认 200） | `文件超过 200 MB 上限` |
 | 500 | 写 tmp / 写文件 / 写库 / 未预期错误 | `服务内部错误，请稍后重试`（日志保留 id/环境/平台/文件名） |
+
+> **400 子项 · 请求体未知字段**：`POST /api/v1/builds` 的 JSON 若出现 **8 字段之外的任何键**（如 `file` / `metaSource` / `touchedFields`），返回 **400**，`message` 固定为「请求体包含未知字段（仅允许 stageToken/environment/platform/appName/packageId/version/buildNumber/changelog）」。依据：契约 `CommitBuildRequest.additionalProperties: false` + 服务端 `json.Decoder.DisallowUnknownFields()`。响应仍为统一 `{code:400,data:null,message}`。
 
 ### 6.2 接口总表
 
@@ -661,7 +663,7 @@ interface ApiResponse<T> { code: number; data: T | null; message: string }
 
 > **PRD 的 8 个字段定义**（Android：应用名 / `applicationId` / `versionName` / `versionCode`；iOS：`CFBundleDisplayName`或`CFBundleName` / `CFBundleIdentifier` / `CFBundleShortVersionString` / `CFBundleVersion`）按平台**各取 4 个**，统一映射到 `ParsedMeta` 的 4 个规范字段，映射表见 §6.6。
 
-**`CommitBuildRequest`（提交契约，恰好 8 个字段，无文件、无 touched 标记）**：`stageToken` / `environment` / `platform` / `appName` / `packageId` / `version` / `buildNumber` / `changelog`。**表单即唯一真值**：服务端直接采用这组值，不再解析、不合并、不覆盖；`metaSource` 由服务端派生，不进入请求。
+**`CommitBuildRequest`（提交契约，恰好 8 个字段，无文件、无 touched 标记）**：`stageToken` / `environment` / `platform` / `appName` / `packageId` / `version` / `buildNumber` / `changelog`。**表单即唯一真值**：服务端直接采用这组值，不再解析、不合并、不覆盖；`metaSource` 由服务端派生，不进入请求。**契约的运行时保证**：`additionalProperties: false`，服务端启用 `json.Decoder.DisallowUnknownFields()`，出现 8 字段之外的任何键（如 `file` / `metaSource` / `touchedFields`）一律返回 **400**（文案见 §6.1 的 400 子项）——即「多传字段」不会被静默忽略。
 
 ### 6.4 ★ URL 生成规则（Q2 硬约束的落地点）★
 
