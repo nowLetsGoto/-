@@ -1,0 +1,285 @@
+/**
+ * 上传页（P-01）。
+ * 职责：选文件触发 stage、按 touched 优先级带出解析值、表单始终可编辑、一次点击完成发布、成功卡片。
+ * 输入：用户选中的 .apk / .ipa 与表单值；输出：stage / commit 两个请求与成功后的绝对下载地址。
+ * 边界：touched 只是前端本地 UI 状态，不进入 API 契约；commit 只发 8 字段 JSON，不携带文件与 metaSource；
+ *       stage 对用户透明，不是两步发布，用户全程只点一次「上传并发布」；不提供上传后编辑。
+ */
+import { useRef, useState } from 'react';
+import type { FormEvent } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
+import type { Build, CommitBuildRequest, Environment, Platform, StageResult } from '../api/builds';
+import { commitBuild, isShareableUrl, stageBuild } from '../api/builds';
+import { ApiError, errorMessage } from '../api/client';
+import { FileDropzone } from '../components/FileDropzone';
+import { ENVIRONMENTS, PLATFORMS, platformFromFileName } from '../utils/format';
+
+type ParsedField = 'appName' | 'packageId' | 'version' | 'buildNumber';
+type TextField = ParsedField | 'changelog';
+const PARSED_FIELDS: ReadonlyArray<ParsedField> = ['appName', 'packageId', 'version', 'buildNumber'];
+
+interface FormState {
+  environment: Environment;
+  platform: Platform;
+  appName: string;
+  packageId: string;
+  version: string;
+  buildNumber: string;
+  changelog: string;
+}
+
+const EMPTY_FORM: FormState = {
+  environment: 'test',
+  platform: 'android',
+  appName: '',
+  packageId: '',
+  version: '',
+  buildNumber: '',
+  changelog: '',
+};
+
+export function UploadPage(): JSX.Element {
+  const navigate = useNavigate();
+  const [form, setForm] = useState<FormState>(EMPTY_FORM);
+  // touched 是前端局部状态，仅用于 stage 异步返回时不覆盖用户已输入字段；不进 API 契约、服务端不做合并。
+  const touchedRef = useRef<Set<TextField>>(new Set());
+  const [file, setFile] = useState<File | null>(null);
+  const [stageToken, setStageToken] = useState('');
+  const [parsing, setParsing] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [warnings, setWarnings] = useState<ReadonlyArray<string>>([]);
+  const [error, setError] = useState('');
+  const [created, setCreated] = useState<Build | null>(null);
+  const [copied, setCopied] = useState(false);
+
+  const setField = (key: keyof FormState, value: string): void => {
+    if (key !== 'environment' && key !== 'platform') {
+      touchedRef.current.add(key as TextField);
+    }
+    setForm((previous) => ({ ...previous, [key]: value }));
+  };
+
+  const handleSelect = async (selected: File, hint: Platform | null): Promise<void> => {
+    setFile(selected);
+    setCreated(null);
+    setError('');
+    setWarnings([]);
+    setStageToken('');
+    setParsing(true);
+    if (hint) {
+      setForm((previous) => ({ ...previous, platform: hint }));
+    }
+    try {
+      const result: StageResult = await stageBuild(selected);
+      setStageToken(result.stageToken);
+      setWarnings(result.warnings);
+      // 仅未 touched 的字段填入解析值；用户改过的字段即便重新选文件也不被覆盖。
+      setForm((previous) => {
+        const next = { ...previous };
+        for (const key of PARSED_FIELDS) {
+          if (!touchedRef.current.has(key)) {
+            next[key] = result.parsed[key];
+          }
+        }
+        return next;
+      });
+    } catch (err) {
+      setError(errorMessage(err));
+      setFile(null);
+    } finally {
+      setParsing(false);
+    }
+  };
+
+  const handleRemove = (): void => {
+    setFile(null);
+    setStageToken('');
+    setWarnings([]);
+    setError('');
+    setCreated(null);
+    setParsing(false);
+  };
+
+  const handleSubmit = async (event: FormEvent<HTMLFormElement>): Promise<void> => {
+    event.preventDefault();
+    if (!file || !stageToken) {
+      setError('请先选择 .apk 或 .ipa 文件');
+      return;
+    }
+    if (parsing) {
+      setError('正在识别包信息，请稍候');
+      return;
+    }
+    const hint = platformFromFileName(file.name);
+    if (hint && hint !== form.platform) {
+      setError('所选平台与文件类型不一致');
+      return;
+    }
+
+    setSubmitting(true);
+    setError('');
+    // 恰好 8 个字段：token + 表单最终值。不含文件、不含 metaSource（由服务端派生）。
+    const payload: CommitBuildRequest = {
+      stageToken,
+      environment: form.environment,
+      platform: form.platform,
+      appName: form.appName,
+      packageId: form.packageId,
+      version: form.version,
+      buildNumber: form.buildNumber,
+      changelog: form.changelog,
+    };
+    try {
+      // 表单即最终真值：这里不发文件，服务端也不会用解析值覆盖任何字段。
+      const build = await commitBuild(payload);
+      setCreated(build);
+    } catch (err) {
+      const message = errorMessage(err);
+      if (err instanceof ApiError && err.code === 400 && message.includes('暂存')) {
+        // token 失效：回到选文件步骤，让用户重新选择一次文件。
+        setFile(null);
+        setStageToken('');
+        setError(`${message}，请重新选择文件`);
+      } else {
+        setError(message);
+      }
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const copyText = async (text: string): Promise<void> => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 2000);
+    } catch {
+      setError('复制失败，请手动选中地址复制');
+    }
+  };
+
+  const resetAll = (): void => {
+    setForm(EMPTY_FORM);
+    touchedRef.current = new Set();
+    handleRemove();
+    setCopied(false);
+  };
+
+  if (created) {
+    return (
+      <section className="page page-narrow">
+        <div className="card success-card">
+          <h1>上传成功</h1>
+          <p className="muted">下载页绝对地址，可直接转发给同事：</p>
+          <div className="copy-row">
+            <input className="text-input" readOnly value={created.downloadPageUrl} aria-label="下载页地址" />
+            <button className="button button-primary" type="button" onClick={() => void copyText(created.downloadPageUrl)}>
+              {copied ? '已复制' : '复制地址'}
+            </button>
+          </div>
+          {!isShareableUrl(created.downloadPageUrl) ? (
+            <p className="notice">当前对外基址不可被手机访问，请配置 PUBLIC_BASE_URL 后再扫码</p>
+          ) : null}
+          <div className="actions">
+            {/* downloadPagePath 的唯一用途：react-router 内部跳转 */}
+            <button className="button button-primary" type="button" onClick={() => navigate(created.downloadPagePath)}>
+              去下载页
+            </button>
+            <Link className="button button-ghost" to="/">
+              返回列表
+            </Link>
+            <button className="button button-ghost" type="button" onClick={resetAll}>
+              再上传一个
+            </button>
+          </div>
+        </div>
+      </section>
+    );
+  }
+
+  return (
+    <section className="page page-narrow">
+      <div className="page-head">
+        <h1>上传 App 包</h1>
+        <Link className="button button-ghost" to="/">
+          包列表
+        </Link>
+      </div>
+
+      <form className="card form-card" onSubmit={(event) => void handleSubmit(event)}>
+        <div className="form-section">
+          <h2>1. 选择安装包</h2>
+          <FileDropzone file={file} disabled={parsing || submitting} onSelect={(f, p) => void handleSelect(f, p)} onRemove={handleRemove} />
+          {parsing ? <p className="notice">解析中… 正在识别应用名、包名与版本号</p> : null}
+          {warnings.length > 0 ? <p className="notice">部分信息未自动识别，可手动修正</p> : null}
+        </div>
+
+        <div className="form-section">
+          <h2>2. 必填信息</h2>
+          <label className="field-label">环境</label>
+          <div className="segmented">
+            {ENVIRONMENTS.map((item) => (
+              <button
+                key={item.value}
+                type="button"
+                className={form.environment === item.value ? 'segment segment-active' : 'segment'}
+                onClick={() => setField('environment', item.value)}
+                disabled={submitting}
+              >
+                {item.label}
+                <small>{item.value}</small>
+              </button>
+            ))}
+          </div>
+
+          <label className="field-label">平台</label>
+          <div className="segmented">
+            {PLATFORMS.map((item) => (
+              <button
+                key={item.value}
+                type="button"
+                className={form.platform === item.value ? 'segment segment-active' : 'segment'}
+                onClick={() => setField('platform', item.value)}
+                disabled={submitting}
+              >
+                {item.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div className="form-section">
+          <h2>3. 选填信息</h2>
+          <p className="muted">自动识别的字段始终可以修改；留空由服务端用文件名 / 占位值兜底。</p>
+          <div className="field-grid">
+            <label className="field">
+              <span>应用名</span>
+              <input className="text-input" maxLength={100} value={form.appName} onChange={(e) => setField('appName', e.target.value)} />
+            </label>
+            <label className="field">
+              <span>包名 / Bundle ID</span>
+              <input className="text-input" maxLength={100} value={form.packageId} onChange={(e) => setField('packageId', e.target.value)} />
+            </label>
+            <label className="field">
+              <span>版本号</span>
+              <input className="text-input" maxLength={50} value={form.version} onChange={(e) => setField('version', e.target.value)} />
+            </label>
+            <label className="field">
+              <span>构建号</span>
+              <input className="text-input" maxLength={50} value={form.buildNumber} onChange={(e) => setField('buildNumber', e.target.value)} />
+            </label>
+          </div>
+          <label className="field">
+            <span>更新说明</span>
+            <textarea className="text-input" rows={3} maxLength={2000} value={form.changelog} onChange={(e) => setField('changelog', e.target.value)} />
+          </label>
+        </div>
+
+        {error ? <p className="field-error" role="alert">{error}</p> : null}
+        <button className="button button-primary button-block" type="submit" disabled={parsing || submitting || !file || !stageToken}>
+          {submitting ? '正在发布…' : '上传并发布'}
+        </button>
+      </form>
+    </section>
+  );
+}

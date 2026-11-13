@@ -1,0 +1,248 @@
+# Dandelion · 多环境 App 包分发平台
+
+团队内部自建的 App 包分发工具：把 `.apk` / `.ipa` 按四个环境上传到指定位置，按「环境 + 平台」找得到，点开独立下载页能下载、能扫码转发。
+
+前后端同仓：`api/openapi.yaml` 是唯一契约 SSOT，`web/` 是唯一 npm 包，`server/` 是 Go module，根 `Makefile` 是唯一编排入口。
+
+> ⚠️ `docs/02-ARCHITECTURE.md` 与 `docs/03-TASKS.md` 是 v1（Node + SQLite）废弃设计，仅供历史追溯；实现一律以 `docs/02-ARCHITECTURE-v2.md` + `docs/03-TASKS-v2.md` 为准。
+
+---
+
+## 1. 第一版范围（10 条 P0）
+
+| 能力 | 说明 |
+| --- | --- |
+| 上传包 | 拖拽 / 点击选 `.apk`、`.ipa`，必选环境与平台，选填应用名、包名、版本号、构建号、更新说明 |
+| 按环境 + 平台查列表 | 四环境常驻切换 + 平台筛选（写进 URL，可转发），按上传时间倒序 |
+| 独立下载页 | `/d/:id` 长期可分享地址，直接打开 / 刷新都由 SPA fallback 兜住 |
+| 下载原始文件 | Android 返回 `application/vnd.android.package-archive`，iOS 返回 `application/octet-stream` |
+| 下载页二维码 | 内容为该包下载页的**绝对地址**，手机默认相机可扫 |
+| 自动解析 | APK/IPA 解析应用名、包名、版本号、构建号并自动带出表单，字段始终可改，失败降级不阻塞 |
+| 下载次数 | 仅在完整流式下载成功后 +1，列表页与下载页展示同一口径 |
+
+**明确不做**：iOS 浏览器直接安装（plist / itms-services）、列表页二维码入口、推送 / 通知 / Webhook / 订阅 / CI 集成 / 开放 API Key、登录鉴权与成员体系、密码或回答问题安装、有效期 / 定时发布 / 短链、渠道与统计报表、鸿蒙 / CDN / 多语言、包删除与上传后编辑、应用图标解析、后端二维码接口、`POST /builds/parse` 预览端点、提交接口携带文件、任何多板块功能。
+
+---
+
+## 2. 目录结构
+
+```
+api/openapi.yaml         唯一契约 SSOT（枚举 / DTO / 路径 / 错误码 / 常量）
+web/                     唯一 npm 包（Vite + React + TS）
+  src/api/schema.d.ts    openapi-typescript 生成物，已入库
+  src/api/               client.ts（唯一 HTTP 出入口）、builds.ts（唯一 URL 消费处）
+  src/components/        Layout（三段式 + 导航数组）、FileDropzone、States
+  src/pages/             UploadPage / ListPage / DownloadPage
+server/                  Go module
+  cmd/server/main.go     装配层
+  public/                前端产物（//go:embed 目标，构建时生成）
+  internal/              config / contract / handler / service / repository（含 schema.sql，//go:embed）/ parser / storage / middleware / app
+deploy/                  Dockerfile / docker-compose.yml / nginx.conf / dandelion.service
+storage/                 运行时数据（tmp 暂存 + uploads 正式包，已 gitignore）
+Makefile                 gen:api / dev / build / test / up / down
+```
+
+---
+
+## 3. 快速开始（本地）
+
+前置：Go 1.22+、Node 20+、Docker（仅用于起 PostgreSQL 16）。
+
+```bash
+docker compose -f deploy/docker-compose.yml up -d db   # 必须先起数据库
+cp .env.example .env                                   # 必改 PUBLIC_BASE_URL
+npm --prefix web install
+make dev                                               # 同时起 :8080（Go）与 :5173（Vite）
+```
+
+- 开发时浏览器打开 `http://localhost:5173`；`/api` 由 Vite 代理到 :8080。
+- 手机扫码请访问 `PUBLIC_BASE_URL` 指向的**局域网地址**（Vite 已监听 `0.0.0.0`），并确保手机与开发机同网段、防火墙放行 5173。
+- 契约变更后执行 `make gen:api` 重生成 `web/src/api/schema.d.ts` 并提交入库；生成物入库后，前端 dev 不需要 Go、后端 build 不需要 Node。
+- 纯静态自检：`make test`（Go 契约一致性测试）、`npm --prefix web run build`（前端类型检查 + 构建）。
+
+生产/单机一键构建（顺序不可颠倒，Go 的 `//go:embed public/*` 需要前端产物先存在）：
+
+```bash
+make build          # 前端产物 → server/public/，再 CGO_ENABLED=0 go build → bin/dandelion
+./bin/dandelion     # 单进程同时提供 API、静态资源与 SPA fallback
+```
+
+---
+
+## 4. 环境变量
+
+唯一读取处是 `server/internal/config/config.go`；`VITE_API_BASE` 由前端 Vite 读取。`Makefile` 会把 `.env` 导出给子进程。
+
+| 变量 | 默认值 | 说明 |
+| --- | --- | --- |
+| `DATABASE_URL` | `postgres://dandelion:dandelion@localhost:5432/dandelion?sslmode=disable` | PostgreSQL 连接串；生产改 `sslmode=require` |
+| `PUBLIC_BASE_URL` | `http://localhost:8080` | 对外访问入口基址，三个绝对 URL 的唯一来源；生产必填手机可达地址 |
+| `PORT` | `8080` | Go 监听端口 |
+| `HOST` | `0.0.0.0` | Go 监听地址 |
+| `STORAGE_DIR` | `./storage` | 运行时数据根，相对进程工作目录（make 系列命令在仓库根运行） |
+| `MAX_UPLOAD_MB` | `200` | 单包上限，不得超过契约的 200 MB |
+| `GO_ENV` | `development` | `development` 放宽不可达基址；其它值按生产严格校验、非法即 fail-fast |
+| `VITE_API_BASE` | 空 | 前端 API 基址，留空表示同源 / 走代理 |
+
+### `PUBLIC_BASE_URL` 三场景
+
+| 场景 | 取值 | 谁提供 `/d/:id` | 手机可达前提 |
+| --- | --- | --- | --- |
+| 本地开发 | `http://<开发机局域网IP>:5173` | Vite dev server（history fallback） | 同 WiFi / 同网段、防火墙放行 5173；**不能填 :8080，dev 下 Go 不托管 SPA** |
+| 单机 / 内网 | `http://<内网IP>:8080` 或 `http://dandelion.internal` | Go 单二进制 embed 或 Nginx | 同内网 / VPN / 内网 DNS |
+| 公网 / 容器 | `https://dandelion.example.com` | Nginx 终止 TLS + 反代 | 公网 DNS + 有效证书 |
+
+禁止 `localhost` / `127.0.0.1` / `0.0.0.0` / `::1` / 容器内部服务名。生产环境非法会 fail-fast；开发环境放宽，但前端二维码区会显示「当前对外基址不可被手机访问，请配置 PUBLIC_BASE_URL」，不会渲染扫不开的码。
+
+服务端生成绝对地址**只用 `PUBLIC_BASE_URL`，不读请求 `Host` / `X-Forwarded-*`**，所以 Vite proxy 与 Nginx 反代下结果一致。
+
+---
+
+## 5. 接口速查（7 个）
+
+统一响应 `{code, data, message}`：成功 `code=0`，失败 `code` = HTTP 状态码（只有 400 / 404 / 405 / 413 / 500）且 `data=null`。唯一例外是文件下载成功返回二进制流。
+
+| # | 方法 | 路径 | 说明 |
+| --- | --- | --- | --- |
+| 1 | POST | `/api/v1/builds/stage` | multipart `file`，暂存 + 同步解析，恒 200（解析失败只写 `warnings`） |
+| 2 | POST | `/api/v1/builds` | **application/json**，`CommitBuildRequest` **恰好 8 字段**（token + 表单值），不含文件与 `metaSource`，返回 201 完整 Build |
+| 3 | GET | `/api/v1/builds?environment=&platform=` | 列表，空结果 `items: []` |
+| 4 | GET | `/api/v1/builds/{id}` | 详情 / 404 |
+| 5 | GET | `/api/v1/builds/{id}/file` | 原始包流 |
+| 6 | GET | `/healthz` | 健康检查（独立于 `/api/v1`） |
+| 7 | GET | `/`、`/upload`、`/d/{id}` | 静态资源 + SPA fallback |
+
+```bash
+# 造两个自测用小包（内容任意、扩展名正确即可，不新增脚本文件）
+printf 'fake apk for smoke test' > /tmp/demo.apk
+printf 'fake ipa for smoke test' > /tmp/demo.ipa
+
+# ① 暂存：选文件时由前端自动触发；返回 stageToken / parsed / warnings
+curl -sS -F "file=@/tmp/demo.apk" http://localhost:8080/api/v1/builds/stage
+
+# ② 提交发布 commit：只发 JSON（恰好 8 字段），不带文件、不带 metaSource；把 <TOKEN> 换成上一步的 stageToken
+curl -sS -X POST http://localhost:8080/api/v1/builds \
+  -H 'Content-Type: application/json' \
+  -d '{"stageToken":"<TOKEN>","environment":"test","platform":"android","appName":"商城 App","packageId":"com.example.shop","version":"1.2.0","buildNumber":"3","changelog":"修复登录态过期问题"}'
+
+# ③ 列表（platform 省略或 all 表示不筛）
+curl -sS 'http://localhost:8080/api/v1/builds?environment=test&platform=android'
+
+# ④ 详情
+curl -sS http://localhost:8080/api/v1/builds/<ID>
+
+# ⑤ 下载原始文件
+curl -OJ http://localhost:8080/api/v1/builds/<ID>/file
+
+# ⑥ 健康检查
+curl -sS http://localhost:8080/healthz
+
+# ⑦ SPA fallback：直接访问下载页拿到 index.html
+curl -sS http://localhost:8080/d/<ID> | head -5
+```
+
+自造的小包不是合法 APK / IPA，stage 会返回 `warnings`（解析失败），但**上传仍会成功** —— 这正好用来验证 P0-9 的失败降级。
+
+返回的三个地址字段：
+
+| 字段 | 形态 | 用途 |
+| --- | --- | --- |
+| `downloadPagePath` | 相对 `/d/{id}` | **仅**用于前端 react-router 内部跳转 |
+| `downloadPageUrl` | 绝对 | 二维码内容、复制地址 |
+| `downloadFileUrl` | 绝对 | 下载按钮 |
+
+---
+
+## 6. 关键设计（读代码前先看这四条）
+
+1. **stage 上传对用户透明，不是两步发布**：选文件那一刻自动上传一次到 `storage/tmp/{token}.{ext}` 并同步解析（5s 超时、manifest/plist ≤5MB、zip 条目上限），前端只把解析值填进**未被用户改动**的字段；用户全程只点一次「上传并发布」，commit 请求是纯 JSON（恰好 8 个字段，不含文件、不含 `metaSource`），服务端不再调用解析器、也不覆盖任何用户值，只 rename + 写库 + 生成地址；`metaSource` 由服务端按「是否发生空值兜底」派生（`fallback` / `parsed`）后入库，前端无法伪造。token 有效期 1 小时、用后即失效，启动时清空 tmp、每次 stage 前清理 1 小时孤儿。
+2. **三个 URL 由 `service/build_service.go` 的 `buildURLs(id)` 唯一生成**，`Create` / `List` / `Get` 统一调用；repository 的 `rowToBuild` 把这三个字段留空，绝不入库（换域名不用刷数据）。前端零拼接。
+3. **下载次数在 `io.Copy` 成功且写出字节 == `Content-Length` 之后**才 `UPDATE ... +1`；404 / 路径非法 / 文件缺失 / 客户端中断 / copy 出错 / 字节不足一律不计数；计数是 2s 短超时的旁路，失败只记日志、绝不阻断已完成的下载。第一版不做强去重（按钮点击后禁用 3s）、不做 Range / 断点续传。
+4. **契约是单一来源**：环境 / 平台枚举只写在 `api/openapi.yaml`，前端用生成类型，后端用 `go test ./...` 的契约一致性测试比对（把 yaml 里的 `pre` 改成 `pre2` 测试必须失败）；数据库 `environment` 列只 `NOT NULL`、**没有 CHECK**。第一版只有 `builds` 一张业务表。
+
+**多板块 / push 预留**：只体现在三段式 Layout + 一个导航数组（当前仅「应用包」一项）、`/d/:id` 路由命名空间永不改动、`/api/v1` 前缀、`BuildService.Create()` 这个唯一「上传完成」时点、装配层可注入。没有任何占位菜单、空页面、事件类型、outbox 表或 `TODO`。
+
+---
+
+## 7. 部署
+
+### ① 本地开发
+见第 3 节：`docker compose up -d db` → `cp .env.example .env` → `make dev`。
+
+### ② 单机 / 内网（systemd）
+```bash
+make build
+sudo mkdir -p /opt/dandelion
+sudo cp -R bin deploy .env /opt/dandelion/
+sudo cp deploy/dandelion.service /etc/systemd/system/dandelion.service
+sudo systemctl daemon-reload && sudo systemctl enable --now dandelion
+```
+`WorkingDirectory=/opt/dandelion`，`EnvironmentFile` 必须包含 `PUBLIC_BASE_URL` 与 `DATABASE_URL`，服务在 `postgresql.service` 之后启动，崩溃自动拉起。Go 单二进制自带静态资源与 SPA fallback，只开 8080 即可。
+
+### ③ 容器（三服务）
+```bash
+cp .env.example .env       # 必改 PUBLIC_BASE_URL 为对外 https 域名
+make up                    # = docker compose -f deploy/docker-compose.yml up -d --build
+make down
+```
+`db` 用 `postgres:16-alpine` + `pgdata` 卷 + initdb 执行 `server/internal/repository/schema.sql`；`server` 等 db healthy 后启动，宿主机 `storage/` 挂到 `/app/storage`（删容器重建不丢包）；`nginx` 为可选 profile（`--profile with-nginx`），直出 `server/public/` 并做 `try_files $uri /index.html` fallback，`client_max_body_size 210m`、反代超时 300s。HTTPS 终止位在 `deploy/nginx.conf` 里留了注释。
+
+**DDL 单一来源**：建表语句只有 `server/internal/repository/schema.sql` 一份，由 `//go:embed` 打进二进制，进程启动时幂等执行 —— **不依赖当前工作目录**，`cd server && go run ./cmd/server` 与仓库根直接运行效果一致；容器里同一份文件再挂给 PG initdb 作为双保险。
+
+### 规模化（未来）
+对象存储 + CDN、读副本与连接池；前提是文件与元数据都外置，第一版单进程带本地卷，不能直接多副本。
+
+---
+
+## 8. 备份与恢复
+
+在同一个停写窗口内：
+
+```bash
+pg_dump -Fc -d "$DATABASE_URL" > backup_$(date +%F).dump
+tar -czf uploads_$(date +%F).tar.gz -C storage uploads
+# 恢复
+pg_restore --clean --if-exists -d "$DATABASE_URL" backup_YYYY-MM-DD.dump
+tar -xzf uploads_YYYY-MM-DD.tar.gz -C storage
+```
+
+`storage/tmp/` 是纯暂存态，不备份；容器部署时 `pgdata` 卷与 `storage/` 目录都要纳入备份计划。
+
+---
+
+## 9. iOS 第一版限制与 P1 前置条件
+
+**第一版只提供 `.ipa` 文件下载，不能像蒲公英那样在手机浏览器点一下直接安装。** 下载页对 iOS 包会明确提示这一点。若后续勾选 P1-4（iOS 直接安装），需要先满足 6 项前置条件：
+
+1. 公网可访问的 **HTTPS 域名 + 有效 CA 证书**（`itms-services://` 要求 https，内网自签证书手机不信任）。
+2. 生成并托管符合 Apple 规范的 `manifest.plist`，其中包含IPA 地址、bundle id、版本号、应用名与图标地址。
+3. 明确的签名方式：企业签名（Apple Developer Enterprise Program）或 Ad Hoc 描述文件，并保证设备 UDID 已登记。
+4. IPA 的 `CFBundleIdentifier` / `CFBundleVersion` 与 plist 完全一致，否则安装会在校验阶段失败。
+5. 下载页新增 iOS 专用安装入口与服务端 plist 生成/托管接口（第一版两者都没有，也不预留）。
+6. 手机网络能解析并访问该域名（内网 DNS / 公网 DNS + 防火墙放行）；`PUBLIC_BASE_URL` 需一并切换成该 HTTPS 域名，已转发的旧二维码会失效。
+
+---
+
+## 10. 常见问题
+
+| 现象 | 排查 |
+| --- | --- |
+| 上传大包返回 413 | 先看 Nginx `client_max_body_size 210m`，再看 `MAX_UPLOAD_MB`（不得超过 200）与契约 `x-constants.maxUploadMB` |
+| 手机扫码打不开 / 二维码区显示「基址不可被手机访问」 | 检查 `PUBLIC_BASE_URL` 是否是手机可达的绝对地址；本地开发要填局域网 IP + `:5173`，不能填 localhost 或 `:8080` |
+| 重启后包不见了 | 检查 `storage/` 卷挂载与 `DATABASE_URL` 是否指向同一个 PostgreSQL；DB 记录与 uploads 文件必须成对存在 |
+| 提交提示「暂存文件已失效，请重新选择文件」 | token 超过 1 小时、服务重启清空了 tmp、或已用过；重新选一次文件即可 |
+| 表单没有自动带出包名/版本 | 包可能损坏或是加固包，解析失败属预期降级，`warnings` 会提示，手填后照常上传 |
+| `go test ./...` 失败且提示枚举不一致 | 有人改了 `api/openapi.yaml` 却没同步 Go 常量，或反之；契约测试就是用来卡住这种漂移的 |
+| `/d/{id}` 刷新 404 | 单机检查 Go 的 SPA fallback，容器检查 Nginx `try_files $uri /index.html`；两处都要有 |
+
+---
+
+## 11. 自检命令速查
+
+```bash
+make gen:api                        # 契约 → web/src/api/schema.d.ts
+make test                           # Go 契约一致性测试
+npm --prefix web run build          # 前端类型检查 + 构建到 server/public/
+make build                          # 前端 → 单二进制（顺序不可颠倒）
+GOTOOLCHAIN=local CGO_ENABLED=0 go -C server build ./...   # 无 cgo 校验
+```

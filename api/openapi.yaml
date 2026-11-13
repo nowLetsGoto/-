@@ -1,0 +1,500 @@
+openapi: 3.1.0
+info:
+  title: Dandelion 应用包分发 API
+  version: 1.0.0
+  description: >
+    全仓唯一契约 SSOT。环境、平台、路径、请求体、响应体、错误码与常量只在此定义一次。
+    前端由 openapi-typescript 生成 web/src/api/schema.d.ts（生成物入库）；
+    后端 Go 常量由 server/internal/contract/contract_test.go 与本文逐项比对，漂移即测试失败。
+    运行时不加载本文件。
+
+servers:
+  - url: /api/v1
+    description: 业务接口统一前缀；/healthz 独立挂在根下，不受此前缀影响。
+
+# 契约级常量：后端 contract_test.go 读取校验，前端不使用（生成物忽略 x- 扩展）。
+x-constants:
+  maxUploadMB: 200
+  stageTokenTTLSeconds: 3600
+  parseTimeoutSeconds: 5
+  parseReadLimitMB: 5
+  downloadButtonCooldownSeconds: 3
+  limits:
+    appName: 100
+    packageId: 100
+    version: 50
+    buildNumber: 50
+    changelog: 2000
+
+# 展示标签的唯一产品维度定义处；前端 utils/format.ts 以 Record<契约类型, string> 镜像。
+x-environments:
+  test: 测试
+  hotfix: 紧急修复
+  pre: 预发
+  prd: 生产
+
+# 平台元数据：扩展名、下载 Content-Type 全仓唯一定义处。
+x-platforms:
+  android:
+    label: Android
+    ext: apk
+    contentType: application/vnd.android.package-archive
+  ios:
+    label: iOS
+    ext: ipa
+    contentType: application/octet-stream
+
+x-page-routes:
+  downloadPage: /d/{id}
+
+paths:
+  /builds/stage:
+    post:
+      operationId: stageBuild
+      summary: 暂存安装包并同步解析元数据
+      description: >
+        选文件时自动触发，对用户透明，不是两步发布。文件只上传这一次；
+        服务端写入 storage/tmp/{stageToken}.{origExt} 后同步解析，
+        解析失败、包损坏、超时只写入 warnings，接口恒返回 200。
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file:
+                  type: string
+                  format: binary
+                  description: 仅接受 .apk / .ipa，单包上限 200 MB
+      responses:
+        '200':
+          description: 暂存成功（解析成败都成功）
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StageResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '413':
+          $ref: '#/components/responses/TooLarge'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /builds:
+    post:
+      operationId: commitBuild
+      summary: 提交发布 commit（只发 token 与表单最终值，不携带文件、不再解析）
+      description: >
+        服务端校验 stageToken 后把暂存文件 rename 到正式目录、写库、生成三个 URL。
+        表单即最终真值：不使用解析结果覆盖用户值，仅对空字段做文件名/占位值兜底。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CommitBuildRequest'
+      responses:
+        '201':
+          description: 发布成功，返回完整 Build
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BuildResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '405':
+          $ref: '#/components/responses/MethodNotAllowed'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    get:
+      operationId: listBuilds
+      summary: 按环境（+平台）查询包列表，时间倒序，不分页
+      parameters:
+        - name: environment
+          in: query
+          required: true
+          schema:
+            $ref: '#/components/schemas/Environment'
+        - name: platform
+          in: query
+          required: false
+          schema:
+            $ref: '#/components/schemas/PlatformQuery'
+      responses:
+        '200':
+          description: "成功；空结果为 items: [] 而非 404"
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListBuildsResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /builds/{id}:
+    get:
+      operationId: getBuild
+      summary: 单个包详情（下载页取数）
+      parameters:
+        - $ref: '#/components/parameters/BuildId'
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BuildResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /builds/{id}/file:
+    get:
+      operationId: downloadBuildFile
+      summary: 下载原始包文件（唯一不套 JSON 的成功响应）
+      description: >
+        io.Copy 成功完成且写出字节等于 Content-Length 之后才原子 +1 下载次数；
+        404、路径非法、文件缺失、客户端中断、copy 出错、字节不足一律不计数。
+      parameters:
+        - $ref: '#/components/parameters/BuildId'
+      responses:
+        '200':
+          description: 二进制包流
+          headers:
+            Content-Type:
+              schema:
+                type: string
+              description: Android 为 application/vnd.android.package-archive，iOS 为 application/octet-stream
+            Content-Disposition:
+              schema:
+                type: string
+              description: 同时提供 filename 与 RFC 5987 filename*=UTF-8''... 双重编码
+            Content-Length:
+              schema:
+                type: integer
+            Cache-Control:
+              schema:
+                type: string
+              example: no-cache
+            X-Content-Type-Options:
+              schema:
+                type: string
+              example: nosniff
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /healthz:
+    get:
+      operationId: health
+      summary: 健康检查（独立于 /api/v1，供 compose/systemd 探活）
+      description: 该路径挂在根下， servers.url 前缀对它不生效。
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+
+components:
+  parameters:
+    BuildId:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+      description: 包稳定唯一标识
+
+  responses:
+    BadRequest:
+      description: 缺文件 / 枚举非法 / 平台与文件类型不一致 / 字段超长 / stageToken 失效
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    NotFound:
+      description: 包不存在或文件缺失
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    MethodNotAllowed:
+      description: 请求方法不支持
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    TooLarge:
+      description: 超过 200 MB 单包上限
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    InternalError:
+      description: 写文件 / 写库 / 未预期错误
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+
+  schemas:
+    Environment:
+      type: string
+      description: 四环境枚举，全仓唯一定义处；DB 只 NOT NULL 不加 CHECK
+      enum: [test, hotfix, pre, prd]
+
+    Platform:
+      type: string
+      description: 平台枚举；label / ext / contentType 见 x-platforms
+      enum: [android, ios]
+
+    PlatformQuery:
+      type: string
+      description: 平台筛选，省略或 all 表示不筛
+      enum: [all, android, ios]
+
+    MetaSource:
+      type: string
+      description: >
+        服务端派生的元数据来源内部标注：任一字段发生空值兜底 → fallback，否则 → parsed。
+        不出现在 CommitBuildRequest 中，前端无法伪造、也不参与请求校验。
+      enum: [parsed, fallback]
+
+    ParsedMeta:
+      type: object
+      description: 自动解析的 4 个规范字段（Android / iOS 各 4 个原字段统一映射到这里）
+      required: [appName, packageId, version, buildNumber]
+      properties:
+        appName:
+          type: string
+          description: Android Application.Label / iOS CFBundleDisplayName（缺失回退 CFBundleName）
+        packageId:
+          type: string
+          description: Android Manifest.Package / iOS CFBundleIdentifier
+        version:
+          type: string
+          description: Android versionName / iOS CFBundleShortVersionString
+        buildNumber:
+          type: string
+          description: Android versionCode / iOS CFBundleVersion
+
+    StageResult:
+      type: object
+      required: [stageToken, parsed, warnings]
+      properties:
+        stageToken:
+          type: string
+          format: uuid
+          description: 暂存文件标识，1 小时有效，rename 后立即失效
+        parsed:
+          $ref: '#/components/schemas/ParsedMeta'
+        warnings:
+          type: array
+          items:
+            type: string
+          description: 解析失败 / 损坏 / 超时的中文原因，不阻塞上传
+
+    CommitBuildRequest:
+      type: object
+      description: >
+        提交发布请求，application/json，**恰好 8 个字段**：token + 表单最终值。
+        绝不包含 file 字段，也不携带解析结果、touched 标记或 metaSource（来源由服务端派生）。
+      additionalProperties: false
+      required: [stageToken, environment, platform]
+      properties:
+        stageToken:
+          type: string
+          format: uuid
+        environment:
+          $ref: '#/components/schemas/Environment'
+        platform:
+          $ref: '#/components/schemas/Platform'
+        appName:
+          type: string
+          maxLength: 100
+        packageId:
+          type: string
+          maxLength: 100
+        version:
+          type: string
+          maxLength: 50
+        buildNumber:
+          type: string
+          maxLength: 50
+        changelog:
+          type: string
+          maxLength: 2000
+
+    Build:
+      type: object
+      description: 完整包 DTO；三个 URL 字段由服务端 buildURLs(id) 派生，不入库
+      required:
+        - id
+        - environment
+        - platform
+        - appName
+        - packageId
+        - version
+        - buildNumber
+        - changelog
+        - originalFileName
+        - fileSize
+        - fileExt
+        - relativePath
+        - metaSource
+        - downloadCount
+        - downloadPagePath
+        - downloadPageUrl
+        - downloadFileUrl
+        - createdAt
+      properties:
+        id:
+          type: string
+          format: uuid
+        environment:
+          $ref: '#/components/schemas/Environment'
+        platform:
+          $ref: '#/components/schemas/Platform'
+        appName:
+          type: string
+        packageId:
+          type: string
+        version:
+          type: string
+        buildNumber:
+          type: string
+        changelog:
+          type: string
+        originalFileName:
+          type: string
+          description: 已清洗的原始文件名，仅用于展示与下载名
+        fileSize:
+          type: integer
+          format: int64
+        fileExt:
+          type: string
+          enum: [apk, ipa]
+        relativePath:
+          type: string
+          description: 相对 uploads 根目录的规范化路径
+        metaSource:
+          $ref: '#/components/schemas/MetaSource'
+        downloadCount:
+          type: integer
+          format: int64
+          description: 下载成功后才原子自增；起点 0、只增不减
+        downloadPagePath:
+          type: string
+          description: 相对路径 /d/{id}；唯一用途是前端 react-router 内部跳转，严禁用于二维码 / 复制 / 下载
+        downloadPageUrl:
+          type: string
+          format: uri
+          description: 绝对地址，二维码内容与复制按钮的唯一来源
+        downloadFileUrl:
+          type: string
+          format: uri
+          description: 绝对地址，下载按钮的唯一来源
+        createdAt:
+          type: string
+          format: date-time
+          description: ISO 8601 UTC
+
+    ListBuildsResult:
+      type: object
+      required: [items, total, environment, platform]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Build'
+        total:
+          type: integer
+        environment:
+          $ref: '#/components/schemas/Environment'
+        platform:
+          type: string
+          description: 实际生效的平台筛选，未筛选时为 all
+
+    HealthStatus:
+      type: object
+      required: [status, uptime, dbOk, storageWritable]
+      properties:
+        status:
+          type: string
+        uptime:
+          type: integer
+          format: int64
+          description: 进程运行秒数
+        dbOk:
+          type: boolean
+        storageWritable:
+          type: boolean
+
+    ApiResponse:
+      type: object
+      description: 统一响应外壳；成功 code=0，失败 code=HTTP 状态码且 data=null
+      required: [code, data, message]
+      properties:
+        code:
+          type: integer
+          description: 成功 0；失败仅 400 / 404 / 405 / 413 / 500
+        data:
+          description: 业务数据；失败时为 null
+        message:
+          type: string
+          description: 成功 ok；失败为可直接上屏的简体中文文案
+
+    ErrorResponse:
+      allOf:
+        - $ref: '#/components/schemas/ApiResponse'
+        - type: object
+          properties:
+            data:
+              type: 'null'
+
+    StageResponse:
+      allOf:
+        - $ref: '#/components/schemas/ApiResponse'
+        - type: object
+          required: [data]
+          properties:
+            data:
+              $ref: '#/components/schemas/StageResult'
+
+    BuildResponse:
+      allOf:
+        - $ref: '#/components/schemas/ApiResponse'
+        - type: object
+          required: [data]
+          properties:
+            data:
+              $ref: '#/components/schemas/Build'
+
+    ListBuildsResponse:
+      allOf:
+        - $ref: '#/components/schemas/ApiResponse'
+        - type: object
+          required: [data]
+          properties:
+            data:
+              $ref: '#/components/schemas/ListBuildsResult'
+
+    HealthResponse:
+      allOf:
+        - $ref: '#/components/schemas/ApiResponse'
+        - type: object
+          required: [data]
+          properties:
+            data:
+              $ref: '#/components/schemas/HealthStatus'

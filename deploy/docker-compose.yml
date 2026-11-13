@@ -1,0 +1,67 @@
+# deploy/docker-compose.yml · 三服务编排。
+# 职责：PostgreSQL 16 + Go 单二进制 + 可选 Nginx 反代；唯一需要持久化的业务数据是 pgdata 与 uploads 卷。
+# 输入：仓库根 .env（先执行 cp .env.example .env）、server/internal/repository/schema.sql、deploy/nginx.conf。
+# 输出：可用服务；db 与 server 都带 healthcheck，server 等 db healthy 后才启动。
+# 边界：storage/tmp/ 不持久化（stage 纯临时态）；Nginx 为可选 profile，默认先起 db + server 即可联调。
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: dandelion
+      POSTGRES_USER: dandelion
+      POSTGRES_PASSWORD: dandelion
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ../server/internal/repository/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U dandelion -d dandelion"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  server:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    restart: unless-stopped
+    env_file: ../.env
+    environment:
+      # 容器内按服务名连接；对外基址仍由 .env 的 PUBLIC_BASE_URL 提供，绝不读请求 Host。
+      DATABASE_URL: postgres://dandelion:dandelion@db:5432/dandelion?sslmode=disable
+      STORAGE_DIR: /app/storage
+      HOST: 0.0.0.0
+      PORT: "8080"
+      GO_ENV: production
+    volumes:
+      - ../storage:/app/storage
+    ports:
+      - "8080:8080"
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8080/healthz > /dev/null || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+
+  # 可选：`docker compose --profile with-nginx up -d` 时启用；静态直出 + SPA fallback。
+  nginx:
+    image: nginx:1.27-alpine
+    profiles: ["with-nginx"]
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - ../server/public:/usr/share/nginx/html:ro
+      - ./certs:/etc/nginx/certs:ro
+    depends_on:
+      - server
+
+volumes:
+  pgdata:

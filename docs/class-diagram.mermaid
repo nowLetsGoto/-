@@ -1,0 +1,194 @@
+%% Dandelion 数据结构与接口类图
+%% 来源：docs/02-ARCHITECTURE.md §4.6
+%% 说明：packages/shared 为横切包（类型/枚举单一来源），前后端运行时通过 HTTP API 交互。
+classDiagram
+    direction TB
+
+    class Build {
+        <<interface>>
+        +string id
+        +Environment environment
+        +Platform platform
+        +string appName
+        +string version
+        +string buildNumber
+        +string changelog
+        +string originalFileName
+        +number fileSize
+        +string fileExt
+        +string relativePath
+        +string downloadPath
+        +string downloadPagePath
+        +string createdAt
+    }
+
+    class ApiResponse~T~ {
+        <<interface>>
+        +number code
+        +T data
+        +string message
+    }
+
+    class ApiError {
+        <<class>>
+        +number status
+        +number code
+        +string message
+    }
+
+    class UploadBuildInput {
+        <<interface>>
+        +File file
+        +Environment environment
+        +Platform platform
+        +string appName
+        +string version
+        +string buildNumber
+        +string changelog
+    }
+
+    class ListBuildsQuery {
+        <<interface>>
+        +Environment environment
+        +Platform platform
+    }
+
+    class SharedConstants {
+        <<enumeration>>
+        +ENVIRONMENTS
+        +PLATFORMS
+        +API_ROUTES
+        +LIMITS
+        +Environment
+        +Platform
+    }
+
+    class Config {
+        <<class>>
+        +number port
+        +string host
+        +string storageDir
+        +string databaseFile
+        +number maxUploadMB
+        +string publicDir
+    }
+
+    class StoragePaths {
+        <<class>>
+        +tmpPath(filename) string
+        +finalPath(env, platform, id, ext) string
+        +relativePath(env, platform, id, ext) string
+        +safeResolve(relativePath) string
+        +cleanFileName(name) string
+    }
+
+    class UploadMiddleware {
+        <<class>>
+        +single(field) handler
+        -fileFilter(req, file, cb)
+        -limits
+    }
+
+    class BuildRepository {
+        <<class>>
+        +insert(build) void
+        +list(query) Build[]
+        +findById(id) Build
+        -rowToBuild(row) Build
+    }
+
+    class BuildService {
+        <<class>>
+        +createBuild(input) Build
+        +listBuilds(query) Build[]
+        +getBuild(id) Build
+        +resolveFile(id) FileRef
+        -validate(input) void
+        -compensate(tmpPath, finalPath) void
+    }
+
+    class BuildRoutes {
+        <<class>>
+        +POST_builds(req, res)
+        +GET_builds(req, res)
+        +GET_builds_id(req, res)
+        +GET_builds_id_file(req, res)
+    }
+
+    class HealthRoutes {
+        <<class>>
+        +GET_health(req, res)
+    }
+
+    class ErrorMiddleware {
+        <<class>>
+        +asyncHandler(fn)
+        +onError(err, req, res, next)
+    }
+
+    class App {
+        <<class>>
+        +createApp() Express
+        +listen(port)
+    }
+
+    class ApiClient {
+        <<class>>
+        +request(path, init) T
+        +uploadBuild(form) Build
+        +listBuilds(query) Build[]
+        +getBuild(id) Build
+    }
+
+    class UploadPage {
+        <<component>>
+        +useState form
+        +useState submitting
+        +onSubmit()
+    }
+    class ListPage {
+        <<component>>
+        +useSearchParams env/platform
+        +useState data/loading/error
+    }
+    class DownloadPage {
+        <<component>>
+        +useParams id
+        +useState build/loading/error
+    }
+    class Components {
+        <<component>>
+        +Layout
+        +FileDropzone
+        +States
+    }
+
+    SharedConstants ..> Build : 提供枚举类型
+    SharedConstants ..> ApiResponse : 提供错误码/路径常量
+    Build <.. UploadBuildInput : 构造
+    ApiResponse ..> Build : data 载体
+    ApiClient ..> ApiError : 抛出
+
+    App --> BuildRoutes : 挂载
+    App --> HealthRoutes : 挂载
+    App --> ErrorMiddleware : 挂载
+    App --> Config : 读取
+    BuildRoutes --> UploadMiddleware : multipart
+    BuildRoutes --> BuildService : 调用
+    BuildService --> BuildRepository : 调用
+    BuildService --> StoragePaths : 调用
+    BuildService --> SharedConstants : 校验枚举
+    BuildRepository --> Build : 映射
+    ErrorMiddleware ..> ApiResponse : 输出统一格式
+    Config ..> StoragePaths : 提供根目录
+
+    UploadPage --> Components : 使用
+    ListPage --> Components : 使用
+    DownloadPage --> Components : 使用
+    UploadPage --> ApiClient : 调用
+    ListPage --> ApiClient : 调用
+    DownloadPage --> ApiClient : 调用
+    UploadPage ..> SharedConstants : 渲染环境/平台
+    ListPage ..> SharedConstants : 渲染环境/平台
+    ApiClient ..> BuildRoutes : HTTP /api/*
+    ApiClient ..> SharedConstants : 使用 API_ROUTES

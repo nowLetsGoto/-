@@ -1,0 +1,115 @@
+%% Dandelion 端到端程序调用流程（全景图）
+%% 来源：docs/02-ARCHITECTURE.md §6.1（上传流程）与 §6.2（列表→下载页→下载文件流程）合并
+%% 两段主流程用 rect 标注，均含失败分支；更细的分图见 02-ARCHITECTURE.md §6。
+sequenceDiagram
+    autonumber
+    actor Dev as 开发者（桌面上传）
+    actor QA as 测试同学 / 同事（浏览器或手机）
+    participant WEB as 前端页面<br/>UploadPage / ListPage / DownloadPage
+    participant AC as apiClient + api/builds.ts
+    participant R as Express 路由 / 中间件
+    participant S as BuildService
+    participant P as StoragePaths
+    participant RP as BuildRepository
+    participant DB as SQLite builds 表
+    participant FS as storage/ 文件系统
+
+    rect rgb(232, 243, 255)
+    Note over Dev,FS: 流程 A · 上传包（P0-1 / P0-2）
+    Dev->>WEB: 拖入 .apk / 选环境 hotfix / 平台 Android / 填选填项
+    WEB->>WEB: 前端预检（扩展名、大小、必填、平台×扩展名一致）
+    WEB->>AC: uploadBuild(FormData)
+    AC->>R: POST /api/builds (multipart)
+    R->>FS: multer diskStorage 先写 storage/tmp/{临时名}
+    FS-->>R: req.file + 完整的 req.body
+    alt 类型 / 大小 / 枚举 / 平台×扩展名 校验失败
+        R->>FS: 删除 tmp 临时文件（errorMiddleware 兜底清理）
+        R-->>AC: 400 / 413 {code, data:null, message:中文原因}
+        AC-->>WEB: 抛 ApiError
+        WEB-->>Dev: 显示可读错误，按钮恢复可提交
+    else 校验通过
+        R->>S: createBuild(input)
+        S->>S: id = crypto.randomUUID()；ext 由 PLATFORMS[platform] 映射
+        S->>P: cleanFileName() / finalPath(env, platform, id, ext)
+        S->>FS: rename(tmp → uploads/hotfix/android/{id}.apk) + stat() 取大小
+        S->>S: 组装 Build（兜底字段、createdAt = ISO 8601 UTC）
+        S->>RP: insert(build)（prepare 参数绑定）
+        RP->>DB: INSERT INTO builds(...)
+        alt 写库失败
+            DB-->>RP: 抛错
+            S->>FS: 失败补偿：删除已 move 的正式文件
+            R-->>AC: 500 {code:500, data:null, message:'服务内部错误，请稍后重试'}
+            AC-->>WEB: 抛 ApiError → 显示失败原因
+        else 写库成功
+            DB-->>RP: ok
+            RP-->>S: Build（派生 downloadPagePath=/d/{id}）
+            S-->>R: Build
+            R-->>AC: 201 {code:0, data:Build, message:'ok'}
+            AC-->>WEB: Build
+            WEB-->>Dev: 成功卡片：下载页绝对地址 + 复制 / 去下载页 / 返回列表
+        end
+    end
+    end
+
+    rect rgb(234, 247, 234)
+    Note over QA,FS: 流程 B · 找包 → 下载页 → 下载文件（P0-3 / P0-4 / P0-5 / P0-6）
+    QA->>WEB: 打开 /?environment=test
+    WEB->>AC: listBuilds({environment:'test'})
+    AC->>R: GET /api/builds?environment=test
+    R->>S: listBuilds(query)
+    S->>RP: list(query)
+    RP->>DB: SELECT ... WHERE environment=? ORDER BY created_at DESC（索引命中）
+    DB-->>RP: rows
+    RP-->>S: Build[]
+    S-->>R: Build[]
+    R-->>AC: 200 {code:0, data:{items, total, environment, platform}}
+    alt 查询失败（400 非法环境 / 500）
+        R-->>AC: {code, data:null, message}
+        AC-->>WEB: 抛 ApiError
+        WEB-->>QA: 错误态 + 可读文案 + 重试
+    else 查询成功且为空
+        WEB-->>QA: 空状态「当前环境暂无包」+ [去上传]
+    else 有数据
+        WEB-->>QA: 环境四值切换 + 平台筛选 + 时间倒序列表
+    end
+
+    QA->>WEB: 切到 hotfix / 筛 Android（写入 URL searchParams）
+    WEB->>AC: listBuilds({environment:'hotfix', platform:'android'})
+    AC->>R: GET /api/builds?environment=hotfix&platform=android
+    R-->>AC: 200 仅该环境该平台的包（test 包不再出现）
+
+    QA->>WEB: 点「下载页」
+    WEB->>WEB: 路由跳转 /d/{id}（只带 id，链接可独立分享/刷新）
+    WEB->>AC: getBuild(id)
+    AC->>R: GET /api/builds/{id}
+    R->>RP: findById(id)
+    RP->>DB: SELECT ... WHERE id=?
+    alt 包不存在
+        DB-->>RP: undefined
+        R-->>AC: 404 {code:404, data:null, message:'包不存在或已被移除'}
+        AC-->>WEB: 抛 ApiError
+        WEB-->>QA: 「包不存在」+ 返回列表
+    else 存在
+        DB-->>RP: row
+        RP-->>AC: Build
+        AC-->>WEB: Build
+        WEB-->>QA: 应用名 / ★环境标签★ / 平台 / 版本(构建号) / 大小 / 时间 / 更新说明
+    end
+
+    QA->>WEB: 点「下载 / 安装 App」
+    WEB->>AC: getDownloadFileUrl(build)
+    AC->>R: GET /api/builds/{id}/file（a[download] / 浏览器导航）
+    R->>S: resolveFile(id)
+    S->>RP: findById(id) → Build(relativePath, platform)
+    S->>P: safeResolve(relativePath) 前缀校验防路径穿越
+    alt 路径非法或文件缺失
+        P-->>S: 拒绝 / 不存在
+        S-->>R: AppError(404)
+        R-->>QA: 404 统一错误 JSON
+    else 正常
+        P-->>S: 安全绝对路径
+        S-->>R: FileRef(path, contentType, fileName, size)
+        R-->>QA: 200 二进制流<br/>Android: application/vnd.android.package-archive<br/>iOS: application/octet-stream<br/>Content-Disposition: attachment (+ filename*)
+        Note over QA: 得到与上传内容一致的原始包<br/>iOS 第一版仅下载 .ipa 文件，不直接安装（见 02 §9.5）
+    end
+    end
