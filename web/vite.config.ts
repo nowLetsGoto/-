@@ -24,5 +24,13 @@ export default defineConfig({
     // 产物落在 server/public/，供 Go 的 //go:embed public/* 打进单二进制。
     outDir: '../server/public',
     emptyOutDir: true,
+    rollupOptions: {
+      output: {
+        // 把 antd 单独拆包：它体积大且极少变动，独立成 chunk 后业务代码更新不会让它重新下载。
+        manualChunks: {
+          antd: ['antd'],
+        },
+      },
+    },
   },
 });

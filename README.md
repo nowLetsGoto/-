@@ -205,7 +205,7 @@ curl -sS http://localhost:8080/d/<ID> | head -5
 
 ---
 
-## 6. 关键设计（读代码前先看这八条）
+## 6. 关键设计（读代码前先看这九条）
 
 1. **stage 上传对用户透明，不是两步发布**：选文件那一刻自动上传一次到 `storage/tmp/{token}.{ext}` 并同步解析（5s 超时、manifest/plist ≤5MB、zip 条目上限），前端只把解析值填进**未被用户改动**的字段；用户全程只点一次「上传并发布」，commit 请求是纯 JSON（恰好 9 个字段，含 `project`，不含文件、不含 `metaSource`），服务端不再调用解析器、也不覆盖任何用户值，只 rename + 写库 + 生成地址；`metaSource` 由服务端按「是否发生空值兜底」派生（`fallback` / `parsed`）后入库，前端无法伪造。token 有效期 1 小时、用后即失效，启动时清空 tmp、每次 stage 前清理 1 小时孤儿。
 2. **三个 URL 由 `service/build_service.go` 的 `buildURLs(id)` 唯一生成**，`Create` / `List` / `Get` 统一调用；repository 的 `rowToBuild` 把这三个字段留空，绝不入库（换域名不用刷数据）。前端零拼接。
@@ -216,6 +216,8 @@ curl -sS http://localhost:8080/d/<ID> | head -5
 7. **项目是一级归属，不是筛选条件**：`builds.project_id` 必填 + 外键 + `(project_id, environment, platform, created_at DESC)` 索引，所有列表查询都先按项目收敛；前端路由把项目做成**路径前缀** `/p/:key/*`（环境仍留在查询参数），所以切项目只是换前缀、**不丢板块**（在「应用包」切项目仍留在「应用包」）；`/settings` 与 `/d/:id` 不带项目前缀，前者是平台级配置、后者靠全局唯一的 id 定位。存量数据整体归入 `key=default` 的「默认项目」，老链接靠前端重定向兜住。项目不存在（key 被删/改名/拼错）由 `components/ProjectGate.tsx` 在骨架层统一拦成空态卡片，不放任各页面弹红色 400。
 
 8. **基础资料是纯主数据，不含权限**：人员 / 团队 / 项目三张主表 + 三张多对多关联表（`team_members` / `project_members` / `team_projects`），关联由两侧各自维护自己那一半（人员页改 `teamIds`、团队页改 `personIds`，落到同一张表）；编辑一律**全量覆盖**（事务内先清后写），前端每次提交完整多选结果。**列表接口直接返回关联的 `{id,name}`（`RelationRef`）**，因此人员管理只调 `/people`、团队管理只调 `/teams`、项目管理只调 `/projects`——页面不会为了把 ID 显示成名字再去拉别的列表（这是「一个页面一个列表接口」的硬约束）。`people.username` 关联登录账号，`GET /api/v1/me` 用它把「我关联的第一个项目」投影给前端做列表页默认值——**只做默认值，不做权限**；谁能看哪个项目仍由 P2 的角色体系决定。
+
+9. **UI 组件库只用在一个薄封装里**：选 **Ant Design 5**（表格/表单/分页最全、中文生态最好），但 `antd` 只允许出现在 `components/DataTable.tsx` 与 `theme/antd.ts`，业务页面只描述「有哪些列」。主题通过 `ConfigProvider` 的 token 对齐现有青色设计系统（主色 `#0e7490`、圆角 8/12、控件高 34px），表格外观再由 `.data-table` 的一段 CSS 覆盖到与手写表格一致。带来的代价是体积：antd 单独一个 chunk 约 248 KB(gzip)，业务代码约 37 KB(gzip)；`vite.config.ts` 用 `manualChunks` 把 antd 拆出去，业务更新不会让它重新下载。**分页目前是前端分页**（`DataTable` 内置，数据不足一页时自动隐藏分页条），当某个列表超过约 2000 行时再改成服务端分页（接口加 `page/pageSize`，`DataTable` 换成受控分页）。
 
 **多板块 / push 预留**：只体现在三段式 Layout + 一个导航数组（总览 / 分发 / 基础资料 / 平台四组）、`/d/:id` 路由命名空间永不改动、`/api/v1` 前缀、`BuildService.Create()` 这个唯一「上传完成」时点、装配层可注入。没有任何占位菜单、空页面、事件类型、outbox 表或 `TODO`。
 

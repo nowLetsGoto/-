@@ -35,8 +35,9 @@
 | --- | --- | --- | --- |
 | `api/` | HTTP 出入口与契约类型消费 | `client.ts`、`builds.ts`、`projects.ts`、`people.ts`、`teams.ts`、`me.ts`、`auth.ts`、`session.ts`、`settings.ts`、`schema.d.ts`（生成物） | `client.ts` 是**唯一** `fetch` 封装（解包、附带 Bearer、401 统一回登录页）；每个业务模块一份接口文件，是 URL 的**唯一**消费处；`session.ts` 是 localStorage 的**唯一**读写处；`schema.d.ts` 由 `make gen:api` 生成，**禁止手改** |
 | `hooks/` | 跨页面复用的状态逻辑 | `useEnvironment.ts`、`useAllBuilds.ts`、`useProjects.ts`（`useProjectKey` 不取数）、`useDirectory.ts`（`usePeople` / `useTeams` 两份独立缓存）、`useMe.ts` | 不渲染 UI、不写业务文案；每份数据只有**一处**模块级缓存；**列表页只能挂自己的那个 hook**，不要为了显示关联名字去挂别人的列表 |
-| `components/` | 无业务领域知识、可跨页面复用的 UI | `Layout.tsx`、`Sidebar.tsx`、`Topbar.tsx`、`ProjectGate.tsx`、`ProjectSelect.tsx`、`MultiSelect.tsx`、`FormPage.tsx`、`States.tsx`、`FileDropzone.tsx`、`icons.tsx`、`navigation.ts` | **不发起请求**、不 import `api/`、不持有页面级状态、不写死某业务字段；只接受 props 与回调（`navigation.ts` 是纯配置；`FormPage` 只是新增/编辑页的公共外壳，不认识任何字段） |
+| `components/` | 无业务领域知识、可跨页面复用的 UI | `Layout.tsx`、`Sidebar.tsx`、`Topbar.tsx`、`ProjectGate.tsx`、`ProjectSelect.tsx`、`MultiSelect.tsx`、`FormPage.tsx`、**`DataTable.tsx`**（antd Table 的唯一封装）、`States.tsx`、`FileDropzone.tsx`、`icons.tsx`、`navigation.ts` | **不发起请求**、不 import `api/`、不持有页面级状态、不写死某业务字段；**`antd` 只允许出现在 `DataTable.tsx` 与 `theme/antd.ts`**，业务页面不得直接 import antd 组件 |
 | `pages/` | 路由级页面：**目录 = 一级菜单**，自己取数、管加载/错误/空态 | `overview/OverviewPage.tsx`；`distribution/`（`PackagesPage` / `UploadPage` / `AppsPage`）；`directory/`（`PeoplePage` / `PersonFormPage` / `TeamsPage` / `TeamFormPage` / `ProjectsPage` / `ProjectFormPage` / `ProjectDetailPage`）；`platform/SettingsPage.tsx`；`login/`（自持样式）；`public/DownloadPage.tsx`（公开下载页，不属于任何菜单） | **页面之间禁止互相 import**；页面**只能**通过 `api/` 取数，不直接 `fetch`；**不拼接口 URL 字符串**；列表页只读、表单页独立路由（`/new`、`/:id/edit`）；**新增一级菜单 = 新建同名目录**，不要再把页面堆回 `pages/` 根下 |
+| `theme/` | 第三方组件库的主题映射 | `antd.ts`（token 对齐 CSS 变量） | 只声明 token，不改组件行为；主色改动需与 `styles.css` 的 `:root` 同步 |
 | `utils/` | 纯函数工具 | `format.ts`（字节/时间/标签） | **无副作用、无 React 依赖、不 import 任何 `api/`/`pages/`/`components/`**；有状态或依赖浏览器 API 的逻辑不放这里 |
 | `App.tsx` | 路由表 + 全局 Layout 包裹 | — | 不放数据获取、不放业务判断 |
 | `main.tsx` | 挂载入口 + 全局样式引入 | — | 不放业务逻辑 |

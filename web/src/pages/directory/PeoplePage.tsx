@@ -1,16 +1,92 @@
 /**
  * 人员列表（基础资料 → 人员管理）。
  * 职责：只调人员列表接口，关联的团队/项目名字由该接口直接带回。
- * 输入：usePeople；输出：表格 + 「新增人员」入口。
+ * 输入：usePeople；输出：DataTable + 「新增人员」入口。
  * 边界：不拉团队或项目列表（那属于对应页面自己的事）、不内嵌表单。
  */
 import { Link, useNavigate } from 'react-router-dom';
-import { Empty, ErrorState, Loading } from '../../components/States';
+import type { ColumnsType } from 'antd/es/table';
+import type { Person } from '../../api/people';
+import { DataTable } from '../../components/DataTable';
+import { Empty, ErrorState } from '../../components/States';
 import { usePeople } from '../../hooks/useDirectory';
 
 export function PeoplePage(): JSX.Element {
   const navigate = useNavigate();
   const { people, loading, error, reload } = usePeople();
+
+  const columns: ColumnsType<Person> = [
+    {
+      title: '姓名',
+      key: 'name',
+      render: (_, person) => <span className="cell-name">{person.name}</span>,
+    },
+    {
+      title: '登录名',
+      key: 'username',
+      render: (_, person) => <span className="cell-sub">{person.username || '—'}</span>,
+    },
+    {
+      title: '岗位',
+      key: 'title',
+      render: (_, person) => person.title || '—',
+    },
+    {
+      title: '联系方式',
+      key: 'contact',
+      render: (_, person) => (
+        <span className="cell-sub">{[person.email, person.phone].filter(Boolean).join(' · ') || '—'}</span>
+      ),
+    },
+    {
+      title: '关联团队',
+      key: 'teams',
+      render: (_, person) =>
+        person.teams.length === 0 ? (
+          <span className="cell-sub">—</span>
+        ) : (
+          <div className="chip-row">
+            {person.teams.map((team) => (
+              <span className="chip" key={team.id}>
+                {team.name}
+              </span>
+            ))}
+          </div>
+        ),
+    },
+    {
+      title: '关联项目',
+      key: 'projects',
+      render: (_, person) =>
+        person.projects.length === 0 ? (
+          <span className="cell-sub">—</span>
+        ) : (
+          <div className="chip-row">
+            {person.projects.map((project) => (
+              <span className="chip" key={project.id}>
+                {project.name}
+              </span>
+            ))}
+          </div>
+        ),
+    },
+    {
+      title: '',
+      key: 'actions',
+      width: 90,
+      render: (_, person) => (
+        <div className="row-actions">
+          <button
+            className="button button-ghost button-small"
+            type="button"
+            onClick={() => navigate(`/directory/people/${person.id}/edit`)}
+          >
+            编辑
+          </button>
+        </div>
+      ),
+    },
+  ];
 
   return (
     <section className="page">
@@ -25,83 +101,27 @@ export function PeoplePage(): JSX.Element {
       </div>
 
       <div className="card">
-        {loading ? <Loading text="正在加载人员…" /> : null}
-        {!loading && error ? <ErrorState message={error} onRetry={reload} /> : null}
-        {!loading && !error && people.length === 0 ? (
-          <Empty
-            title="还没有人员"
-            description="新增人员后，可以在团队与项目中关联他。"
-            action={
-              <Link className="button button-primary" to="/directory/people/new">
-                新增第一个人员
-              </Link>
+        {error ? (
+          <ErrorState message={error} onRetry={reload} />
+        ) : (
+          <DataTable<Person>
+            columns={columns}
+            dataSource={people}
+            rowKey={(person) => person.id}
+            loading={loading}
+            empty={
+              <Empty
+                title="还没有人员"
+                description="新增人员后，可以在团队与项目中关联他。"
+                action={
+                  <Link className="button button-primary" to="/directory/people/new">
+                    新增第一个人员
+                  </Link>
+                }
+              />
             }
           />
-        ) : null}
-        {!loading && !error && people.length > 0 ? (
-          <div className="table-scroll">
-            <table className="table">
-              <thead>
-                <tr>
-                  <th>姓名</th>
-                  <th>登录名</th>
-                  <th>岗位</th>
-                  <th>联系方式</th>
-                  <th>关联团队</th>
-                  <th>关联项目</th>
-                  <th aria-label="操作" />
-                </tr>
-              </thead>
-              <tbody>
-                {people.map((person) => (
-                  <tr key={person.id}>
-                    <td className="cell-name">{person.name}</td>
-                    <td className="cell-sub">{person.username || '—'}</td>
-                    <td>{person.title || '—'}</td>
-                    <td className="cell-sub">{[person.email, person.phone].filter(Boolean).join(' · ') || '—'}</td>
-                    <td>
-                      <div className="chip-row">
-                        {person.teams.length === 0 ? (
-                          <span className="cell-sub">—</span>
-                        ) : (
-                          person.teams.map((team) => (
-                            <span className="chip" key={team.id}>
-                              {team.name}
-                            </span>
-                          ))
-                        )}
-                      </div>
-                    </td>
-                    <td>
-                      <div className="chip-row">
-                        {person.projects.length === 0 ? (
-                          <span className="cell-sub">—</span>
-                        ) : (
-                          person.projects.map((project) => (
-                            <span className="chip" key={project.id}>
-                              {project.name}
-                            </span>
-                          ))
-                        )}
-                      </div>
-                    </td>
-                    <td>
-                      <div className="row-actions">
-                        <button
-                          className="button button-ghost button-small"
-                          type="button"
-                          onClick={() => navigate(`/directory/people/${person.id}/edit`)}
-                        >
-                          编辑
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        ) : null}
+        )}
       </div>
     </section>
   );
