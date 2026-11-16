@@ -138,3 +138,46 @@ CREATE TABLE IF NOT EXISTS team_projects (
 );
 
 CREATE INDEX IF NOT EXISTS idx_team_projects_project ON team_projects (project_id);
+
+-- ---------------------------------------------------------------------------
+-- users · 账号（替代"环境变量单账号"）
+-- 密码只存 PBKDF2-HMAC-SHA256 派生值（stdlib crypto/pbkdf2，无外部依赖）；
+-- token_version 自增即让该账号已发出的令牌全部失效（强制下线，无需会话表）；
+-- person_id 可空：账号可以先建，之后再绑定人员档案。
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS users (
+  id             UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+  username       TEXT        UNIQUE NOT NULL,
+  password_hash  TEXT        NOT NULL,
+  person_id      UUID        REFERENCES people(id) ON DELETE SET NULL,
+  is_super_admin BOOLEAN     NOT NULL DEFAULT false,
+  status         TEXT        NOT NULL DEFAULT 'active',
+  token_version  INT         NOT NULL DEFAULT 1,
+  last_login_at  TIMESTAMPTZ,
+  last_login_ip  TEXT        NOT NULL DEFAULT '',
+  created_at     TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_users_person ON users (person_id);
+
+-- ---------------------------------------------------------------------------
+-- audit_logs · 审计日志（只读，任何人不可改不可删）
+-- actor_name 冗余存姓名：账号改名或被禁用后，历史日志仍可读。
+-- detail 存 JSONB：记录 before/after 等结构化差异，展示时再格式化。
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS audit_logs (
+  id          BIGSERIAL   PRIMARY KEY,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+  actor_id    UUID,
+  actor_name  TEXT        NOT NULL,
+  action      TEXT        NOT NULL,
+  object_type TEXT        NOT NULL,
+  object_id   TEXT        NOT NULL DEFAULT '',
+  result      TEXT        NOT NULL,
+  detail      JSONB       NOT NULL DEFAULT '{}'::jsonb,
+  ip          TEXT        NOT NULL DEFAULT ''
+);
+
+CREATE INDEX IF NOT EXISTS idx_audit_logs_created ON audit_logs (created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_audit_logs_action ON audit_logs (action, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_audit_logs_actor ON audit_logs (actor_name, created_at DESC);

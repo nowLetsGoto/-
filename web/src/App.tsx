@@ -8,6 +8,7 @@
  */
 import { Navigate, Outlet, Route, Routes, useLocation } from 'react-router-dom';
 import { readSession } from './api/session';
+import { AdminGate } from './components/AdminGate';
 import { Layout } from './components/Layout';
 import { Empty, ErrorState, Loading } from './components/States';
 import { recentProjectKey, useProjects } from './hooks/useProjects';
@@ -18,6 +19,9 @@ import { OverviewPage } from './pages/overview/OverviewPage';
 import { PackagesPage } from './pages/distribution/PackagesPage';
 import { SettingsPage } from './pages/platform/SettingsPage';
 import { UploadPage } from './pages/distribution/UploadPage';
+import { AccountFormPage } from './pages/admin/AccountFormPage';
+import { AccountsPage } from './pages/admin/AccountsPage';
+import { AuditLogsPage } from './pages/admin/AuditLogsPage';
 import { PeoplePage } from './pages/directory/PeoplePage';
 import { PersonFormPage } from './pages/directory/PersonFormPage';
 import { ProjectFormPage } from './pages/directory/ProjectFormPage';
@@ -112,6 +116,31 @@ export function App(): JSX.Element {
           <Route path="/directory/projects/new" element={<ProjectFormPage />} />
           <Route path="/directory/projects/:key/edit" element={<ProjectFormPage />} />
           <Route path="/settings" element={<SettingsPage />} />
+          {/* 超级管理员专区：AdminGate 只做体验层拦截，接口层还有 403 兜底 */}
+          <Route
+            path="/admin/accounts"
+            element={
+              <AdminGate>
+                <AccountsPage />
+              </AdminGate>
+            }
+          />
+          <Route
+            path="/admin/accounts/new"
+            element={
+              <AdminGate>
+                <AccountFormPage />
+              </AdminGate>
+            }
+          />
+          <Route
+            path="/admin/audit-logs"
+            element={
+              <AdminGate>
+                <AuditLogsPage />
+              </AdminGate>
+            }
+          />
         </Route>
       </Route>
 

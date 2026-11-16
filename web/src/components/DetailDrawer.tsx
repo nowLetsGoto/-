@@ -25,7 +25,7 @@ export function DetailDrawer({ open, title, onClose, children, width = 560 }: De
       title={title}
       onClose={onClose}
       width={width}
-      destroyOnClose
+      destroyOnHidden
       maskClosable
     >
       {children}

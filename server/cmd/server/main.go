@@ -3,7 +3,8 @@
 // 输入：环境变量（由 config 单点读取）与内嵌前端产物、内嵌建表 DDL。
 // 输出：一个监听 PORT 的 HTTP 服务，包含 API、静态资源与 SPA fallback。
 // 边界：不含业务逻辑；不定义任何 Publisher / EventBus / Event 类型；
-//       构造函数参数化本身就是未来接入旁路时唯一需要改动的位置。
+//
+//	构造函数参数化本身就是未来接入旁路时唯一需要改动的位置。
 package main
 
 import (
@@ -23,23 +24,29 @@ import (
 	"dandelion/server/internal/app"
 	"dandelion/server/internal/config"
 	"dandelion/server/internal/handler"
+	audithandler "dandelion/server/internal/handler/audit"
 	"dandelion/server/internal/handler/login"
 	"dandelion/server/internal/handler/openapi"
 	peoplehandler "dandelion/server/internal/handler/people"
 	projecthandler "dandelion/server/internal/handler/project"
 	settingshandler "dandelion/server/internal/handler/settings"
 	teamshandler "dandelion/server/internal/handler/teams"
+	userhandler "dandelion/server/internal/handler/user"
 	"dandelion/server/internal/repository"
+	auditrepo "dandelion/server/internal/repository/audit"
 	peopleRepo "dandelion/server/internal/repository/people"
 	projectrepo "dandelion/server/internal/repository/project"
 	settingsrepo "dandelion/server/internal/repository/settings"
 	teamsRepo "dandelion/server/internal/repository/teams"
+	userRepo "dandelion/server/internal/repository/user"
 	"dandelion/server/internal/service"
+	auditsvc "dandelion/server/internal/service/audit"
 	loginsvc "dandelion/server/internal/service/login"
 	peoplesvc "dandelion/server/internal/service/people"
 	projectsvc "dandelion/server/internal/service/project"
 	settingssvc "dandelion/server/internal/service/settings"
 	teamssvc "dandelion/server/internal/service/teams"
+	usersvc "dandelion/server/internal/service/user"
 	webhooksvc "dandelion/server/internal/service/webhook"
 	"dandelion/server/internal/storage"
 )
@@ -109,13 +116,25 @@ func run() error {
 		return err
 	}
 
-	loginService := loginsvc.NewService(cfg)
+	// 账号：users 表是唯一真相，环境变量只做首次种子。
+	// 审计：只追加不修改，写失败只记日志、绝不影响业务操作。
+	auditRepository := auditrepo.NewRepository(db)
+	auditService := auditsvc.NewService(auditRepository)
+
+	usersRepository := userRepo.NewRepository(db)
+	userService := usersvc.NewService(usersRepository)
+	loginService := loginsvc.NewService(cfg, usersRepository)
+	if err := loginService.EnsureAdmin(context.Background()); err != nil {
+		return err
+	}
 	loginHandler := login.NewHandler(loginService)
-	builds := handler.NewBuildHandler(cfg, svc, paths)
+	builds := handler.NewBuildHandler(cfg, svc, paths, auditService)
 	openAPI := openapi.NewHandler(cfg, svc, paths)
 	projectHandler := projecthandler.NewHandler(projectService)
 	peopleHandler := peoplehandler.NewHandler(peopleService)
 	teamsHandler := teamshandler.NewHandler(teamsService)
+	userHandler := userhandler.NewHandler(userService, auditService)
+	auditHandler := audithandler.NewHandler(auditService)
 	settingsHandler := settingshandler.NewHandler(settingsService, webhookService)
 	health := handler.NewHealthHandler(repo, paths)
 	public, err := fs.Sub(staticfs.PublicFiles, "public")
@@ -129,6 +148,8 @@ func run() error {
 		Projects: projectHandler,
 		People:   peopleHandler,
 		Teams:    teamsHandler,
+		Users:    userHandler,
+		Audit:    auditHandler,
 		Settings: settingsHandler,
 		Verify:   loginService.Verify,
 		APIKey:   settingsService.APIKey,

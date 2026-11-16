@@ -74,10 +74,11 @@ func (s *Service) Update(ctx context.Context, id string, in contract.PersonInput
 
 // Me 返回当前登录人的档案投影。
 // 登录账号还没有对应人员时不算错误：返回空档案，前端据此回退到「第一个项目」。
-func (s *Service) Me(ctx context.Context, username string) (contract.Me, error) {
+// isSuperAdmin 由鉴权中间件判定的身份传入，前端只认这一个布尔值。
+func (s *Service) Me(ctx context.Context, username string, isSuperAdmin bool) (contract.Me, error) {
 	person, err := s.repo.FindByUsername(ctx, username)
 	if errors.Is(err, contract.ErrNotFound) {
-		return contract.Me{Username: username, ProjectKeys: []string{}}, nil
+		return contract.Me{Username: username, ProjectKeys: []string{}, IsSuperAdmin: isSuperAdmin}, nil
 	}
 	if err != nil {
 		return contract.Me{}, err
@@ -86,7 +87,10 @@ func (s *Service) Me(ctx context.Context, username string) (contract.Me, error) 
 	if err != nil {
 		return contract.Me{}, err
 	}
-	return contract.Me{Username: username, PersonID: person.ID, Name: person.Name, ProjectKeys: keys}, nil
+	return contract.Me{
+		Username: username, PersonID: person.ID, Name: person.Name,
+		ProjectKeys: keys, IsSuperAdmin: isSuperAdmin,
+	}, nil
 }
 
 // translate 把数据库约束冲突翻译成可上屏的中文提示。
@@ -104,12 +108,12 @@ func translate(err error) error {
 // normalize 收敛字段：去空白、校验长度、去重关联 ID。
 func normalize(in contract.PersonInput) (contract.PersonInput, error) {
 	out := contract.PersonInput{
-		Name:     strings.TrimSpace(in.Name),
-		Username: strings.TrimSpace(in.Username),
-		Email:    strings.TrimSpace(in.Email),
-		Phone:    strings.TrimSpace(in.Phone),
-		Title:    strings.TrimSpace(in.Title),
-		TeamIDs:  dedupe(in.TeamIDs),
+		Name:       strings.TrimSpace(in.Name),
+		Username:   strings.TrimSpace(in.Username),
+		Email:      strings.TrimSpace(in.Email),
+		Phone:      strings.TrimSpace(in.Phone),
+		Title:      strings.TrimSpace(in.Title),
+		TeamIDs:    dedupe(in.TeamIDs),
 		ProjectIDs: dedupe(in.ProjectIDs),
 	}
 

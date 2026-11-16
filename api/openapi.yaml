@@ -385,6 +385,189 @@ paths:
         '401':
           $ref: '#/components/responses/Unauthorized'
 
+  /admin/users:
+    get:
+      operationId: listUsers
+      summary: 账号列表（仅超级管理员）
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/PageParam'
+        - $ref: '#/components/parameters/PageSizeParam'
+        - name: keyword
+          in: query
+          required: false
+          description: 同时匹配登录名与绑定人员姓名
+          schema:
+            type: string
+      responses:
+        '200':
+          description: 账号列表
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserListResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          description: 非超级管理员
+    post:
+      operationId: createUser
+      summary: 新建账号（仅超级管理员）
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UserInput'
+      responses:
+        '201':
+          description: 创建成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          description: 非超级管理员
+
+  /admin/users/{id}:
+    put:
+      operationId: updateUser
+      summary: 改超管标记与绑定人员（登录名不可改）
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UserUpdate'
+      responses:
+        '200':
+          description: 更新后的账号
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          description: 非超级管理员
+
+  /admin/users/{id}/reset-password:
+    post:
+      operationId: resetUserPassword
+      summary: 重置密码，返回一次性临时密码
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: 临时密码（只出现这一次）
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PasswordResetResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          description: 非超级管理员
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /admin/users/{id}/status:
+    post:
+      operationId: setUserStatus
+      summary: 启用 / 禁用账号（禁用会立即让该账号的令牌失效）
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UserStatusInput'
+      responses:
+        '200':
+          description: 更新后的账号
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          description: 非超级管理员
+
+  /admin/audit-logs:
+    get:
+      operationId: listAuditLogs
+      summary: 审计日志（仅超级管理员，只读）
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/PageParam'
+        - $ref: '#/components/parameters/PageSizeParam'
+        - name: action
+          in: query
+          required: false
+          description: 动作模糊匹配，如 user.disabled
+          schema:
+            type: string
+        - name: actor
+          in: query
+          required: false
+          description: 操作者账号模糊匹配
+          schema:
+            type: string
+        - name: result
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [success, failure]
+      responses:
+        '200':
+          description: 审计日志列表
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuditLogListResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          description: 非超级管理员
+
   /settings:
     get:
       operationId: getSettings
@@ -1100,7 +1283,7 @@ components:
     Me:
       type: object
       description: 当前登录人；没有对应人员记录时 personId 为空、projectKeys 为空
-      required: [username, personId, name, projectKeys]
+      required: [username, personId, name, projectKeys, isSuperAdmin]
       properties:
         username:
           type: string
@@ -1113,6 +1296,116 @@ components:
           description: 该人员关联的项目 key，按项目创建顺序；前端据此决定列表页默认项目
           items:
             type: string
+        isSuperAdmin:
+          type: boolean
+          description: 是否超级管理员；前端据此决定是否渲染「超级管理员」菜单（真正的边界在服务端 403）
+
+    User:
+      type: object
+      description: 账号视图（不含任何密码字段）
+      required: [id, username, personId, personName, isSuperAdmin, status, lastLoginAt, lastLoginIp, createdAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        username:
+          type: string
+        personId:
+          type: string
+          description: 绑定的人员档案 id，空表示未绑定
+        personName:
+          type: string
+        isSuperAdmin:
+          type: boolean
+        status:
+          type: string
+          enum: [active, disabled]
+        lastLoginAt:
+          type: string
+          format: date-time
+        lastLoginIp:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+
+    UserInput:
+      type: object
+      description: 新建账号
+      additionalProperties: false
+      required: [username, password, personId, isSuperAdmin]
+      properties:
+        username:
+          type: string
+          maxLength: 32
+          pattern: '^[a-zA-Z0-9._-]{3,32}$'
+        password:
+          type: string
+          minLength: 8
+          maxLength: 64
+        personId:
+          type: string
+        isSuperAdmin:
+          type: boolean
+
+    UserUpdate:
+      type: object
+      description: 编辑账号（登录名不可改）
+      additionalProperties: false
+      required: [personId, isSuperAdmin]
+      properties:
+        personId:
+          type: string
+        isSuperAdmin:
+          type: boolean
+
+
+    AuditLog:
+      type: object
+      description: 一条审计记录；detail 是 JSON 文本，由写入方决定结构
+      required: [id, createdAt, actorId, actorName, action, objectType, objectId, result, detail, ip]
+      properties:
+        id:
+          type: integer
+          format: int64
+        createdAt:
+          type: string
+          format: date-time
+        actorId:
+          type: string
+        actorName:
+          type: string
+        action:
+          type: string
+        objectType:
+          type: string
+        objectId:
+          type: string
+        result:
+          type: string
+          enum: [success, failure]
+        detail:
+          type: string
+        ip:
+          type: string
+
+    UserStatusInput:
+      type: object
+      additionalProperties: false
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [active, disabled]
+
+    PasswordReset:
+      type: object
+      description: 一次性临时密码，只在该响应里出现一次
+      required: [password]
+      properties:
+        password:
+          type: string
+
 
     MetaSource:
       type: string
@@ -1495,3 +1788,64 @@ components:
           properties:
             data:
               $ref: '#/components/schemas/Me'
+
+    UserResponse:
+      allOf:
+        - $ref: '#/components/schemas/ApiResponse'
+        - type: object
+          required: [data]
+          properties:
+            data:
+              $ref: '#/components/schemas/User'
+
+    UserListResponse:
+      allOf:
+        - $ref: '#/components/schemas/ApiResponse'
+        - type: object
+          required: [data]
+          properties:
+            data:
+              type: object
+              required: [items, total, page, pageSize]
+              properties:
+                items:
+                  type: array
+                  items:
+                    $ref: '#/components/schemas/User'
+                total:
+                  type: integer
+                page:
+                  type: integer
+                pageSize:
+                  type: integer
+
+
+    AuditLogListResponse:
+      allOf:
+        - $ref: '#/components/schemas/ApiResponse'
+        - type: object
+          required: [data]
+          properties:
+            data:
+              type: object
+              required: [items, total, page, pageSize]
+              properties:
+                items:
+                  type: array
+                  items:
+                    $ref: '#/components/schemas/AuditLog'
+                total:
+                  type: integer
+                page:
+                  type: integer
+                pageSize:
+                  type: integer
+
+    PasswordResetResponse:
+      allOf:
+        - $ref: '#/components/schemas/ApiResponse'
+        - type: object
+          required: [data]
+          properties:
+            data:
+              $ref: '#/components/schemas/PasswordReset'

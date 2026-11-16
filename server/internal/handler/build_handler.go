@@ -2,7 +2,8 @@
 // 职责：取参与校验、调用 service、设置下载响应头与状态码、下载成功后计数。
 // 输入：HTTP 请求（multipart / JSON / query）；输出：统一 JSON 或二进制包流。
 // 边界：不写 SQL、不拼存储路径、不做业务判断；
-//       multipart 处理在 upload.go、提交字段校验在 commit.go，两者与 /open/builds 共用。
+//
+//	multipart 处理在 upload.go、提交字段校验在 commit.go，两者与 /open/builds 共用。
 package handler
 
 import (
@@ -17,9 +18,11 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"dandelion/server/internal/authctx"
 	"dandelion/server/internal/config"
 	"dandelion/server/internal/contract"
 	"dandelion/server/internal/service"
+	auditsvc "dandelion/server/internal/service/audit"
 	"dandelion/server/internal/storage"
 )
 
@@ -28,10 +31,11 @@ type BuildHandler struct {
 	cfg   config.Config
 	svc   *service.BuildService
 	paths *storage.Paths
+	audit *auditsvc.Service
 }
 
-func NewBuildHandler(cfg config.Config, svc *service.BuildService, paths *storage.Paths) *BuildHandler {
-	return &BuildHandler{cfg: cfg, svc: svc, paths: paths}
+func NewBuildHandler(cfg config.Config, svc *service.BuildService, paths *storage.Paths, audit *auditsvc.Service) *BuildHandler {
+	return &BuildHandler{cfg: cfg, svc: svc, paths: paths, audit: audit}
 }
 
 // Stage 接收唯一一次文件上传：流式写 storage/tmp/{token}.{ext}，再同步解析。
@@ -64,6 +68,12 @@ func (h *BuildHandler) Commit(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
+	// 发布是最值得追溯的动作：谁在什么时候往哪个环境发了哪个版本。
+	h.audit.Record(r.Context(), authctx.From(r.Context()), "build.created", "build", build.ID,
+		map[string]any{
+			"project": in.Project, "environment": build.Environment, "platform": build.Platform,
+			"appName": build.AppName, "version": build.Version, "buildNumber": build.BuildNumber,
+		}, ClientIP(r))
 	return OKWithStatus(w, http.StatusCreated, build)
 }
 

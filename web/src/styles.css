@@ -1700,6 +1700,145 @@ code {
   }
 }
 
+.audit-action {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.audit-code,
+.audit-detail {
+  font-family: var(--font-mono);
+}
+
+.audit-code {
+  color: var(--color-faint);
+  font-size: 11px;
+}
+
+.audit-detail {
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--color-border-soft);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-2);
+  color: var(--color-text-2);
+  font-size: 12px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+/* ================= 超级管理员专区 ================= */
+
+/* 分组标题：顶部加分隔线，与日常菜单刻意分开 */
+.nav-group-admin {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: var(--spacing-md);
+  padding-top: var(--spacing-md);
+  border-top: 1px solid var(--color-border-soft);
+}
+
+/* Admin 角标用琥珀色：和主色（可点击）区分开，表示"高权限区"而不是"可点" */
+.admin-badge {
+  padding: 0 6px;
+  border-radius: 4px;
+  background: #fdf1e3;
+  color: #9a5b12;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  line-height: 16px;
+}
+
+.badge-admin {
+  background: #fdf1e3;
+  color: #9a5b12;
+}
+
+/* 启用 / 禁用：小圆点 + 文字，比纯文字更快扫读 */
+.status-dot {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12.5px;
+}
+
+.status-dot::before {
+  content: '';
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.status-online {
+  color: #0f7a4d;
+}
+
+.status-offline {
+  color: var(--color-faint);
+}
+
+.chip-self {
+  margin-left: 6px;
+  background: var(--color-primary-soft);
+  border-color: transparent;
+  color: var(--color-primary-strong);
+}
+
+/* 一次性临时密码：用琥珀色提示条，和普通信息区分开 */
+.temp-password {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--spacing-md);
+  margin-bottom: var(--spacing-md);
+  padding: 10px var(--spacing-md);
+  border: 1px solid #f3d9a8;
+  border-radius: var(--radius);
+  background: #fffaf0;
+  color: #7a4c0a;
+  font-size: 13px;
+}
+
+.temp-password code {
+  margin: 0 6px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: #ffffff;
+  color: var(--color-text);
+  font-family: var(--font-mono);
+  font-size: 13px;
+}
+
+.temp-password-hint {
+  margin-left: 8px;
+  color: #9a7534;
+  font-size: 12px;
+}
+
+.toolbar-search {
+  max-width: 240px;
+}
+
+.confirm-body p {
+  margin: 0 0 8px;
+  line-height: 1.7;
+}
+
+.confirm-body p:last-child {
+  margin-bottom: 0;
+}
+
+.field-check-admin {
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 6px;
+}
+
 @media (max-width: 900px) {
   .app-shell {
     grid-template-columns: 1fr;

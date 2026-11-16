@@ -26,6 +26,8 @@ var (
 	ErrUnauthorized = errors.New("登录状态已失效，请重新登录")
 	// ErrAPIKeyInvalid 外部接口的 Key 缺失 / 未配置 / 不匹配 → 401。
 	ErrAPIKeyInvalid = errors.New("API Key 无效，请在系统设置中查看后重试")
+	// ErrForbidden 已登录但无权访问该功能 → 403（前端隐藏菜单不是安全边界，接口必须自己拒绝）。
+	ErrForbidden = errors.New("无权访问该功能")
 	// ErrProjectInvalid 请求里的项目 key 不存在 → 400：属于参数错误，不是资源缺失。
 	ErrProjectInvalid = errors.New("项目不存在，请刷新项目列表后重试")
 )
@@ -63,24 +65,29 @@ const (
 
 // 路由常量：servers.url + paths 键组成完整路径；契约测试比对同一份列表。
 const (
-	APIPrefix         = "/api/v1"
-	RouteLogin        = APIPrefix + "/auth/login"
-	RouteProjects     = APIPrefix + "/projects"
-	RouteProjectByKey = APIPrefix + "/projects/{key}"
-	RoutePeople       = APIPrefix + "/people"
-	RoutePersonByID   = APIPrefix + "/people/{id}"
-	RouteTeams        = APIPrefix + "/teams"
-	RouteTeamByID     = APIPrefix + "/teams/{id}"
-	RouteMe           = APIPrefix + "/me"
-	RouteSettings     = APIPrefix + "/settings"
-	RouteWebhookTest  = APIPrefix + "/settings/webhook/test"
-	RouteOpenBuilds   = APIPrefix + "/open/builds"
-	RouteStage        = APIPrefix + "/builds/stage"
-	RouteBuilds       = APIPrefix + "/builds"
-	RouteBuildByID    = APIPrefix + "/builds/{id}"
-	RouteBuildFile    = APIPrefix + "/builds/{id}/file"
-	RouteHealth       = "/healthz"
-	RouteDownloadPage = "/d/{id}"
+	APIPrefix              = "/api/v1"
+	RouteLogin             = APIPrefix + "/auth/login"
+	RouteProjects          = APIPrefix + "/projects"
+	RouteProjectByKey      = APIPrefix + "/projects/{key}"
+	RoutePeople            = APIPrefix + "/people"
+	RoutePersonByID        = APIPrefix + "/people/{id}"
+	RouteTeams             = APIPrefix + "/teams"
+	RouteTeamByID          = APIPrefix + "/teams/{id}"
+	RouteMe                = APIPrefix + "/me"
+	RouteAdminUsers        = APIPrefix + "/admin/users"
+	RouteAdminUserByID     = APIPrefix + "/admin/users/{id}"
+	RouteAdminUserPassword = APIPrefix + "/admin/users/{id}/reset-password"
+	RouteAdminUserStatus   = APIPrefix + "/admin/users/{id}/status"
+	RouteAdminAuditLogs    = APIPrefix + "/admin/audit-logs"
+	RouteSettings          = APIPrefix + "/settings"
+	RouteWebhookTest       = APIPrefix + "/settings/webhook/test"
+	RouteOpenBuilds        = APIPrefix + "/open/builds"
+	RouteStage             = APIPrefix + "/builds/stage"
+	RouteBuilds            = APIPrefix + "/builds"
+	RouteBuildByID         = APIPrefix + "/builds/{id}"
+	RouteBuildFile         = APIPrefix + "/builds/{id}/file"
+	RouteHealth            = "/healthz"
+	RouteDownloadPage      = "/d/{id}"
 )
 
 // 契约级上限，与 x-constants 对齐。
@@ -118,7 +125,10 @@ var Environments = []string{EnvTest, EnvHotfix, EnvPre, EnvPrd}
 var Platforms = []string{PlatformAndroid, PlatformIOS, PlatformHarmony}
 var MetaSources = []string{MetaParsed, MetaFallback}
 var APIRoutes = []string{
-	RouteLogin, RouteMe, RouteProjects, RouteProjectByKey,
+	RouteLogin, RouteMe,
+	RouteAdminUsers, RouteAdminUserByID, RouteAdminUserPassword, RouteAdminUserStatus,
+	RouteAdminAuditLogs,
+	RouteProjects, RouteProjectByKey,
 	RoutePeople, RoutePersonByID, RouteTeams, RouteTeamByID,
 	RouteSettings, RouteWebhookTest, RouteOpenBuilds,
 	RouteStage, RouteBuilds, RouteBuildByID, RouteBuildFile, RouteHealth,
@@ -367,10 +377,89 @@ type TeamList struct {
 // Me 是「当前登录人」的档案投影：没有对应人员记录时 PersonID 为空、ProjectKeys 为空。
 // 前端据此把应用包/应用的默认项目设为「我关联的第一个项目」。
 type Me struct {
-	Username    string   `json:"username"`
-	PersonID    string   `json:"personId"`
-	Name        string   `json:"name"`
-	ProjectKeys []string `json:"projectKeys"`
+	Username     string   `json:"username"`
+	PersonID     string   `json:"personId"`
+	Name         string   `json:"name"`
+	ProjectKeys  []string `json:"projectKeys"`
+	IsSuperAdmin bool     `json:"isSuperAdmin"`
+}
+
+// Identity 是鉴权中间件解析出的「当前调用者」，只含判定所需的最小字段。
+// 放在 contract 里是因为 service/login 产出它、middleware/login 消费它，两边不该互相 import。
+type Identity struct {
+	UserID       string
+	Username     string
+	IsSuperAdmin bool
+}
+
+// User 是账号视图：**不含任何密码字段**。
+type User struct {
+	ID           string `json:"id"`
+	Username     string `json:"username"`
+	PersonID     string `json:"personId"`
+	PersonName   string `json:"personName"`
+	IsSuperAdmin bool   `json:"isSuperAdmin"`
+	Status       string `json:"status"`
+	LastLoginAt  string `json:"lastLoginAt"`
+	LastLoginIP  string `json:"lastLoginIp"`
+	CreatedAt    string `json:"createdAt"`
+}
+
+// UserInput 新建账号：账号名 + 初始密码 + 是否超管（+ 可选绑定人员）。
+type UserInput struct {
+	Username     string `json:"username"`
+	Password     string `json:"password"`
+	PersonID     string `json:"personId"`
+	IsSuperAdmin bool   `json:"isSuperAdmin"`
+}
+
+// UserUpdate 编辑账号：账号名不可改，只允许改超管标记与绑定人员。
+type UserUpdate struct {
+	PersonID     string `json:"personId"`
+	IsSuperAdmin bool   `json:"isSuperAdmin"`
+}
+
+// UserStatusInput 只用于启用 / 禁用。
+type UserStatusInput struct {
+	Status string `json:"status"`
+}
+
+// PasswordReset 承载一次性临时密码；明文只在该响应里出现一次。
+type PasswordReset struct {
+	Password string `json:"password"`
+}
+
+// AuditLog 是一条审计记录；detail 是 JSON 文本（写入方决定结构），前端格式化展示。
+type AuditLog struct {
+	ID         int64  `json:"id"`
+	CreatedAt  string `json:"createdAt"`
+	ActorID    string `json:"actorId"`
+	ActorName  string `json:"actorName"`
+	Action     string `json:"action"`
+	ObjectType string `json:"objectType"`
+	ObjectID   string `json:"objectId"`
+	Result     string `json:"result"`
+	Detail     string `json:"detail"`
+	IP         string `json:"ip"`
+}
+
+// AuditQuery 是审计日志的筛选条件，字段为空表示不筛。
+type AuditQuery struct {
+	Action    string
+	ActorName string
+	Result    string
+}
+
+// AuditLogList 是审计列表响应体：items 与分页元信息平铺。
+type AuditLogList struct {
+	Items []AuditLog `json:"items"`
+	Page
+}
+
+// UserList 是账号列表响应体：items 与分页元信息平铺。
+type UserList struct {
+	Items []User `json:"items"`
+	Page
 }
 
 var projectKeyPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{1,31}$`)

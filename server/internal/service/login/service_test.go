@@ -1,111 +1,90 @@
-// service_test.go · 登录业务层的边界行为。
-// 职责：验证凭据校验、令牌签发与校验、篡改 / 换密钥 / 过期一律拒绝。
-// 输入：手工构造的 config.Config；输出：断言结果。
-// 边界：不启动 HTTP、不连数据库、不读环境变量，纯内存验证。
+// service_test.go · 密码派生与令牌载荷的边界行为。
+// 职责：验证密码哈希能自洽校验、盐随机、篡改必拒，以及令牌载荷对非法账号名的拒绝。
+// 输入：纯函数入参；输出：断言结果。
+// 边界：不启动 HTTP、**不连数据库**——Authenticate / Verify 依赖 users 表，
+//       属于集成测试范畴（见 docs/07-QA-TEST-PLAN.md），这里只锁纯逻辑。
 package login
 
 import (
-	"strconv"
 	"strings"
 	"testing"
-	"time"
-
-	"dandelion/server/internal/config"
-	"dandelion/server/internal/contract"
 )
 
-func newTestService(t *testing.T) *Service {
-	t.Helper()
-	return NewService(config.Config{
-		AdminUsername: "admin",
-		AdminPassword: "admin123456",
-		AuthSecret:    "test-secret",
-	})
+func TestHashPasswordRoundTrip(t *testing.T) {
+	hash, err := HashPassword("admin123456")
+	if err != nil {
+		t.Fatalf("哈希失败: %v", err)
+	}
+	if !verifyPassword(hash, "admin123456") {
+		t.Fatal("正确密码应校验通过")
+	}
+	if verifyPassword(hash, "admin1234567") {
+		t.Fatal("错误密码不应通过")
+	}
 }
 
-func TestLoginRejectsWrongCredentials(t *testing.T) {
-	svc := newTestService(t)
-	cases := []struct {
-		name     string
-		username string
-		password string
-	}{
-		{"密码错误", "admin", "wrong-password"},
-		{"用户名错误", "root", "admin123456"},
-		{"空口令", "admin", ""},
+func TestHashPasswordUsesRandomSalt(t *testing.T) {
+	first, err := HashPassword("same-password")
+	if err != nil {
+		t.Fatalf("哈希失败: %v", err)
 	}
-	for _, tc := range cases {
-		if _, err := svc.Login(tc.username, tc.password); err != contract.ErrInvalidCredentials {
-			t.Fatalf("%s: 期望 ErrInvalidCredentials，实际 %v", tc.name, err)
+	second, err := HashPassword("same-password")
+	if err != nil {
+		t.Fatalf("哈希失败: %v", err)
+	}
+	if first == second {
+		t.Fatal("同一密码两次哈希结果不应相同（盐必须随机）")
+	}
+	if !verifyPassword(first, "same-password") || !verifyPassword(second, "same-password") {
+		t.Fatal("两个哈希都应能校验通过")
+	}
+}
+
+func TestVerifyPasswordRejectsMalformedHash(t *testing.T) {
+	cases := map[string]string{
+		"空串":        "",
+		"段数不足":      "pbkdf2-sha256$100000$abc",
+		"算法不符":      "bcrypt$100000$c2FsdA$aGFzaA",
+		"迭代次数非法":    "pbkdf2-sha256$abc$c2FsdA$aGFzaA",
+		"盐不是 base64": "pbkdf2-sha256$100000$%%%$%%%",
+	}
+	for name, stored := range cases {
+		if verifyPassword(stored, "whatever") {
+			t.Fatalf("%s：非法哈希不应通过校验", name)
 		}
 	}
 }
 
-func TestLoginIssuesVerifiableToken(t *testing.T) {
-	svc := newTestService(t)
-	result, err := svc.Login("admin", "admin123456")
+func TestVerifyPasswordRejectsTamperedHash(t *testing.T) {
+	hash, err := HashPassword("admin123456")
 	if err != nil {
-		t.Fatalf("正确凭据应登录成功: %v", err)
+		t.Fatalf("哈希失败: %v", err)
 	}
-	if result.Token == "" || result.Username != "admin" || result.ExpiresAt == "" {
-		t.Fatalf("登录结果不完整: %+v", result)
-	}
-
-	username, ok := svc.Verify(result.Token)
-	if !ok || username != "admin" {
-		t.Fatalf("签发的令牌应通过校验，实际 ok=%v username=%q", ok, username)
+	// 篡改派生值最后一个字符
+	tampered := hash[:len(hash)-1] + string(hash[len(hash)-1]^0x01)
+	if verifyPassword(tampered, "admin123456") {
+		t.Fatal("被篡改的哈希不应通过校验")
 	}
 }
 
-func TestVerifyRejectsTamperedToken(t *testing.T) {
-	svc := newTestService(t)
-	result, err := svc.Login("admin", "admin123456")
-	if err != nil {
-		t.Fatalf("登录失败: %v", err)
-	}
-
-	if _, ok := svc.Verify(result.Token + "x"); ok {
-		t.Fatal("签名被追加字符后必须校验失败")
-	}
-
-	exp, signature, found := strings.Cut(result.Token, ".")
-	if !found {
-		t.Fatalf("令牌格式应为「载荷.签名」: %s", result.Token)
-	}
-	expiresAt, err := strconv.ParseInt(exp, 10, 64)
-	if err != nil {
-		t.Fatalf("令牌载荷应为到期时间戳: %v", err)
-	}
-	if _, ok := svc.Verify(strconv.FormatInt(expiresAt+60, 10) + "." + signature); ok {
-		t.Fatal("延长到期时间的令牌必须校验失败（载荷受签名保护）")
-	}
-}
-
-func TestVerifyRejectsMalformedExpiredAndForeignToken(t *testing.T) {
-	svc := newTestService(t)
-
-	for _, token := range []string{"", ".", "abc", "abc.", ".abc", "abc.def"} {
-		if _, ok := svc.Verify(token); ok {
-			t.Fatalf("畸形令牌 %q 必须校验失败", token)
+func TestIssueRejectsUnsafeUsername(t *testing.T) {
+	// 账号名会进令牌载荷（| 分段、. 分隔签名），必须挡住这些字符。
+	svc := &Service{secret: []byte("test-secret")}
+	for _, username := range []string{"a|b", "a.b", "admin|1|999"} {
+		if _, err := svc.issue(username, 1, 9999999999); err == nil {
+			t.Fatalf("账号名 %q 含分隔符，应被拒绝", username)
 		}
 	}
 
-	// 用同一密钥直接签发一个已过期的时间戳，验证有效期判断。
-	if _, ok := svc.Verify(svc.issue(time.Now().Add(-time.Minute).Unix())); ok {
-		t.Fatal("过期令牌必须校验失败")
-	}
-
-	// 换一枚密钥签发的令牌不能通过本服务校验。
-	result, err := svc.Login("admin", "admin123456")
+	token, err := svc.issue("admin", 3, 9999999999)
 	if err != nil {
-		t.Fatalf("登录失败: %v", err)
+		t.Fatalf("合法账号名不应报错: %v", err)
 	}
-	foreign := NewService(config.Config{
-		AdminUsername: "admin",
-		AdminPassword: "admin123456",
-		AuthSecret:    "another-secret",
-	})
-	if _, ok := foreign.Verify(result.Token); ok {
-		t.Fatal("换密钥后旧令牌必须失效")
+	payload, signature, found := strings.Cut(token, ".")
+	if !found || payload != "admin|3|9999999999" {
+		t.Fatalf("令牌载荷格式不符: %q", payload)
+	}
+	if signature != svc.mac(payload) {
+		t.Fatal("签名应与载荷一致")
 	}
 }

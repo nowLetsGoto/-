@@ -28,11 +28,13 @@ type AppError struct {
 
 func (e *AppError) Error() string { return e.Message }
 
-func BadRequest(message string) error       { return &AppError{Status: 400, Code: 400, Message: message} }
-func NotFound(message string) error         { return &AppError{Status: 404, Code: 404, Message: message} }
-func MethodNotAllowed(message string) error { return &AppError{Status: 405, Code: 405, Message: message} }
-func TooLarge(message string) error         { return &AppError{Status: 413, Code: 413, Message: message} }
-func Internal(message string) error         { return &AppError{Status: 500, Code: 500, Message: message} }
+func BadRequest(message string) error { return &AppError{Status: 400, Code: 400, Message: message} }
+func NotFound(message string) error   { return &AppError{Status: 404, Code: 404, Message: message} }
+func MethodNotAllowed(message string) error {
+	return &AppError{Status: 405, Code: 405, Message: message}
+}
+func TooLarge(message string) error { return &AppError{Status: 413, Code: 413, Message: message} }
+func Internal(message string) error { return &AppError{Status: 500, Code: 500, Message: message} }
 
 type apiEnvelope struct {
 	Code    int    `json:"code"`
@@ -110,6 +112,8 @@ func WriteError(w http.ResponseWriter, r *http.Request, err error) {
 			appErr = &AppError{Status: 401, Code: 401, Message: contract.ErrUnauthorized.Error()}
 		case errors.Is(err, contract.ErrAPIKeyInvalid):
 			appErr = &AppError{Status: 401, Code: 401, Message: contract.ErrAPIKeyInvalid.Error()}
+		case errors.Is(err, contract.ErrForbidden):
+			appErr = &AppError{Status: 403, Code: 403, Message: contract.ErrForbidden.Error()}
 		default:
 			log.Printf("[500] method=%s path=%s query=%s %s err=%v",
 				r.Method, r.URL.Path, r.URL.RawQuery, logFields(r), err)

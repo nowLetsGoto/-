@@ -25,6 +25,8 @@ export interface NavSection {
   /** 一级菜单名 */
   title: string;
   items: ReadonlyArray<NavItem>;
+  /** 整组仅超级管理员可见；前端只做隐藏，真正的边界是服务端 403 */
+  requireSuperAdmin?: boolean;
 }
 
 export const NAV_SECTIONS: ReadonlyArray<NavSection> = [
@@ -50,6 +52,15 @@ export const NAV_SECTIONS: ReadonlyArray<NavSection> = [
   {
     title: '平台',
     items: [{ label: '系统设置', path: '/settings', icon: 'settings', scope: 'platform', envScoped: false }],
+  },
+  {
+    // 独立一级区：放在最后、带 Admin 角标，和日常菜单刻意分开
+    title: '超级管理员',
+    requireSuperAdmin: true,
+    items: [
+      { label: '账号管理', path: '/admin/accounts', icon: 'shield', scope: 'platform', envScoped: false },
+      { label: '审计日志', path: '/admin/audit-logs', icon: 'overview', scope: 'platform', envScoped: false },
+    ],
   },
 ];
 

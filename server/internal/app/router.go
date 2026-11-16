@@ -1,10 +1,13 @@
 // Package app 负责路由装配与静态托管。
 // 职责：注册登录接口与 /api/v1 业务接口、按「公开 / 需登录」分组、托管 embed 静态资源、
-//       实现 SPA fallback、挂载错误中间件。
+//
+//	实现 SPA fallback、挂载错误中间件。
+//
 // 输入：已构造好的 handler 与前端静态 FS（由 main.go 注入）。
 // 输出：可直接交给 http.Server 的 http.Handler。
 // 边界：不做业务判断、不做角色权限（只有「已登录 / 未登录」两种）；
-//       中间件顺序为「API 路由 → /healthz → 静态 → SPA fallback → 错误中间件（最外层，最后挂载）」。
+//
+//	中间件顺序为「API 路由 → /healthz → 静态 → SPA fallback → 错误中间件（最外层，最后挂载）」。
 package app
 
 import (
@@ -18,12 +21,14 @@ import (
 
 	"dandelion/server/internal/contract"
 	"dandelion/server/internal/handler"
+	audithandler "dandelion/server/internal/handler/audit"
 	"dandelion/server/internal/handler/login"
 	"dandelion/server/internal/handler/openapi"
 	peoplehandler "dandelion/server/internal/handler/people"
 	projecthandler "dandelion/server/internal/handler/project"
 	settingshandler "dandelion/server/internal/handler/settings"
 	teamshandler "dandelion/server/internal/handler/teams"
+	userhandler "dandelion/server/internal/handler/user"
 	"dandelion/server/internal/middleware"
 	"dandelion/server/internal/middleware/apikey"
 	loginmw "dandelion/server/internal/middleware/login"
@@ -37,6 +42,8 @@ type Deps struct {
 	Login    *login.Handler
 	Projects *projecthandler.Handler
 	People   *peoplehandler.Handler
+	Users    *userhandler.Handler
+	Audit    *audithandler.Handler
 	Teams    *teamshandler.Handler
 	Settings *settingshandler.Handler
 	Verify   loginmw.Verifier
@@ -50,21 +57,21 @@ type Deps struct {
 // chi 的默认 405 处理器会自动回填 Allow 头；一旦自定义 MethodNotAllowed 就必须自己补，
 // 否则响应缺少 Allow，与契约 §6.1 的「405 + Allow + JSON 外壳」不一致。
 var allowedMethods = map[string]string{
-	contract.RouteLogin:       "POST",
-	contract.RouteMe:          "GET",
-	contract.RouteProjects:    "GET, POST",
+	contract.RouteLogin:        "POST",
+	contract.RouteMe:           "GET",
+	contract.RouteProjects:     "GET, POST",
 	contract.RouteProjectByKey: "GET, PUT",
-	contract.RoutePeople:      "GET, POST",
-	contract.RoutePersonByID:  "GET, PUT",
-	contract.RouteTeams:       "GET, POST",
-	contract.RouteTeamByID:    "GET, PUT",
-	contract.RouteOpenBuilds:  "POST",
-	contract.RouteSettings:    "GET, PUT",
-	contract.RouteWebhookTest: "POST",
-	contract.RouteBuilds:      "GET, POST",
-	contract.RouteStage:       "POST",
-	contract.RouteBuildByID:   "GET",
-	contract.RouteBuildFile:   "GET",
+	contract.RoutePeople:       "GET, POST",
+	contract.RoutePersonByID:   "GET, PUT",
+	contract.RouteTeams:        "GET, POST",
+	contract.RouteTeamByID:     "GET, PUT",
+	contract.RouteOpenBuilds:   "POST",
+	contract.RouteSettings:     "GET, PUT",
+	contract.RouteWebhookTest:  "POST",
+	contract.RouteBuilds:       "GET, POST",
+	contract.RouteStage:        "POST",
+	contract.RouteBuildByID:    "GET",
+	contract.RouteBuildFile:    "GET",
 }
 
 // allowedMethodsFor 返回该请求应回填的 Allow 值。
@@ -81,6 +88,8 @@ func allowedMethodsFor(req *http.Request) string {
 		return "POST"
 	case path == contract.RouteMe:
 		return "GET"
+	case strings.HasPrefix(path, contract.RouteAdminUsers):
+		return "GET, POST, PUT"
 	case path == contract.RouteProjects, path == contract.RoutePeople, path == contract.RouteTeams:
 		return "GET, POST"
 	case strings.HasPrefix(path, contract.RouteProjects+"/"), strings.HasPrefix(path, contract.RoutePeople+"/"):
@@ -136,6 +145,19 @@ func NewRouter(d Deps) http.Handler {
 			private.Post("/teams", middleware.Wrap(d.Teams.Create))
 			private.Get("/teams/{id}", middleware.Wrap(d.Teams.Get))
 			private.Put("/teams/{id}", middleware.Wrap(d.Teams.Update))
+		})
+
+		// 超级管理员专区：RequireAuth 之后再叠一层 RequireSuperAdmin，
+		// 前端隐藏菜单只是体验，这里的 403 才是真正的边界。
+		api.Group(func(admin chi.Router) {
+			admin.Use(loginmw.RequireAuth(d.Verify))
+			admin.Use(loginmw.RequireSuperAdmin)
+			admin.Get("/admin/users", middleware.Wrap(d.Users.List))
+			admin.Post("/admin/users", middleware.Wrap(d.Users.Create))
+			admin.Put("/admin/users/{id}", middleware.Wrap(d.Users.Update))
+			admin.Post("/admin/users/{id}/reset-password", middleware.Wrap(d.Users.ResetPassword))
+			admin.Post("/admin/users/{id}/status", middleware.Wrap(d.Users.SetStatus))
+			admin.Get("/admin/audit-logs", middleware.Wrap(d.Audit.List))
 		})
 	})
 	r.Get(contract.RouteHealth, middleware.Wrap(d.Health.Health))

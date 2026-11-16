@@ -1,7 +1,7 @@
-// Package login · 登录令牌校验中间件。
-// 职责：从 Authorization: Bearer <token> 取令牌，交给注入的校验函数；失败即 401 并中断。
-// 输入：校验函数（由 service/login 的 Service.Verify 提供）；输出：可挂到 chi.Group 的中间件。
-// 边界：不解析令牌、不查库、不做角色权限判断；「未携带」与「已失效」统一 401，避免泄露差异。
+// Package login · 鉴权中间件。
+// 职责：校验 Bearer 令牌、把调用者身份写进请求上下文、提供「仅超级管理员」的守门器。
+// 输入：Verifier（由 service/login 提供）；输出：包装后的 http.Handler。
+// 边界：不解析业务、不写库；令牌无效统一 401，身份够不到统一 403。
 package login
 
 import (
@@ -9,44 +9,49 @@ import (
 	"net/http"
 	"strings"
 
+	"dandelion/server/internal/authctx"
 	"dandelion/server/internal/contract"
 	"dandelion/server/internal/handler"
 )
 
-// Verifier 校验令牌，成功时返回用户名。用函数而非具体类型，便于测试替换。
-type Verifier func(token string) (username string, ok bool)
+// Verifier 校验令牌：成功返回调用者身份。带上 ctx 是因为校验要读账号状态与令牌版本。
+type Verifier func(ctx context.Context, token string) (contract.Identity, bool)
 
-// usernameKey 是登录名在请求上下文里的键；用私有类型避免与其他包的键相撞。
-type usernameKey struct{}
-
-// RequireAuth 返回校验 Bearer 令牌的中间件；校验通过后把登录名写进上下文再放行，
-// 这样 /me 这类需要"当前登录人"的接口不必再解一次令牌。
+// RequireAuth 返回校验 Bearer 令牌的中间件；通过后把身份写进上下文再放行。
 func RequireAuth(verify Verifier) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			username, ok := verify(bearerToken(r))
+			identity, ok := verify(r.Context(), bearerToken(r))
 			if !ok {
 				handler.WriteError(w, r, contract.ErrUnauthorized)
 				return
 			}
-			next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), usernameKey{}, username)))
+			next.ServeHTTP(w, r.WithContext(authctx.With(r.Context(), identity)))
 		})
 	}
 }
 
-// UsernameFrom 取中间件写入的登录名；未经中间件时返回空串。
-func UsernameFrom(ctx context.Context) string {
-	username, _ := ctx.Value(usernameKey{}).(string)
-	return username
+// RequireSuperAdmin 只放行超级管理员，**必须挂在 RequireAuth 之后**。
+// 前端把菜单藏起来只是体验，真正的边界在这里：非超管一律 403。
+func RequireSuperAdmin(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !authctx.From(r.Context()).IsSuperAdmin {
+			handler.WriteError(w, r, contract.ErrForbidden)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
-// bearerToken 取出 Bearer 之后的令牌；缺失或格式不符时返回空串（Verifier 会判为无效）。
+// bearerToken 从 Authorization 头取令牌，容忍大小写与前后的空格。
 func bearerToken(r *http.Request) string {
-	const prefix = "Bearer "
-	value := r.Header.Get("Authorization")
-	// 先比长度再切片，避免短请求头触发越界；EqualFold 兼容 bearer / BEARER。
-	if len(value) <= len(prefix) || !strings.EqualFold(value[:len(prefix)], prefix) {
+	header := strings.TrimSpace(r.Header.Get("Authorization"))
+	if header == "" {
 		return ""
 	}
-	return strings.TrimSpace(value[len(prefix):])
+	scheme, token, found := strings.Cut(header, " ")
+	if !found || !strings.EqualFold(scheme, "Bearer") {
+		return ""
+	}
+	return strings.TrimSpace(token)
 }

@@ -119,7 +119,7 @@ make build          # 前端产物 → server/public/，再 CGO_ENABLED=0 go bui
 
 ---
 
-## 5. 接口速查（25 个）
+## 5. 接口速查（31 个）
 
 统一响应 `{code, data, message}`：成功 `code=0`，失败 `code` = HTTP 状态码（只有 400 / 401 / 404 / 405 / 413 / 500）且 `data=null`。唯一例外是文件下载成功返回二进制流。
 
@@ -149,7 +149,13 @@ make build          # 前端产物 → server/public/，再 CGO_ENABLED=0 go bui
 | 22 | GET | `/api/v1/me` | 需登录 | 当前登录人 + 关联项目 key（列表页默认项目的来源） |
 | 23 | GET | `/api/v1/people/{id}` | 需登录 | 人员详情（编辑页回填），id 非 UUID 或不存在均 404 |
 | 24 | GET | `/api/v1/teams/{id}` | 需登录 | 团队详情（编辑页回填），同上 |
-| 25 | GET | `/`、`/upload`、`/d/{id}` | 公开 | 静态资源 + SPA fallback |
+| 25 | GET | `/api/v1/admin/users` | **超管** | 账号列表（分页 + 关键字），非超管 403 |
+| 26 | POST | `/api/v1/admin/users` | **超管** | 新建账号（账号名 + 初始密码 + 是否超管），返回 201 |
+| 27 | PUT | `/api/v1/admin/users/{id}` | **超管** | 改超管标记 / 绑定人员（登录名不可改） |
+| 28 | POST | `/api/v1/admin/users/{id}/reset-password` | **超管** | 重置密码，返回**一次性临时密码**并让旧令牌失效 |
+| 29 | POST | `/api/v1/admin/users/{id}/status` | **超管** | 启用 / 禁用；禁用会让该账号令牌立即失效 |
+| 30 | GET | `/api/v1/admin/audit-logs` | **超管** | 审计日志（只读，可按 action / actor / result 筛选） |
+| 31 | GET | `/`、`/upload`、`/d/{id}` | 公开 | 静态资源 + SPA fallback |
 
 > 标「需登录」的接口要带 `Authorization: Bearer <token>`，缺失或过期返回 401；带了的接口也一律按 `project` 隔离，串项目的包互相看不到。
 
@@ -205,7 +211,7 @@ curl -sS http://localhost:8080/d/<ID> | head -5
 
 ---
 
-## 6. 关键设计（读代码前先看这九条）
+## 6. 关键设计（读代码前先看这十条）
 
 1. **stage 上传对用户透明，不是两步发布**：选文件那一刻自动上传一次到 `storage/tmp/{token}.{ext}` 并同步解析（5s 超时、manifest/plist ≤5MB、zip 条目上限），前端只把解析值填进**未被用户改动**的字段；用户全程只点一次「上传并发布」，commit 请求是纯 JSON（恰好 9 个字段，含 `project`，不含文件、不含 `metaSource`），服务端不再调用解析器、也不覆盖任何用户值，只 rename + 写库 + 生成地址；`metaSource` 由服务端按「是否发生空值兜底」派生（`fallback` / `parsed`）后入库，前端无法伪造。token 有效期 1 小时、用后即失效，启动时清空 tmp、每次 stage 前清理 1 小时孤儿。
 2. **三个 URL 由 `service/build_service.go` 的 `buildURLs(id)` 唯一生成**，`Create` / `List` / `Get` 统一调用；repository 的 `rowToBuild` 把这三个字段留空，绝不入库（换域名不用刷数据）。前端零拼接。
@@ -218,6 +224,8 @@ curl -sS http://localhost:8080/d/<ID> | head -5
 8. **基础资料是纯主数据，不含权限**：人员 / 团队 / 项目三张主表 + 三张多对多关联表（`team_members` / `project_members` / `team_projects`），关联由两侧各自维护自己那一半（人员页改 `teamIds`、团队页改 `personIds`，落到同一张表）；编辑一律**全量覆盖**（事务内先清后写），前端每次提交完整多选结果。**列表接口直接返回关联的 `{id,name}`（`RelationRef`）**，因此人员管理只调 `/people`、团队管理只调 `/teams`、项目管理只调 `/projects`——页面不会为了把 ID 显示成名字再去拉别的列表（这是「一个页面一个列表接口」的硬约束）。`people.username` 关联登录账号，`GET /api/v1/me` 用它把「我关联的第一个项目」投影给前端做列表页默认值——**只做默认值，不做权限**；谁能看哪个项目仍由 P2 的角色体系决定。
 
 9. **UI 组件库只用在一个薄封装里**：选 **Ant Design 5**（表格/表单/分页最全、中文生态最好），但 `antd` 只允许出现在 `components/DataTable.tsx`、`components/DetailDrawer.tsx` 与 `theme/antd.ts`，业务页面只描述「有哪些列」。主题通过 `ConfigProvider` 的 token 对齐现有青色设计系统（主色 `#0369a1`、圆角 8/12、控件高 34px），表格外观再由 `.data-table` 的一段 CSS 覆盖到与手写表格一致。带来的代价是体积：antd 单独一个 chunk 约 248 KB(gzip)，业务代码约 37 KB(gzip)；`vite.config.ts` 用 `manualChunks` 把 antd 拆出去，业务更新不会让它重新下载。**列表分页是服务端分页**：人员 / 团队 / 项目三个列表支持 `?page=&pageSize=`（默认 10 条、上限 200，`pageSize=0` 表示不分页取全量），响应平铺 `{items, total, page, pageSize}`；`DataTable` 传 `serverPagination` 即切到受控分页，不传则退化为前端分页（如应用包列表）。项目详情用**抽屉**展示（`components/DetailDrawer.tsx`，同样只在这里出现 antd 的 Drawer），点项目名即可展开，不再单开详情页。
+
+10. **账号在库里，令牌带版本号**：`users` 表是唯一真相（环境变量 `ADMIN_USERNAME/PASSWORD` 只在 users 为空时做**首次种子**，之后改环境变量不再影响已有账号）。密码存 PBKDF2-HMAC-SHA256（10 万次迭代，标准库 `crypto/pbkdf2`，无外部依赖）。令牌载荷是 `账号|版本|到期.签名`，校验时比对库里的 `token_version`——**改密码 / 禁用账号只需把版本 +1，该账号已发出的令牌立即失效**，不需要会话表。超级管理员是平台角色：`/me` 返回 `isSuperAdmin`，前端据此隐藏「超级管理员」整组菜单，但真正的边界是 `/api/v1/admin/*` 上的 `RequireSuperAdmin`（非超管一律 403）；三条自锁红线写在 `service/user`：不能禁用自己、不能取消自己的超管身份、不能弄丢最后一个超管。**审计是只追加表**（`audit_logs` 无 UPDATE/DELETE 接口）：账号变更与发布包会记录「谁 / 何时 / 对什么 / 结果 / IP / detail JSON」；`actor_name` 冗余存姓名，账号改名或删除后历史仍可读；写审计失败只记日志、绝不影响业务操作。
 
 **多板块 / push 预留**：只体现在三段式 Layout + 一个导航数组（总览 / 分发 / 基础资料 / 平台四组）、`/d/:id` 路由命名空间永不改动、`/api/v1` 前缀、`BuildService.Create()` 这个唯一「上传完成」时点、装配层可注入。没有任何占位菜单、空页面、事件类型、outbox 表或 `TODO`。
 

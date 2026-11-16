@@ -132,6 +132,92 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/admin/users": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 账号列表（仅超级管理员） */
+        get: operations["listUsers"];
+        put?: never;
+        /** 新建账号（仅超级管理员） */
+        post: operations["createUser"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/users/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** 改超管标记与绑定人员（登录名不可改） */
+        put: operations["updateUser"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/users/{id}/reset-password": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 重置密码，返回一次性临时密码 */
+        post: operations["resetUserPassword"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/users/{id}/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 启用 / 禁用账号（禁用会立即让该账号的令牌失效） */
+        post: operations["setUserStatus"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/audit-logs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 审计日志（仅超级管理员，只读） */
+        get: operations["listAuditLogs"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/settings": {
         parameters: {
             query?: never;
@@ -466,6 +552,61 @@ export interface components {
             name: string;
             /** @description 该人员关联的项目 key，按项目创建顺序；前端据此决定列表页默认项目 */
             projectKeys: string[];
+            /** @description 是否超级管理员；前端据此决定是否渲染「超级管理员」菜单（真正的边界在服务端 403） */
+            isSuperAdmin: boolean;
+        };
+        /** @description 账号视图（不含任何密码字段） */
+        User: {
+            /** Format: uuid */
+            id: string;
+            username: string;
+            /** @description 绑定的人员档案 id，空表示未绑定 */
+            personId: string;
+            personName: string;
+            isSuperAdmin: boolean;
+            /** @enum {string} */
+            status: "active" | "disabled";
+            /** Format: date-time */
+            lastLoginAt: string;
+            lastLoginIp: string;
+            /** Format: date-time */
+            createdAt: string;
+        };
+        /** @description 新建账号 */
+        UserInput: {
+            username: string;
+            password: string;
+            personId: string;
+            isSuperAdmin: boolean;
+        };
+        /** @description 编辑账号（登录名不可改） */
+        UserUpdate: {
+            personId: string;
+            isSuperAdmin: boolean;
+        };
+        /** @description 一条审计记录；detail 是 JSON 文本，由写入方决定结构 */
+        AuditLog: {
+            /** Format: int64 */
+            id: number;
+            /** Format: date-time */
+            createdAt: string;
+            actorId: string;
+            actorName: string;
+            action: string;
+            objectType: string;
+            objectId: string;
+            /** @enum {string} */
+            result: "success" | "failure";
+            detail: string;
+            ip: string;
+        };
+        UserStatusInput: {
+            /** @enum {string} */
+            status: "active" | "disabled";
+        };
+        /** @description 一次性临时密码，只在该响应里出现一次 */
+        PasswordReset: {
+            password: string;
         };
         /**
          * @description 服务端派生的元数据来源内部标注：任一字段发生空值兜底 → fallback，否则 → parsed。 不出现在 CommitBuildRequest 中，前端无法伪造、也不参与请求校验。
@@ -647,6 +788,28 @@ export interface components {
         };
         MeResponse: components["schemas"]["ApiResponse"] & {
             data: components["schemas"]["Me"];
+        };
+        UserResponse: components["schemas"]["ApiResponse"] & {
+            data: components["schemas"]["User"];
+        };
+        UserListResponse: components["schemas"]["ApiResponse"] & {
+            data: {
+                items: components["schemas"]["User"][];
+                total: number;
+                page: number;
+                pageSize: number;
+            };
+        };
+        AuditLogListResponse: components["schemas"]["ApiResponse"] & {
+            data: {
+                items: components["schemas"]["AuditLog"][];
+                total: number;
+                page: number;
+                pageSize: number;
+            };
+        };
+        PasswordResetResponse: components["schemas"]["ApiResponse"] & {
+            data: components["schemas"]["PasswordReset"];
         };
     };
     responses: {
@@ -1052,6 +1215,213 @@ export interface operations {
                 };
             };
             401: components["responses"]["Unauthorized"];
+        };
+    };
+    listUsers: {
+        parameters: {
+            query?: {
+                /** @description 页码，从 1 开始；缺省或非法按 1 处理 */
+                page?: components["parameters"]["PageParam"];
+                /** @description 每页条数，默认 10、上限 200；显式传 0 表示不分页（返回全量，供下拉选项与聚合使用） */
+                pageSize?: components["parameters"]["PageSizeParam"];
+                /** @description 同时匹配登录名与绑定人员姓名 */
+                keyword?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 账号列表 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UserListResponse"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            /** @description 非超级管理员 */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    createUser: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UserInput"];
+            };
+        };
+        responses: {
+            /** @description 创建成功 */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UserResponse"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            /** @description 非超级管理员 */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    updateUser: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UserUpdate"];
+            };
+        };
+        responses: {
+            /** @description 更新后的账号 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UserResponse"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            /** @description 非超级管理员 */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    resetUserPassword: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 临时密码（只出现这一次） */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PasswordResetResponse"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            /** @description 非超级管理员 */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            404: components["responses"]["NotFound"];
+        };
+    };
+    setUserStatus: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UserStatusInput"];
+            };
+        };
+        responses: {
+            /** @description 更新后的账号 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UserResponse"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            /** @description 非超级管理员 */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    listAuditLogs: {
+        parameters: {
+            query?: {
+                /** @description 页码，从 1 开始；缺省或非法按 1 处理 */
+                page?: components["parameters"]["PageParam"];
+                /** @description 每页条数，默认 10、上限 200；显式传 0 表示不分页（返回全量，供下拉选项与聚合使用） */
+                pageSize?: components["parameters"]["PageSizeParam"];
+                /** @description 动作模糊匹配，如 user.disabled */
+                action?: string;
+                /** @description 操作者账号模糊匹配 */
+                actor?: string;
+                result?: "success" | "failure";
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 审计日志列表 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuditLogListResponse"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            /** @description 非超级管理员 */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
         };
     };
     getSettings: {
