@@ -29,6 +29,7 @@ import (
 	"dandelion/server/internal/handler/openapi"
 	peoplehandler "dandelion/server/internal/handler/people"
 	projecthandler "dandelion/server/internal/handler/project"
+	rolehandler "dandelion/server/internal/handler/role"
 	settingshandler "dandelion/server/internal/handler/settings"
 	teamshandler "dandelion/server/internal/handler/teams"
 	userhandler "dandelion/server/internal/handler/user"
@@ -36,6 +37,7 @@ import (
 	auditrepo "dandelion/server/internal/repository/audit"
 	peopleRepo "dandelion/server/internal/repository/people"
 	projectrepo "dandelion/server/internal/repository/project"
+	rolerepo "dandelion/server/internal/repository/role"
 	settingsrepo "dandelion/server/internal/repository/settings"
 	teamsRepo "dandelion/server/internal/repository/teams"
 	userRepo "dandelion/server/internal/repository/user"
@@ -44,6 +46,7 @@ import (
 	loginsvc "dandelion/server/internal/service/login"
 	peoplesvc "dandelion/server/internal/service/people"
 	projectsvc "dandelion/server/internal/service/project"
+	rolesvc "dandelion/server/internal/service/role"
 	settingssvc "dandelion/server/internal/service/settings"
 	teamssvc "dandelion/server/internal/service/teams"
 	usersvc "dandelion/server/internal/service/user"
@@ -117,6 +120,13 @@ func run() error {
 	}
 
 	// 账号：users 表是唯一真相，环境变量只做首次种子。
+	// 角色：权限点目录在 contract，库里只存"角色拥有哪些"；内置角色只在缺失时播种。
+	roleRepository := rolerepo.NewRepository(db)
+	roleService := rolesvc.NewService(roleRepository)
+	if err := roleService.EnsureBuiltin(context.Background()); err != nil {
+		return err
+	}
+
 	// 审计：只追加不修改，写失败只记日志、绝不影响业务操作。
 	auditRepository := auditrepo.NewRepository(db)
 	auditService := auditsvc.NewService(auditRepository)
@@ -135,7 +145,8 @@ func run() error {
 	teamsHandler := teamshandler.NewHandler(teamsService)
 	userHandler := userhandler.NewHandler(userService, auditService)
 	auditHandler := audithandler.NewHandler(auditService)
-	settingsHandler := settingshandler.NewHandler(settingsService, webhookService)
+	roleHandler := rolehandler.NewHandler(roleService, auditService)
+	settingsHandler := settingshandler.NewHandler(settingsService, webhookService, auditService)
 	health := handler.NewHealthHandler(repo, paths)
 	public, err := fs.Sub(staticfs.PublicFiles, "public")
 	if err != nil {
@@ -150,6 +161,7 @@ func run() error {
 		Teams:    teamsHandler,
 		Users:    userHandler,
 		Audit:    auditHandler,
+		Roles:    roleHandler,
 		Settings: settingsHandler,
 		Verify:   loginService.Verify,
 		APIKey:   settingsService.APIKey,

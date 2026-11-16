@@ -74,6 +74,9 @@ const (
 	RouteTeams             = APIPrefix + "/teams"
 	RouteTeamByID          = APIPrefix + "/teams/{id}"
 	RouteMe                = APIPrefix + "/me"
+	RoutePermissions       = APIPrefix + "/permissions"
+	RouteRoles             = APIPrefix + "/roles"
+	RouteRoleByKey         = APIPrefix + "/roles/{key}"
 	RouteAdminUsers        = APIPrefix + "/admin/users"
 	RouteAdminUserByID     = APIPrefix + "/admin/users/{id}"
 	RouteAdminUserPassword = APIPrefix + "/admin/users/{id}/reset-password"
@@ -81,6 +84,7 @@ const (
 	RouteAdminAuditLogs    = APIPrefix + "/admin/audit-logs"
 	RouteSettings          = APIPrefix + "/settings"
 	RouteWebhookTest       = APIPrefix + "/settings/webhook/test"
+	RouteAPIKeyRotate      = APIPrefix + "/settings/api-key/rotate"
 	RouteOpenBuilds        = APIPrefix + "/open/builds"
 	RouteStage             = APIPrefix + "/builds/stage"
 	RouteBuilds            = APIPrefix + "/builds"
@@ -130,7 +134,8 @@ var APIRoutes = []string{
 	RouteAdminAuditLogs,
 	RouteProjects, RouteProjectByKey,
 	RoutePeople, RoutePersonByID, RouteTeams, RouteTeamByID,
-	RouteSettings, RouteWebhookTest, RouteOpenBuilds,
+	RoutePermissions, RouteRoles, RouteRoleByKey,
+	RouteSettings, RouteWebhookTest, RouteAPIKeyRotate, RouteOpenBuilds,
 	RouteStage, RouteBuilds, RouteBuildByID, RouteBuildFile, RouteHealth,
 }
 
@@ -328,6 +333,8 @@ type Person struct {
 	Email     string        `json:"email"`
 	Phone     string        `json:"phone"`
 	Title     string        `json:"title"`
+	RoleKey   string        `json:"roleKey"`
+	RoleName  string        `json:"roleName"`
 	Teams     []RelationRef `json:"teams"`
 	Projects  []RelationRef `json:"projects"`
 	CreatedAt string        `json:"createdAt"`
@@ -340,6 +347,7 @@ type PersonInput struct {
 	Email      string   `json:"email"`
 	Phone      string   `json:"phone"`
 	Title      string   `json:"title"`
+	RoleKey    string   `json:"roleKey"`
 	TeamIDs    []string `json:"teamIds"`
 	ProjectIDs []string `json:"projectIds"`
 }
@@ -382,6 +390,64 @@ type Me struct {
 	Name         string   `json:"name"`
 	ProjectKeys  []string `json:"projectKeys"`
 	IsSuperAdmin bool     `json:"isSuperAdmin"`
+}
+
+// Permission 是一个权限点。目录定义在代码里（Permissions），数据库只存"角色拥有哪些"，
+// 这样新增权限点不需要改表结构，也不会出现"代码里有、库里没有"的漂移。
+type Permission struct {
+	Key   string `json:"key"`
+	Group string `json:"group"`
+	Label string `json:"label"`
+}
+
+// Permissions 是全部权限点，按业务模块分组；前端按 Group 渲染勾选矩阵。
+var Permissions = []Permission{
+	{Key: "build.read", Group: "应用包", Label: "查看应用包与下载"},
+	{Key: "build.write", Group: "应用包", Label: "上传与发布应用包"},
+	{Key: "build.delete", Group: "应用包", Label: "删除应用包"},
+	{Key: "project.read", Group: "项目", Label: "查看项目"},
+	{Key: "project.write", Group: "项目", Label: "新建与编辑项目"},
+	{Key: "directory.read", Group: "基础资料", Label: "查看人员与团队"},
+	{Key: "directory.write", Group: "基础资料", Label: "新建与编辑人员、团队"},
+	{Key: "role.read", Group: "基础资料", Label: "查看角色与权限"},
+	{Key: "role.write", Group: "基础资料", Label: "维护角色与权限"},
+	{Key: "settings.read", Group: "平台设置", Label: "查看平台集成配置"},
+	{Key: "settings.write", Group: "平台设置", Label: "修改 Webhook、轮换 API Key"},
+	{Key: "admin.access", Group: "超级管理", Label: "进入超级管理员专区"},
+}
+
+// IsValidPermission 判断权限点是否在目录里，写入角色时用它挡住拼错/伪造的值。
+func IsValidPermission(key string) bool {
+	for _, permission := range Permissions {
+		if permission.Key == key {
+			return true
+		}
+	}
+	return false
+}
+
+// Role 是角色：key 用于代码引用，name 给人看，permissions 是权限点集合。
+type Role struct {
+	ID          string   `json:"id"`
+	Key         string   `json:"key"`
+	Name        string   `json:"name"`
+	Description string   `json:"description"`
+	IsBuiltin   bool     `json:"isBuiltin"`
+	Permissions []string `json:"permissions"`
+	CreatedAt   string   `json:"createdAt"`
+}
+
+// RoleInput 是新建 / 编辑角色请求。
+type RoleInput struct {
+	Key         string   `json:"key"`
+	Name        string   `json:"name"`
+	Description string   `json:"description"`
+	Permissions []string `json:"permissions"`
+}
+
+// RoleList 是角色列表响应体（角色数量少，不分页）。
+type RoleList struct {
+	Items []Role `json:"items"`
 }
 
 // Identity 是鉴权中间件解析出的「当前调用者」，只含判定所需的最小字段。
@@ -427,6 +493,11 @@ type UserStatusInput struct {
 // PasswordReset 承载一次性临时密码；明文只在该响应里出现一次。
 type PasswordReset struct {
 	Password string `json:"password"`
+}
+
+// ApiKeyResult 承载轮换后的新 Key；明文只在这一个响应里出现。
+type ApiKeyResult struct {
+	ApiKey string `json:"apiKey"`
 }
 
 // AuditLog 是一条审计记录；detail 是 JSON 文本（写入方决定结构），前端格式化展示。

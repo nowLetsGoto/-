@@ -51,6 +51,12 @@ func (s *Service) APIKey(ctx context.Context) (string, error) {
 	return cfg.APIKey, nil
 }
 
+// RotateAPIKey 轮换外部接口的 Key：旧 Key 立即失效（外部系统需同步更新）。
+// 明文只返回一次，不落任何日志。
+func (s *Service) RotateAPIKey(ctx context.Context) (string, error) {
+	return s.repo.RotateAPIKey(ctx)
+}
+
 // UpdateWebhook 校验后整体保存，并返回更新后的设置，前端一次拿到权威值。
 func (s *Service) UpdateWebhook(ctx context.Context, in contract.WebhookConfig) (contract.Settings, error) {
 	hook, err := normalize(in)

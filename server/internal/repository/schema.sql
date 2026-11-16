@@ -181,3 +181,38 @@ CREATE TABLE IF NOT EXISTS audit_logs (
 CREATE INDEX IF NOT EXISTS idx_audit_logs_created ON audit_logs (created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_audit_logs_action ON audit_logs (action, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_audit_logs_actor ON audit_logs (actor_name, created_at DESC);
+
+-- ---------------------------------------------------------------------------
+-- roles / role_permissions · 角色与权限点
+-- 权限点目录的唯一来源是 contract.Permissions（代码里），这里只存"角色拥有哪些"。
+-- 内置角色由启动时的 EnsureBuiltinRoles 播种：只在角色不存在时写默认权限，
+-- 之后在页面上改过就不再被覆盖。
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS roles (
+  id          UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+  key         TEXT        UNIQUE NOT NULL,
+  name        TEXT        NOT NULL,
+  description TEXT        NOT NULL DEFAULT '',
+  is_builtin  BOOLEAN     NOT NULL DEFAULT false,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS role_permissions (
+  role_id    UUID NOT NULL REFERENCES roles(id) ON DELETE CASCADE,
+  permission TEXT NOT NULL,
+  PRIMARY KEY (role_id, permission)
+);
+
+-- ---------------------------------------------------------------------------
+-- 人员的角色：一个人只挂一个角色（权限取单一集合，避免"多角色取并集"的歧义）。
+-- 放开外键到 roles(key)：角色被删时自动置空，不会让人员记录变成悬空引用。
+-- ---------------------------------------------------------------------------
+ALTER TABLE people ADD COLUMN IF NOT EXISTS role_key TEXT;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'people_role_fk') THEN
+    ALTER TABLE people ADD CONSTRAINT people_role_fk
+      FOREIGN KEY (role_key) REFERENCES roles(key) ON DELETE SET NULL;
+  END IF;
+END $$;

@@ -15,10 +15,12 @@ interface FormPageProps {
   saving: boolean;
   notice: string;
   onSubmit: () => void;
+  /** 只读模式：只展示字段，不给保存按钮（例如查看内置角色的权限） */
+  readOnly?: boolean;
   children: ReactNode;
 }
 
-export function FormPage({ title, subtitle, backTo, saving, notice, onSubmit, children }: FormPageProps): JSX.Element {
+export function FormPage({ title, subtitle, backTo, saving, notice, onSubmit, readOnly = false, children }: FormPageProps): JSX.Element {
   const handleSubmit = (event: FormEvent<HTMLFormElement>): void => {
     event.preventDefault();
     if (!saving) {
@@ -44,11 +46,13 @@ export function FormPage({ title, subtitle, backTo, saving, notice, onSubmit, ch
         {notice ? <p className="field-error">{notice}</p> : null}
 
         <div className="settings-actions">
-          <button className="button button-primary" type="submit" disabled={saving}>
-            {saving ? '保存中…' : '保存'}
-          </button>
+          {readOnly ? null : (
+            <button className="button button-primary" type="submit" disabled={saving}>
+              {saving ? '保存中…' : '保存'}
+            </button>
+          )}
           <Link className="button button-ghost" to={backTo}>
-            取消
+            {readOnly ? '返回列表' : '取消'}
           </Link>
         </div>
       </form>

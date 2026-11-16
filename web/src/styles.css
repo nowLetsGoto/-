@@ -1729,6 +1729,12 @@ code {
   word-break: break-all;
 }
 
+.badge-builtin {
+  background: var(--color-surface-2);
+  border: 1px solid var(--color-border);
+  color: var(--color-muted);
+}
+
 /* ================= 超级管理员专区 ================= */
 
 /* 分组标题：顶部加分隔线，与日常菜单刻意分开 */

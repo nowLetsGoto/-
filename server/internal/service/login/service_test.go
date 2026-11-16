@@ -2,10 +2,12 @@
 // 职责：验证密码哈希能自洽校验、盐随机、篡改必拒，以及令牌载荷对非法账号名的拒绝。
 // 输入：纯函数入参；输出：断言结果。
 // 边界：不启动 HTTP、**不连数据库**——Authenticate / Verify 依赖 users 表，
-//       属于集成测试范畴（见 docs/07-QA-TEST-PLAN.md），这里只锁纯逻辑。
+//
+//	属于集成测试范畴（见 docs/07-QA-TEST-PLAN.md），这里只锁纯逻辑。
 package login
 
 import (
+	"encoding/base64"
 	"strings"
 	"testing"
 )
@@ -42,10 +44,10 @@ func TestHashPasswordUsesRandomSalt(t *testing.T) {
 
 func TestVerifyPasswordRejectsMalformedHash(t *testing.T) {
 	cases := map[string]string{
-		"空串":        "",
-		"段数不足":      "pbkdf2-sha256$100000$abc",
-		"算法不符":      "bcrypt$100000$c2FsdA$aGFzaA",
-		"迭代次数非法":    "pbkdf2-sha256$abc$c2FsdA$aGFzaA",
+		"空串":         "",
+		"段数不足":       "pbkdf2-sha256$100000$abc",
+		"算法不符":       "bcrypt$100000$c2FsdA$aGFzaA",
+		"迭代次数非法":     "pbkdf2-sha256$abc$c2FsdA$aGFzaA",
 		"盐不是 base64": "pbkdf2-sha256$100000$%%%$%%%",
 	}
 	for name, stored := range cases {
@@ -60,8 +62,21 @@ func TestVerifyPasswordRejectsTamperedHash(t *testing.T) {
 	if err != nil {
 		t.Fatalf("哈希失败: %v", err)
 	}
-	// 篡改派生值最后一个字符
-	tampered := hash[:len(hash)-1] + string(hash[len(hash)-1]^0x01)
+
+	// 必须翻转"解码后的字节"：base64 末位带填充位，直接改字符串可能解码出同样的字节，测不出问题。
+	parts := strings.Split(hash, "$")
+	if len(parts) != 4 {
+		t.Fatalf("哈希格式不符: %s", hash)
+	}
+	raw, err := base64.RawStdEncoding.DecodeString(parts[3])
+	if err != nil {
+		t.Fatalf("派生值解码失败: %v", err)
+	}
+	raw[0] ^= 0x01
+	tampered := strings.Join([]string{
+		parts[0], parts[1], parts[2], base64.RawStdEncoding.EncodeToString(raw),
+	}, "$")
+
 	if verifyPassword(tampered, "admin123456") {
 		t.Fatal("被篡改的哈希不应通过校验")
 	}

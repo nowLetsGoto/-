@@ -47,11 +47,8 @@ export const NAV_SECTIONS: ReadonlyArray<NavSection> = [
       { label: '人员管理', path: '/directory/people', icon: 'people', scope: 'platform', envScoped: false },
       { label: '团队管理', path: '/directory/teams', icon: 'team', scope: 'platform', envScoped: false },
       { label: '项目管理', path: '/directory/projects', icon: 'project', scope: 'platform', envScoped: false },
+      { label: '角色管理', path: '/directory/roles', icon: 'shield', scope: 'platform', envScoped: false },
     ],
-  },
-  {
-    title: '平台',
-    items: [{ label: '系统设置', path: '/settings', icon: 'settings', scope: 'platform', envScoped: false }],
   },
   {
     // 独立一级区：放在最后、带 Admin 角标，和日常菜单刻意分开
@@ -60,6 +57,7 @@ export const NAV_SECTIONS: ReadonlyArray<NavSection> = [
     items: [
       { label: '账号管理', path: '/admin/accounts', icon: 'shield', scope: 'platform', envScoped: false },
       { label: '审计日志', path: '/admin/audit-logs', icon: 'overview', scope: 'platform', envScoped: false },
+      { label: '平台集成', path: '/settings', icon: 'settings', scope: 'platform', envScoped: false },
     ],
   },
 ];

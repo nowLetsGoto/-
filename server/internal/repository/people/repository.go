@@ -2,7 +2,8 @@
 // 职责：读写 people 表，以及「人员 ↔ 团队」「人员 ↔ 项目」两张关联表（以 person 为主体）。
 // 输入：连接池；输出：contract.Person（关联带 id 与名字，前端不必再拉对方列表）。
 // 边界：不做字段校验（在 service/people）、不做权限判断；
-//       团队侧对同一张 team_members 的写入在 repository/teams 里，各自只动自己那一侧。
+//
+//	团队侧对同一张 team_members 的写入在 repository/teams 里，各自只动自己那一侧。
 package people
 
 import (
@@ -26,7 +27,14 @@ func NewRepository(db *sql.DB) *Repository {
 	return &Repository{db: db}
 }
 
-const columns = `id::text, name, coalesce(username, ''), email, phone, title, created_at`
+// selectColumns 带 LEFT JOIN 取角色名：列表要显示"什么角色"，一次查完不做 N+1。
+const selectColumns = `p.id::text, p.name, coalesce(p.username, ''), p.email, p.phone, p.title,
+coalesce(p.role_key, ''), coalesce(r.name, ''), p.created_at`
+
+// tableColumns 是 people 表自身的列（INSERT/UPDATE 的 RETURNING 用，不能带 JOIN）。
+const tableColumns = `id::text, name, coalesce(username, ''), email, phone, title, coalesce(role_key, ''), created_at`
+
+const fromClause = ` FROM people p LEFT JOIN roles r ON r.key = p.role_key`
 
 // 关联查询统一从"人员侧"出发，JOIN 出名字；两张表结构对称，抽成常量避免抄错列顺序。
 const (
@@ -46,7 +54,7 @@ func (r *Repository) List(ctx context.Context, page contract.PageQuery) ([]contr
 	}
 
 	rows, err := r.db.QueryContext(ctx,
-		`SELECT `+columns+` FROM people ORDER BY created_at ASC LIMIT $1 OFFSET $2`,
+		`SELECT `+selectColumns+fromClause+` ORDER BY p.created_at ASC LIMIT $1 OFFSET $2`,
 		page.Limit(), page.Offset())
 	if err != nil {
 		return nil, 0, fmt.Errorf("查询人员列表失败: %w", err)
@@ -87,7 +95,7 @@ func (r *Repository) List(ctx context.Context, page contract.PageQuery) ([]contr
 
 // FindByID 按 id 查人员（含关联）；无记录统一转 contract.ErrNotFound。
 func (r *Repository) FindByID(ctx context.Context, id string) (contract.Person, error) {
-	row := r.db.QueryRowContext(ctx, `SELECT `+columns+` FROM people WHERE id = $1`, id)
+	row := r.db.QueryRowContext(ctx, `SELECT `+selectColumns+fromClause+` WHERE p.id = $1`, id)
 	person, err := scan(row)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) || errors.Is(err, pgx.ErrNoRows) {
@@ -106,7 +114,7 @@ func (r *Repository) FindByID(ctx context.Context, id string) (contract.Person, 
 
 // FindByUsername 按登录名查人员；登录账号没有对应人员时返回 contract.ErrNotFound。
 func (r *Repository) FindByUsername(ctx context.Context, username string) (contract.Person, error) {
-	row := r.db.QueryRowContext(ctx, `SELECT `+columns+` FROM people WHERE username = $1`, username)
+	row := r.db.QueryRowContext(ctx, `SELECT `+selectColumns+fromClause+` WHERE p.username = $1`, username)
 	person, err := scan(row)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) || errors.Is(err, pgx.ErrNoRows) {
@@ -172,17 +180,18 @@ func (r *Repository) save(ctx context.Context, id string, in contract.PersonInpu
 	if id == "" {
 		// NULLIF 把空登录名落成 NULL：username 上有唯一索引，多个空串会互相冲突。
 		row = tx.QueryRowContext(ctx,
-			`INSERT INTO people (name, username, email, phone, title)
-			 VALUES ($1, NULLIF($2, ''), $3, $4, $5)
-			 RETURNING `+columns,
-			in.Name, in.Username, in.Email, in.Phone, in.Title)
+			`INSERT INTO people (name, username, email, phone, title, role_key)
+			 VALUES ($1, NULLIF($2, ''), $3, $4, $5, NULLIF($6, ''))
+			 RETURNING `+tableColumns,
+			in.Name, in.Username, in.Email, in.Phone, in.Title, in.RoleKey)
 	} else {
 		row = tx.QueryRowContext(ctx,
 			`UPDATE people
-			 SET name = $2, username = NULLIF($3, ''), email = $4, phone = $5, title = $6
+			 SET name = $2, username = NULLIF($3, ''), email = $4, phone = $5, title = $6,
+			     role_key = NULLIF($7, '')
 			 WHERE id = $1
-			 RETURNING `+columns,
-			id, in.Name, in.Username, in.Email, in.Phone, in.Title)
+			 RETURNING `+tableColumns,
+			id, in.Name, in.Username, in.Email, in.Phone, in.Title, in.RoleKey)
 	}
 
 	person, err := scan(row)
@@ -280,7 +289,8 @@ type scanner interface {
 func scan(row scanner) (contract.Person, error) {
 	var item contract.Person
 	var createdAt time.Time
-	if err := row.Scan(&item.ID, &item.Name, &item.Username, &item.Email, &item.Phone, &item.Title, &createdAt); err != nil {
+	if err := row.Scan(&item.ID, &item.Name, &item.Username, &item.Email, &item.Phone, &item.Title,
+		&item.RoleKey, &item.RoleName, &createdAt); err != nil {
 		return contract.Person{}, err
 	}
 	item.CreatedAt = createdAt.UTC().Format(time.RFC3339)

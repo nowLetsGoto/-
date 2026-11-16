@@ -26,6 +26,7 @@ import (
 	"dandelion/server/internal/handler/openapi"
 	peoplehandler "dandelion/server/internal/handler/people"
 	projecthandler "dandelion/server/internal/handler/project"
+	rolehandler "dandelion/server/internal/handler/role"
 	settingshandler "dandelion/server/internal/handler/settings"
 	teamshandler "dandelion/server/internal/handler/teams"
 	userhandler "dandelion/server/internal/handler/user"
@@ -44,6 +45,7 @@ type Deps struct {
 	People   *peoplehandler.Handler
 	Users    *userhandler.Handler
 	Audit    *audithandler.Handler
+	Roles    *rolehandler.Handler
 	Teams    *teamshandler.Handler
 	Settings *settingshandler.Handler
 	Verify   loginmw.Verifier
@@ -90,11 +92,13 @@ func allowedMethodsFor(req *http.Request) string {
 		return "GET"
 	case strings.HasPrefix(path, contract.RouteAdminUsers):
 		return "GET, POST, PUT"
-	case path == contract.RouteProjects, path == contract.RoutePeople, path == contract.RouteTeams:
+	case path == contract.RouteProjects, path == contract.RoutePeople, path == contract.RouteTeams, path == contract.RouteRoles:
 		return "GET, POST"
+	case path == contract.RoutePermissions:
+		return "GET"
 	case strings.HasPrefix(path, contract.RouteProjects+"/"), strings.HasPrefix(path, contract.RoutePeople+"/"):
 		return "GET, PUT"
-	case strings.HasPrefix(path, contract.RouteTeams+"/"):
+	case strings.HasPrefix(path, contract.RouteTeams+"/"), strings.HasPrefix(path, contract.RouteRoles+"/"):
 		return "GET, PUT"
 	case path == contract.RouteSettings:
 		return "GET, PUT"
@@ -129,9 +133,7 @@ func NewRouter(d Deps) http.Handler {
 			private.Post("/builds/stage", middleware.Wrap(d.Builds.Stage))
 			private.Post("/builds", middleware.Wrap(d.Builds.Commit))
 			private.Get("/builds", middleware.Wrap(d.Builds.List))
-			private.Get("/settings", middleware.Wrap(d.Settings.Get))
-			private.Put("/settings", middleware.Wrap(d.Settings.Update))
-			private.Post("/settings/webhook/test", middleware.Wrap(d.Settings.Test))
+
 			private.Get("/me", middleware.Wrap(d.People.Me))
 			private.Get("/projects", middleware.Wrap(d.Projects.List))
 			private.Post("/projects", middleware.Wrap(d.Projects.Create))
@@ -145,6 +147,9 @@ func NewRouter(d Deps) http.Handler {
 			private.Post("/teams", middleware.Wrap(d.Teams.Create))
 			private.Get("/teams/{id}", middleware.Wrap(d.Teams.Get))
 			private.Put("/teams/{id}", middleware.Wrap(d.Teams.Update))
+			private.Get("/permissions", middleware.Wrap(d.Roles.Permissions))
+			private.Get("/roles", middleware.Wrap(d.Roles.List))
+			private.Get("/roles/{key}", middleware.Wrap(d.Roles.Get))
 		})
 
 		// 超级管理员专区：RequireAuth 之后再叠一层 RequireSuperAdmin，
@@ -158,6 +163,15 @@ func NewRouter(d Deps) http.Handler {
 			admin.Post("/admin/users/{id}/reset-password", middleware.Wrap(d.Users.ResetPassword))
 			admin.Post("/admin/users/{id}/status", middleware.Wrap(d.Users.SetStatus))
 			admin.Get("/admin/audit-logs", middleware.Wrap(d.Audit.List))
+			// 角色的写操作属于"改权限"，只对超管开放
+			admin.Post("/roles", middleware.Wrap(d.Roles.Create))
+			admin.Put("/roles/{key}", middleware.Wrap(d.Roles.Update))
+
+			// 平台设置与密钥：路径仍是 /settings，但只对超管开放。
+			admin.Get("/settings", middleware.Wrap(d.Settings.Get))
+			admin.Put("/settings", middleware.Wrap(d.Settings.Update))
+			admin.Post("/settings/webhook/test", middleware.Wrap(d.Settings.Test))
+			admin.Post("/settings/api-key/rotate", middleware.Wrap(d.Settings.RotateAPIKey))
 		})
 	})
 	r.Get(contract.RouteHealth, middleware.Wrap(d.Health.Health))

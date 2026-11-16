@@ -26,6 +26,8 @@ import { PeoplePage } from './pages/directory/PeoplePage';
 import { PersonFormPage } from './pages/directory/PersonFormPage';
 import { ProjectFormPage } from './pages/directory/ProjectFormPage';
 import { ProjectsPage } from './pages/directory/ProjectsPage';
+import { RoleFormPage } from './pages/directory/RoleFormPage';
+import { RolesPage } from './pages/directory/RolesPage';
 import { TeamFormPage } from './pages/directory/TeamFormPage';
 import { TeamsPage } from './pages/directory/TeamsPage';
 import { LoginPage } from './pages/login/LoginPage';
@@ -115,7 +117,17 @@ export function App(): JSX.Element {
           <Route path="/directory/projects" element={<ProjectsPage />} />
           <Route path="/directory/projects/new" element={<ProjectFormPage />} />
           <Route path="/directory/projects/:key/edit" element={<ProjectFormPage />} />
-          <Route path="/settings" element={<SettingsPage />} />
+          <Route path="/directory/roles" element={<RolesPage />} />
+          <Route path="/directory/roles/new" element={<RoleFormPage />} />
+          <Route path="/directory/roles/:key/edit" element={<RoleFormPage />} />
+          <Route
+            path="/settings"
+            element={
+              <AdminGate>
+                <SettingsPage />
+              </AdminGate>
+            }
+          />
           {/* 超级管理员专区：AdminGate 只做体验层拦截，接口层还有 403 兜底 */}
           <Route
             path="/admin/accounts"

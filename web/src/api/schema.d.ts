@@ -218,6 +218,59 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/permissions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 权限点目录（前端据此渲染勾选矩阵，避免把目录抄进前端） */
+        get: operations["listPermissions"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/roles": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 角色列表（含各自权限点） */
+        get: operations["listRoles"];
+        put?: never;
+        /** 新建自定义角色（仅超级管理员） */
+        post: operations["createRole"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/roles/{key}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 角色详情 */
+        get: operations["getRole"];
+        /** 编辑角色名称 / 描述 / 权限（仅超级管理员；超管角色权限不可改） */
+        put: operations["updateRole"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/settings": {
         parameters: {
             query?: never;
@@ -253,6 +306,26 @@ export interface paths {
          * @description 同步投递一条示例 payload，把目标返回的状态码带回来。 目标不可达不算接口错误：仍返回 200，由 delivered/statusCode/message 表达结果。
          */
         post: operations["testWebhook"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/settings/api-key/rotate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 轮换外部接口 API Key（仅超级管理员，旧 Key 立即失效）
+         * @description 新 Key 只在本次响应里出现一次，请立即保存到外部系统。
+         */
+        post: operations["rotateApiKey"];
         delete?: never;
         options?: never;
         head?: never;
@@ -512,6 +585,9 @@ export interface components {
             email: string;
             phone: string;
             title: string;
+            /** @description 该人员的角色标识；空表示未分配 */
+            roleKey: string;
+            roleName: string;
             teams: components["schemas"]["RelationRef"][];
             projects: components["schemas"]["RelationRef"][];
             /** Format: date-time */
@@ -524,6 +600,8 @@ export interface components {
             email: string;
             phone: string;
             title: string;
+            /** @description 角色标识；留空表示未分配 */
+            roleKey: string;
             teamIds: string[];
             projectIds: string[];
         };
@@ -583,6 +661,48 @@ export interface components {
         UserUpdate: {
             personId: string;
             isSuperAdmin: boolean;
+        };
+        Permission: {
+            key: string;
+            /** @description 权限点所属模块，前端按它分组渲染 */
+            group: string;
+            label: string;
+        };
+        Role: {
+            /** Format: uuid */
+            id: string;
+            key: string;
+            name: string;
+            description: string;
+            /** @description 内置角色不可删除；超管角色的权限不可修改 */
+            isBuiltin: boolean;
+            permissions: string[];
+            /** Format: date-time */
+            createdAt: string;
+        };
+        /** @description 新建 / 编辑角色；编辑时 key 被忽略 */
+        RoleInput: {
+            key: string;
+            name: string;
+            description: string;
+            permissions: string[];
+        };
+        PermissionListResponse: components["schemas"]["ApiResponse"] & {
+            data: {
+                items: components["schemas"]["Permission"][];
+            };
+        };
+        RoleResponse: components["schemas"]["ApiResponse"] & {
+            data: components["schemas"]["Role"];
+        };
+        RoleListResponse: components["schemas"]["ApiResponse"] & {
+            data: {
+                items: components["schemas"]["Role"][];
+            };
+        };
+        /** @description 轮换后的新 Key，明文只在本响应出现一次 */
+        ApiKeyResult: {
+            apiKey: string;
         };
         /** @description 一条审计记录；detail 是 JSON 文本，由写入方决定结构 */
         AuditLog: {
@@ -799,6 +919,9 @@ export interface components {
                 page: number;
                 pageSize: number;
             };
+        };
+        ApiKeyResultResponse: components["schemas"]["ApiResponse"] & {
+            data: components["schemas"]["ApiKeyResult"];
         };
         AuditLogListResponse: components["schemas"]["ApiResponse"] & {
             data: {
@@ -1424,6 +1547,140 @@ export interface operations {
             };
         };
     };
+    listPermissions: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 权限点列表 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PermissionListResponse"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+        };
+    };
+    listRoles: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 角色列表 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RoleListResponse"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+        };
+    };
+    createRole: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RoleInput"];
+            };
+        };
+        responses: {
+            /** @description 创建成功 */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RoleResponse"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            /** @description 非超级管理员 */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    getRole: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                key: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 角色详情 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RoleResponse"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    updateRole: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                key: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RoleInput"];
+            };
+        };
+        responses: {
+            /** @description 更新后的角色 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RoleResponse"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            /** @description 非超级管理员 */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     getSettings: {
         parameters: {
             query?: never;
@@ -1493,6 +1750,34 @@ export interface operations {
             };
             400: components["responses"]["BadRequest"];
             401: components["responses"]["Unauthorized"];
+        };
+    };
+    rotateApiKey: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 新的 API Key */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiKeyResultResponse"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            /** @description 非超级管理员 */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
         };
     };
     openUploadBuild: {

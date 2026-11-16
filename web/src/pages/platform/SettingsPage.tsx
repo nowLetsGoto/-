@@ -1,17 +1,18 @@
 /**
- * 系统设置页。
- * 职责：配置 Webhook（开关 / 地址 / 签名密钥 / 推送字段）并测试投递；展示外部上传接口的调用方式。
+ * 平台集成页（超级管理员 → 平台集成，原「系统设置」）。
+ * 职责：配置 Webhook（开关 / 地址 / 签名密钥 / 推送字段）并测试投递；展示外部上传接口、轮换 API Key。
  * 输入：GET /api/v1/settings、当前项目 key（仅用于外部接口示例的占位值）；
- *       输出：PUT 保存、POST 测试、复制 API Key 与调用示例。
+ *       输出：PUT 保存、POST 测试、POST 轮换 Key、复制 API Key 与调用示例。
  * 边界：不做字段合法性判断（服务端校验）、不缓存设置副本；
  *       切换 Tab 不重复取数，只有保存后以服务端返回的值为准；
  *       设置页是平台级的，这里不因"当前项目"改变任何行为，只是把 key 抄进示例。
  */
 import { useEffect, useState } from 'react';
 import type { Settings, WebhookConfig, WebhookField, WebhookTestResult } from '../../api/settings';
-import { getSettings, testWebhook, updateWebhook } from '../../api/settings';
+import { getSettings, rotateApiKey, testWebhook, updateWebhook } from '../../api/settings';
 import { errorMessage } from '../../api/client';
 import { useCurrentProject } from '../../hooks/useProjects';
+import { ConfirmDialog } from '../../components/ConfirmDialog';
 import { ErrorState, Loading } from '../../components/States';
 
 type Tab = 'webhook' | 'api';
@@ -117,7 +118,7 @@ export function SettingsPage(): JSX.Element {
       <section className="page">
         <div className="page-head">
           <div>
-            <h1>系统设置</h1>
+            <h1>平台集成</h1>
             <p className="sub">Webhook 推送与外部上传接口</p>
           </div>
         </div>
@@ -131,7 +132,7 @@ export function SettingsPage(): JSX.Element {
       <section className="page">
         <div className="page-head">
           <div>
-            <h1>系统设置</h1>
+            <h1>平台集成</h1>
             <p className="sub">Webhook 推送与外部上传接口</p>
           </div>
         </div>
@@ -144,7 +145,7 @@ export function SettingsPage(): JSX.Element {
     <section className="page">
       <div className="page-head">
         <div>
-          <h1>系统设置</h1>
+          <h1>平台集成</h1>
           <p className="sub">Webhook 推送与外部上传接口</p>
         </div>
       </div>
@@ -188,6 +189,7 @@ export function SettingsPage(): JSX.Element {
           apiKey={data.apiKey}
           projectKey={project?.key ?? 'default'}
           onCopy={(text, message) => void copy(text, message)}
+          onRotated={(nextKey) => setData((prev) => (prev ? { ...prev, apiKey: nextKey } : prev))}
         />
       )}
     </section>
@@ -299,11 +301,32 @@ function ApiPanel({
   apiKey,
   projectKey,
   onCopy,
+  onRotated,
 }: {
   apiKey: string;
   projectKey: string;
   onCopy: (text: string, message: string) => void;
+  /** 轮换成功后把新 Key 回传给页面，保证输入框与 curl 示例立刻同步 */
+  onRotated: (apiKey: string) => void;
 }): JSX.Element {
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [rotating, setRotating] = useState(false);
+  const [rotateError, setRotateError] = useState('');
+
+  const handleRotate = async (): Promise<void> => {
+    setRotating(true);
+    setRotateError('');
+    try {
+      const result = await rotateApiKey();
+      onRotated(result.apiKey);
+      setConfirmOpen(false);
+    } catch (err) {
+      setRotateError(errorMessage(err));
+    } finally {
+      setRotating(false);
+    }
+  };
+
   // 仅用于生成给人复制的示例；真正的下载地址由服务端按 PUBLIC_BASE_URL 生成。
   const origin = window.location.origin;
   const curl = [
@@ -352,8 +375,32 @@ function ApiPanel({
           <button className="button button-ghost" type="button" onClick={() => onCopy(apiKey, 'API Key 已复制')}>
             复制
           </button>
+          <button className="button button-ghost" type="button" onClick={() => setConfirmOpen(true)}>
+            轮换
+          </button>
         </div>
-        <p className="settings-hint">Key 由服务端生成，只在登录态下可见；疑似泄露时请到数据库更换 api_key。</p>
+        <p className="settings-hint">
+          仅超级管理员可见与轮换。轮换后旧 Key <strong>立即失效</strong>，请同步更新所有外部系统。
+        </p>
+        {rotateError ? <p className="field-error">{rotateError}</p> : null}
+
+        <ConfirmDialog
+          open={confirmOpen}
+          title="轮换 API Key？"
+          description={
+            <>
+              <p>
+                旧 Key 会<strong>立即失效</strong>，所有使用它的 CI / 脚本都会开始返回 401，直到换成新 Key。
+              </p>
+              <p className="settings-hint">新 Key 只显示一次，请立即复制到外部系统。</p>
+            </>
+          }
+          confirmText="轮换"
+          danger
+          loading={rotating}
+          onConfirm={() => void handleRotate()}
+          onCancel={() => setConfirmOpen(false)}
+        />
       </div>
 
       <div className="settings-block">

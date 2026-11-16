@@ -18,6 +18,7 @@ export type WebhookTestResult = Schemas['WebhookTestResult'];
 const ROUTES = {
   settings: '/api/v1/settings',
   testWebhook: '/api/v1/settings/webhook/test',
+  rotateApiKey: '/api/v1/settings/api-key/rotate',
 } as const;
 
 export function getSettings(): Promise<Settings> {
@@ -26,6 +27,11 @@ export function getSettings(): Promise<Settings> {
 
 export function updateWebhook(input: WebhookConfig): Promise<Settings> {
   return putJSON<Settings>(ROUTES.settings, input);
+}
+
+/** 轮换 API Key：旧 Key 立即失效，新 Key 只在本响应里出现一次。 */
+export function rotateApiKey(): Promise<{ apiKey: string }> {
+  return postJSON<{ apiKey: string }>(ROUTES.rotateApiKey, {});
 }
 
 /** 测试投递：目标不可达也是 200，结果看 delivered / statusCode / message。 */

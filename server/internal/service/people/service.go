@@ -99,7 +99,7 @@ func translate(err error) error {
 	case repository.IsUniqueViolation(err):
 		return &contract.ValidationError{Message: "登录名已被其他人员占用"}
 	case repository.IsForeignKeyViolation(err):
-		return &contract.ValidationError{Message: "关联的团队或项目不存在，请刷新后重试"}
+		return &contract.ValidationError{Message: "关联的团队、项目或角色不存在，请刷新后重试"}
 	default:
 		return err
 	}

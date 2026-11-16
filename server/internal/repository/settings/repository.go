@@ -60,6 +60,21 @@ SET webhook_enabled = $1, webhook_url = $2, webhook_secret = $3,
 WHERE id = 1`
 
 // SaveWebhook 只更新 Webhook 四列；多列一起写，避免出现"开关已开但地址没存"的中间态。
+// RotateAPIKey 生成并保存新的 API Key，返回明文供超管一次性查看。
+// 生成交给数据库（gen_random_uuid 去横线，32 位十六进制），避免应用层再引一个随机源。
+func (r *Repository) RotateAPIKey(ctx context.Context) (string, error) {
+	const query = `UPDATE system_settings
+SET api_key = replace(gen_random_uuid()::text, '-', ''), updated_at = now()
+WHERE id = 1
+RETURNING api_key`
+
+	var key string
+	if err := r.db.QueryRowContext(ctx, query).Scan(&key); err != nil {
+		return "", fmt.Errorf("轮换 API Key 失败: %w", err)
+	}
+	return key, nil
+}
+
 func (r *Repository) SaveWebhook(ctx context.Context, hook Webhook) error {
 	raw, err := json.Marshal(hook.Fields)
 	if err != nil {

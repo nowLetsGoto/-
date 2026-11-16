@@ -568,6 +568,116 @@ paths:
         '403':
           description: 非超级管理员
 
+  /permissions:
+    get:
+      operationId: listPermissions
+      summary: 权限点目录（前端据此渲染勾选矩阵，避免把目录抄进前端）
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: 权限点列表
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PermissionListResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /roles:
+    get:
+      operationId: listRoles
+      summary: 角色列表（含各自权限点）
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: 角色列表
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RoleListResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    post:
+      operationId: createRole
+      summary: 新建自定义角色（仅超级管理员）
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RoleInput'
+      responses:
+        '201':
+          description: 创建成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RoleResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          description: 非超级管理员
+
+  /roles/{key}:
+    get:
+      operationId: getRole
+      summary: 角色详情
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: key
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: 角色详情
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RoleResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    put:
+      operationId: updateRole
+      summary: 编辑角色名称 / 描述 / 权限（仅超级管理员；超管角色权限不可改）
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: key
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RoleInput'
+      responses:
+        '200':
+          description: 更新后的角色
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RoleResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          description: 非超级管理员
+
   /settings:
     get:
       operationId: getSettings
@@ -631,6 +741,25 @@ paths:
           $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
+
+  /settings/api-key/rotate:
+    post:
+      operationId: rotateApiKey
+      summary: 轮换外部接口 API Key（仅超级管理员，旧 Key 立即失效）
+      description: 新 Key 只在本次响应里出现一次，请立即保存到外部系统。
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: 新的 API Key
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiKeyResultResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          description: 非超级管理员
 
   /open/builds:
     post:
@@ -1177,7 +1306,7 @@ components:
     Person:
       type: object
       description: 人员；teams / projects 是带名字的多选关联
-      required: [id, name, email, phone, title, teams, projects, createdAt]
+      required: [id, name, email, phone, title, roleKey, roleName, teams, projects, createdAt]
       properties:
         id:
           type: string
@@ -1192,6 +1321,11 @@ components:
         phone:
           type: string
         title:
+          type: string
+        roleKey:
+          type: string
+          description: 该人员的角色标识；空表示未分配
+        roleName:
           type: string
         teams:
           type: array
@@ -1209,7 +1343,7 @@ components:
       type: object
       description: 新增 / 编辑人员请求
       additionalProperties: false
-      required: [name, username, email, phone, title, teamIds, projectIds]
+      required: [name, username, email, phone, title, roleKey, teamIds, projectIds]
       properties:
         name:
           type: string
@@ -1226,6 +1360,9 @@ components:
         title:
           type: string
           maxLength: 60
+        roleKey:
+          type: string
+          description: 角色标识；留空表示未分配
         teamIds:
           type: array
           items:
@@ -1359,6 +1496,111 @@ components:
         isSuperAdmin:
           type: boolean
 
+
+
+    Permission:
+      type: object
+      required: [key, group, label]
+      properties:
+        key:
+          type: string
+        group:
+          type: string
+          description: 权限点所属模块，前端按它分组渲染
+        label:
+          type: string
+
+    Role:
+      type: object
+      required: [id, key, name, description, isBuiltin, permissions, createdAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        key:
+          type: string
+        name:
+          type: string
+        description:
+          type: string
+        isBuiltin:
+          type: boolean
+          description: 内置角色不可删除；超管角色的权限不可修改
+        permissions:
+          type: array
+          items:
+            type: string
+        createdAt:
+          type: string
+          format: date-time
+
+    RoleInput:
+      type: object
+      description: 新建 / 编辑角色；编辑时 key 被忽略
+      additionalProperties: false
+      required: [key, name, description, permissions]
+      properties:
+        key:
+          type: string
+          maxLength: 32
+          pattern: '^[a-z][a-z0-9-]{1,31}$'
+        name:
+          type: string
+          maxLength: 40
+        description:
+          type: string
+          maxLength: 200
+        permissions:
+          type: array
+          items:
+            type: string
+
+    PermissionListResponse:
+      allOf:
+        - $ref: '#/components/schemas/ApiResponse'
+        - type: object
+          required: [data]
+          properties:
+            data:
+              type: object
+              required: [items]
+              properties:
+                items:
+                  type: array
+                  items:
+                    $ref: '#/components/schemas/Permission'
+
+    RoleResponse:
+      allOf:
+        - $ref: '#/components/schemas/ApiResponse'
+        - type: object
+          required: [data]
+          properties:
+            data:
+              $ref: '#/components/schemas/Role'
+
+    RoleListResponse:
+      allOf:
+        - $ref: '#/components/schemas/ApiResponse'
+        - type: object
+          required: [data]
+          properties:
+            data:
+              type: object
+              required: [items]
+              properties:
+                items:
+                  type: array
+                  items:
+                    $ref: '#/components/schemas/Role'
+
+    ApiKeyResult:
+      type: object
+      description: 轮换后的新 Key，明文只在本响应出现一次
+      required: [apiKey]
+      properties:
+        apiKey:
+          type: string
 
     AuditLog:
       type: object
@@ -1819,6 +2061,15 @@ components:
                 pageSize:
                   type: integer
 
+
+    ApiKeyResultResponse:
+      allOf:
+        - $ref: '#/components/schemas/ApiResponse'
+        - type: object
+          required: [data]
+          properties:
+            data:
+              $ref: '#/components/schemas/ApiKeyResult'
 
     AuditLogListResponse:
       allOf:

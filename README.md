@@ -119,7 +119,7 @@ make build          # 前端产物 → server/public/，再 CGO_ENABLED=0 go bui
 
 ---
 
-## 5. 接口速查（31 个）
+## 5. 接口速查（37 个）
 
 统一响应 `{code, data, message}`：成功 `code=0`，失败 `code` = HTTP 状态码（只有 400 / 401 / 404 / 405 / 413 / 500）且 `data=null`。唯一例外是文件下载成功返回二进制流。
 
@@ -134,9 +134,9 @@ make build          # 前端产物 → server/public/，再 CGO_ENABLED=0 go bui
 | 7 | GET | `/api/v1/builds/{id}` | 公开 | 详情 / 404（下载页取数，扫码的人无需登录） |
 | 8 | GET | `/api/v1/builds/{id}/file` | 公开 | 原始包流 |
 | 9 | GET | `/healthz` | 公开 | 健康检查（独立于 `/api/v1`） |
-| 10 | GET | `/api/v1/settings` | 需登录 | Webhook 配置 + API Key + 可推送字段目录 |
-| 11 | PUT | `/api/v1/settings` | 需登录 | 覆盖保存 Webhook 配置（含字段勾选） |
-| 12 | POST | `/api/v1/settings/webhook/test` | 需登录 | 发一条测试消息，返回 `delivered / statusCode` |
+| 10 | GET | `/api/v1/settings` | **超管** | Webhook 配置 + API Key + 可推送字段目录（普通账号 403） |
+| 11 | PUT | `/api/v1/settings` | **超管** | 覆盖保存 Webhook 配置（含字段勾选） |
+| 12 | POST | `/api/v1/settings/webhook/test` | **超管** | 发一条测试消息，返回 `delivered / statusCode` |
 | 13 | POST | `/api/v1/open/builds` | **API Key** | 外部系统一步式上传（multipart，`project` 必填），详见 `docs/09-OPEN-API.md` |
 | 14 | GET | `/api/v1/projects/{key}` | 需登录 | 项目详情（含关联人员 / 团队 ID） |
 | 15 | PUT | `/api/v1/projects/{key}` | 需登录 | 编辑项目（名称 / 描述 / 库地址；`key` 不可改） |
@@ -155,7 +155,13 @@ make build          # 前端产物 → server/public/，再 CGO_ENABLED=0 go bui
 | 28 | POST | `/api/v1/admin/users/{id}/reset-password` | **超管** | 重置密码，返回**一次性临时密码**并让旧令牌失效 |
 | 29 | POST | `/api/v1/admin/users/{id}/status` | **超管** | 启用 / 禁用；禁用会让该账号令牌立即失效 |
 | 30 | GET | `/api/v1/admin/audit-logs` | **超管** | 审计日志（只读，可按 action / actor / result 筛选） |
-| 31 | GET | `/`、`/upload`、`/d/{id}` | 公开 | 静态资源 + SPA fallback |
+| 31 | POST | `/api/v1/settings/api-key/rotate` | **超管** | 轮换外部接口 Key：旧 Key 立即失效，新 Key 只在响应里出现一次 |
+| 32 | GET | `/api/v1/permissions` | 需登录 | 权限点目录（前端据此渲染勾选矩阵，不硬编码 key） |
+| 33 | GET | `/api/v1/roles` | 需登录 | 角色列表（含各自权限点） |
+| 34 | POST | `/api/v1/roles` | **超管** | 新建自定义角色 |
+| 35 | GET | `/api/v1/roles/{key}` | 需登录 | 角色详情（编辑页回填） |
+| 36 | PUT | `/api/v1/roles/{key}` | **超管** | 编辑角色名称 / 描述 / 权限；**超管角色权限不可改** |
+| 37 | GET | `/`、`/upload`、`/d/{id}` | 公开 | 静态资源 + SPA fallback |
 
 > 标「需登录」的接口要带 `Authorization: Bearer <token>`，缺失或过期返回 401；带了的接口也一律按 `project` 隔离，串项目的包互相看不到。
 
@@ -211,7 +217,7 @@ curl -sS http://localhost:8080/d/<ID> | head -5
 
 ---
 
-## 6. 关键设计（读代码前先看这十条）
+## 6. 关键设计（读代码前先看这十一条）
 
 1. **stage 上传对用户透明，不是两步发布**：选文件那一刻自动上传一次到 `storage/tmp/{token}.{ext}` 并同步解析（5s 超时、manifest/plist ≤5MB、zip 条目上限），前端只把解析值填进**未被用户改动**的字段；用户全程只点一次「上传并发布」，commit 请求是纯 JSON（恰好 9 个字段，含 `project`，不含文件、不含 `metaSource`），服务端不再调用解析器、也不覆盖任何用户值，只 rename + 写库 + 生成地址；`metaSource` 由服务端按「是否发生空值兜底」派生（`fallback` / `parsed`）后入库，前端无法伪造。token 有效期 1 小时、用后即失效，启动时清空 tmp、每次 stage 前清理 1 小时孤儿。
 2. **三个 URL 由 `service/build_service.go` 的 `buildURLs(id)` 唯一生成**，`Create` / `List` / `Get` 统一调用；repository 的 `rowToBuild` 把这三个字段留空，绝不入库（换域名不用刷数据）。前端零拼接。
@@ -225,7 +231,9 @@ curl -sS http://localhost:8080/d/<ID> | head -5
 
 9. **UI 组件库只用在一个薄封装里**：选 **Ant Design 5**（表格/表单/分页最全、中文生态最好），但 `antd` 只允许出现在 `components/DataTable.tsx`、`components/DetailDrawer.tsx` 与 `theme/antd.ts`，业务页面只描述「有哪些列」。主题通过 `ConfigProvider` 的 token 对齐现有青色设计系统（主色 `#0369a1`、圆角 8/12、控件高 34px），表格外观再由 `.data-table` 的一段 CSS 覆盖到与手写表格一致。带来的代价是体积：antd 单独一个 chunk 约 248 KB(gzip)，业务代码约 37 KB(gzip)；`vite.config.ts` 用 `manualChunks` 把 antd 拆出去，业务更新不会让它重新下载。**列表分页是服务端分页**：人员 / 团队 / 项目三个列表支持 `?page=&pageSize=`（默认 10 条、上限 200，`pageSize=0` 表示不分页取全量），响应平铺 `{items, total, page, pageSize}`；`DataTable` 传 `serverPagination` 即切到受控分页，不传则退化为前端分页（如应用包列表）。项目详情用**抽屉**展示（`components/DetailDrawer.tsx`，同样只在这里出现 antd 的 Drawer），点项目名即可展开，不再单开详情页。
 
-10. **账号在库里，令牌带版本号**：`users` 表是唯一真相（环境变量 `ADMIN_USERNAME/PASSWORD` 只在 users 为空时做**首次种子**，之后改环境变量不再影响已有账号）。密码存 PBKDF2-HMAC-SHA256（10 万次迭代，标准库 `crypto/pbkdf2`，无外部依赖）。令牌载荷是 `账号|版本|到期.签名`，校验时比对库里的 `token_version`——**改密码 / 禁用账号只需把版本 +1，该账号已发出的令牌立即失效**，不需要会话表。超级管理员是平台角色：`/me` 返回 `isSuperAdmin`，前端据此隐藏「超级管理员」整组菜单，但真正的边界是 `/api/v1/admin/*` 上的 `RequireSuperAdmin`（非超管一律 403）；三条自锁红线写在 `service/user`：不能禁用自己、不能取消自己的超管身份、不能弄丢最后一个超管。**审计是只追加表**（`audit_logs` 无 UPDATE/DELETE 接口）：账号变更与发布包会记录「谁 / 何时 / 对什么 / 结果 / IP / detail JSON」；`actor_name` 冗余存姓名，账号改名或删除后历史仍可读；写审计失败只记日志、绝不影响业务操作。
+10. **账号在库里，令牌带版本号**：`users` 表是唯一真相（环境变量 `ADMIN_USERNAME/PASSWORD` 只在 users 为空时做**首次种子**，之后改环境变量不再影响已有账号）。密码存 PBKDF2-HMAC-SHA256（10 万次迭代，标准库 `crypto/pbkdf2`，无外部依赖）。令牌载荷是 `账号|版本|到期.签名`，校验时比对库里的 `token_version`——**改密码 / 禁用账号只需把版本 +1，该账号已发出的令牌立即失效**，不需要会话表。超级管理员是平台角色：`/me` 返回 `isSuperAdmin`，前端据此隐藏「超级管理员」整组菜单，但真正的边界是 `/api/v1/admin/*` 上的 `RequireSuperAdmin`（非超管一律 403）；三条自锁红线写在 `service/user`：不能禁用自己、不能取消自己的超管身份、不能弄丢最后一个超管。**审计是只追加表**（`audit_logs` 无 UPDATE/DELETE 接口）：账号变更与发布包会记录「谁 / 何时 / 对什么 / 结果 / IP / detail JSON」；`actor_name` 冗余存姓名，账号改名或删除后历史仍可读；写审计失败只记日志、绝不影响业务操作。**密钥与平台配置整体收回超管**：`/api/v1/settings` 三个接口（含轮换）都过 `RequireSuperAdmin`，普通账号一律 403；轮换接口用数据库 `gen_random_uuid()` 生成 32 位 Key，旧 Key 立即失效，新 Key 只在响应里出现一次。
+
+11. **权限点目录在代码里，角色只存"拥有哪些"**：`contract.Permissions` 是唯一目录（12 个点，按应用包 / 项目 / 基础资料 / 平台设置 / 超级管理分组），数据库 `role_permissions` 只存角色与权限点的连线——新增权限点不用改表，也不会出现"代码有、库里没有"的漂移。角色管理挂在「基础资料」下（读对全员开放、**写仅超管**）；5 个内置角色在启动时播种，**只在角色缺失时写默认权限**，页面上改过就不会被重启覆盖。`super-admin` 角色的权限恒为全量且不可改，否则会出现「没人能改角色」的死锁。
 
 **多板块 / push 预留**：只体现在三段式 Layout + 一个导航数组（总览 / 分发 / 基础资料 / 平台四组）、`/d/:id` 路由命名空间永不改动、`/api/v1` 前缀、`BuildService.Create()` 这个唯一「上传完成」时点、装配层可注入。没有任何占位菜单、空页面、事件类型、outbox 表或 `TODO`。
 
