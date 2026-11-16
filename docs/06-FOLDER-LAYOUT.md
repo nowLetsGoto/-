@@ -43,7 +43,7 @@
 | `main.tsx` | 挂载入口 + 全局样式引入 | — | 不放业务逻辑 |
 | `styles.css` | 唯一样式来源（CSS 变量 + 组件类 + 断点） | — | 不引入组件库/原子化框架 |
 
-**前端 UI 组件库规范**：Table / Drawer / Modal / Select / ConfigProvider / zhCN / QRCode 统一从 `@seakoi/console-kit` 根入口按命名导出获取；`./antd` 子入口缺 JS，禁止使用。业务页面既不直接 import antd，也不直接 import qrcode.react，通用控件统一经 `components/` 封装；新增 UI 先查 console-kit 根入口。
+**前端 UI 组件库规范**：Table / Drawer / Modal / Select / Button / Input / TextArea / Checkbox / Radio / Upload / ConfigProvider / zhCN / QRCode 统一从 `@seakoi/console-kit` 根入口按命名导出获取；基础控件通过 `components/Controls.tsx` 保留提交类型与原始输入值，文件选择使用 `Upload.Dragger` 并禁止自动上传；`./antd` 子入口缺 JS，禁止使用。业务页面既不直接 import antd，也不直接 import qrcode.react，通用控件统一经 `components/` 封装；新增 UI 先查 console-kit 根入口。
 
 **前端五条硬约束**：① 页面互不 import；② 组件内无 `fetch`；③ 页面不拼 URL；④ 页面级私有子组件留在该页面文件内，**不进** `components/`（进 `components/` 的前提是「至少两个页面会用」）；⑤ 全局环境只能经 `useEnvironment` 读写 URL，页面不得自己再存一份。
 

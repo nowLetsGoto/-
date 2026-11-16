@@ -2,12 +2,12 @@
  * Ant Design 主题：把 antd 的默认外观对齐到本项目的青色设计系统。
  * 职责：只声明 token 映射，不改任何组件行为。
  * 输入：无；输出：可直接传给 ConfigProvider 的 ThemeConfig。
- * 边界：颜色值必须与 styles.css 的 CSS 变量保持一致（antd 在 CSS-in-JS 里拿不到 var()，
+ * 边界：颜色值必须与 styles.scss 的 CSS 变量保持一致（antd 在 CSS-in-JS 里拿不到 var()，
  *       所以这里是一份显式镜像）；改主色时两处一起改。
  */
 import type { ThemeConfig } from '@seakoi/console-kit';
 
-/** 与 styles.css :root 一一对应的色板（antd 需要字面量，不能用 CSS 变量）。 */
+/** 与 styles.scss :root 一一对应的色板（antd 需要字面量，不能用 CSS 变量）。 */
 const palette = {
   primary: '#0369a1',
   primaryStrong: '#075985',

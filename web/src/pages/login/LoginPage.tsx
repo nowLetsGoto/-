@@ -14,7 +14,7 @@ import { errorMessage } from '../../api/client';
 import type { SessionMode } from '../../api/session';
 import { readSession, saveSession } from '../../api/session';
 import { ENVIRONMENTS } from '../../utils/format';
-import './login.css';
+import './login.scss';
 
 /** 路由守卫跳转过来时带上来源路径，登录成功后原路返回。 */
 interface LoginLocationState {

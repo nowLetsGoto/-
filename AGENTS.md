@@ -136,6 +136,9 @@ main.tsx（挂载） → App
 - `console-kit@0.5.16` 的 `./antd` 子入口在 npm 包中**只有 .d.ts、没有 JS**，Vite 无法解析；**禁止使用该子路径**。根入口可用，已通过 `vite.config.ts` 的 `manualChunks['console-kit']` 独立拆包，避免业务代码更新导致组件库重新下载。
 - `antd` 仅保留为 console-kit 的 peer 依赖与 Vite 的 chunk 名；新增组件一律先查 console-kit 根入口，没有合适能力才写自定义组件。
 - 业务页面不直接散用组件库裸控件：Table / Drawer / Modal / Select 仍经 `components/` 的四个封装使用，便于统一主题、空态、分页与安全交互；ConfigProvider / zhCN 只在 `main.tsx` 装配，ThemeConfig 只在 `theme/antd.ts` 映射。
+- 基础按钮/输入控件经 `components/Controls.tsx` 适配：原生 `type` 映射为库按钮的 `htmlType`，输入框 `trim=false`，防止改变表单提交语义或裁剪密码；Checkbox/Radio 用库自带 label，不再外套 label。
+- 文件选择使用 `Upload.Dragger`，`beforeUpload` 返回 false（非法文件返回 `LIST_IGNORE`），禁止库自动上传；页面仍通过唯一 stage 接口上传一次。
+- HTML `form`、路由 `Link`、下载链接及说明性表格保留语义元素，不因引入库而改变提交/导航行为。
 - 二维码统一用 console-kit 的 `QRCode`（`errorLevel` / `color` / `bgColor`），不再使用 `qrcode.react`。
 - 主题主色 `#0369a1`；改主色必须同步三处：`styles.css` 的 `:root`、`pages/login/login.css` 的 `--login-*`、`theme/antd.ts` 的 palette（antd CSS-in-JS 读不到 CSS 变量）。
 - 主色用于可点击/强调文字；不默认加下划线，悬停时加深并显示下划线。高危操作使用琥珀色，不与主色混淆。

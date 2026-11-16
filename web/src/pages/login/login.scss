@@ -1,5 +1,5 @@
 /*
- * login.css · 登录页专属样式（浅色 + 浅蓝青）。
+ * login.scss · 登录页专属样式（浅色 + 浅蓝青）。
  * 职责：定义登录页局部设计变量、双栏布局、表单控件状态与入场动效。
  * 输入：LoginPage 的 login- 前缀类名；输出：桌面双栏 / 窄屏单栏的登录界面。
  * 边界：只作用于 .login-page 子树，不改全站变量与其它页面；不引入 UI 框架或预处理器。
@@ -12,7 +12,7 @@
   /* faint 用于 12px 辅助文字与占位符：在 #fbfeff 与品牌底色上都保持 ≥4.5:1 */
   --login-faint: #526d78;
   --login-line: #d7e8ee;
-  /* 与 styles.css 的 --color-primary 保持一致 */
+  /* 与 styles.scss 的 --color-primary 保持一致 */
   --login-primary: #0369a1;
   --login-primary-strong: #075985;
   --login-primary-soft: rgba(14, 116, 144, 0.08);

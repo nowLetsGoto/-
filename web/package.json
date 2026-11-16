@@ -8,10 +8,10 @@
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "gen:api": "openapi-typescript ../api/openapi.yaml -o src/api/schema.d.ts",
-    "lint": "eslint . && stylelint \"src/**/*.css\"",
-    "lint:fix": "eslint . --fix && stylelint \"src/**/*.css\" --fix",
-    "format": "prettier --write \"src/**/*.{ts,tsx,css}\"",
-    "format:check": "prettier --check \"src/**/*.{ts,tsx,css}\"",
+    "lint": "eslint . && stylelint \"src/**/*.scss\"",
+    "lint:fix": "eslint . --fix && stylelint \"src/**/*.scss\" --fix",
+    "format": "prettier --write \"src/**/*.{ts,tsx,scss}\"",
+    "format:check": "prettier --check \"src/**/*.{ts,tsx,scss}\"",
     "prepare": "cd .. && husky web/.husky"
   },
   "dependencies": {
@@ -51,8 +51,10 @@
     "lint-staged": "^15.5.2",
     "openapi-typescript": "^7.4.0",
     "prettier": "^3.10.1",
+    "sass": "^1.108.2",
     "stylelint": "^16.26.1",
     "stylelint-config-standard": "^36.0.1",
+    "stylelint-config-standard-scss": "^14.0.0",
     "typescript": "^5.6.0",
     "typescript-eslint": "^8.72.2",
     "vite": "^5.4.0"
@@ -62,7 +64,7 @@
       "eslint --fix",
       "prettier --write"
     ],
-    "src/**/*.css": [
+    "src/**/*.scss": [
       "stylelint --fix",
       "prettier --write"
     ]

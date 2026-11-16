@@ -11,7 +11,7 @@ import { ConfigProvider, zhCN } from '@seakoi/console-kit';
 import 'dayjs/locale/zh-cn';
 import { App } from './App';
 import { antdTheme } from './theme/antd';
-import './styles.css';
+import './styles.scss';
 
 const container = document.getElementById('root');
 if (!container) {

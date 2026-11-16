@@ -1,7 +1,7 @@
 /*
- * styles.css · 全站唯一样式来源。
+ * styles.scss · 全站唯一样式来源。
  * 职责：设计 token、骨架（侧边栏 / 顶栏 / 内容区）、通用组件（按钮 / 卡片 / 表格 / 徽标 / 三态）
- *       与各页面专属类；登录页例外，样式自持在 pages/login/login.css。
+ *       与各页面专属类；登录页例外，样式自持在 pages/login/login.scss。
  * 输入：页面与组件使用的类名；输出：桌面与窄屏下的布局与视觉。
  * 边界：不引入 UI 框架 / 预处理器；只有一个 900px 断点；颜色只用本文件 :root 里的变量。
  * 主题：浅色 + 青蓝（#0e7490），与登录页同色系。
@@ -16,7 +16,7 @@
   --color-text-2: #33525f;
   --color-muted: #5b7884;
   --color-faint: #7d97a2;
-  /* 主色：饱和天蓝。改这里时记得同步 theme/antd.ts 与 pages/login/login.css */
+  /* 主色：饱和天蓝。改这里时记得同步 theme/antd.ts 与 pages/login/login.scss */
   --color-primary: #0369a1;
   --color-primary-strong: #075985;
   --color-primary-soft: #e3f2fa;

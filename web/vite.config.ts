@@ -10,6 +10,10 @@ import react from '@vitejs/plugin-react';
 
 export default defineConfig({
   plugins: [react()],
+  css: {
+    // 用 Dart Sass 的现代编译器 API，避开 legacy-js-api 弃用警告。
+    preprocessorOptions: { scss: { api: 'modern-compiler' } },
+  },
   server: {
     // 手机与开发机同网段时可打开开发服务器，PUBLIC_BASE_URL 才能指向它。
     host: '192.168.6.14',
