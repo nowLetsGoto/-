@@ -1,10 +1,16 @@
 /**
  * 前端唯一 HTTP 出入口。
- * 职责：拼接同源/代理基址、统一解包 {code,data,message}、把失败抛成 ApiError。
+ * 职责：拼接同源/代理基址、自动附带登录令牌、统一解包 {code,data,message}、把失败抛成 ApiError。
  * 输入：API 相对路径与 fetch 配置；输出：已解包的 data。
- * 边界：不业务判断、不缓存、不拼 window.location.origin；FormData 不手动设 Content-Type（浏览器自带 boundary）。
+ * 边界：不业务判断、不缓存、不拼 window.location.origin；FormData 不手动设 Content-Type（浏览器自带 boundary）；
+ *       401 统一在这里处理（清会话 + 回登录页），页面无需各自兜底。
  */
+import { clearSession, readSession } from './session';
+
 const baseURL: string = import.meta.env.VITE_API_BASE ?? '';
+
+/** 登录页路径：401 时整页跳到这里，避免在 fetch 层引入 react-router。 */
+const LOGIN_PAGE = '/login';
 
 /** ApiError 携带后端 code，文案可直接上屏。 */
 export class ApiError extends Error {
@@ -24,11 +30,27 @@ interface Envelope<T> {
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  // 已登录就带上 Bearer；new Headers 兼容 init.headers 的三种写法（对象 / 元组数组 / Headers）。
+  const headers = new Headers(init?.headers);
+  const session = readSession();
+  if (session) {
+    headers.set('Authorization', `Bearer ${session.token}`);
+  }
+
   let response: Response;
   try {
-    response = await fetch(`${baseURL}${path}`, init);
+    response = await fetch(`${baseURL}${path}`, { ...init, headers });
   } catch {
     throw new ApiError('网络异常，请检查服务是否可用', 0);
+  }
+
+  // 401 只有一个含义：令牌缺失或已失效（凭据错误走 400）。
+  // 因此可以无条件清空会话并回到登录页；已在登录页时不再跳，避免打断登录失败提示。
+  if (response.status === 401) {
+    clearSession();
+    if (window.location.pathname !== LOGIN_PAGE) {
+      window.location.assign(LOGIN_PAGE);
+    }
   }
 
   let envelope: Envelope<T> | null = null;

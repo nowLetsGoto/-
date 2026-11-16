@@ -1,5 +1,5 @@
 // Package config 负责加载并校验运行时配置。
-// 职责：读取环境变量、给出默认值、校验对外基址绝对性与网络可达性、校验上传上限与契约一致。
+// 职责：读取环境变量、给出默认值、校验对外基址绝对性与网络可达性、校验上传上限与契约一致、校验生产环境令牌密钥。
 // 输入：进程环境变量（全仓唯一 os.Getenv 处）；.env 由 Makefile 导出，程序不解析文件。
 // 输出：Config 值，或校验失败时返回 error 使进程 fail-fast。
 // 边界：不读请求上下文、不拼业务 URL、不访问数据库与文件系统；具体地址生成在 service/build_service.go。
@@ -26,6 +26,12 @@ const (
 	defaultHost          = "0.0.0.0"
 	defaultStorageDir    = "./storage"
 	defaultGOEnv         = "development"
+
+	// 管理员账号默认值：仅便于本地开箱即用；生产环境必须通过环境变量覆盖口令与密钥。
+	defaultAdminUsername = "admin"
+	defaultAdminPassword = "admin123456"
+	// defaultAuthSecret 只用于本地开发；生产环境沿用它会 fail-fast，避免用公开密钥签发令牌。
+	defaultAuthSecret = "dandelion-dev-only-secret-change-me"
 )
 
 // Config 是启动后只读的配置快照。
@@ -41,6 +47,12 @@ type Config struct {
 	Host                string
 	GOEnv               string
 	IsProduction        bool
+
+	// AdminUsername / AdminPassword 是唯一管理员账号，登录时定长比较，不落库。
+	AdminUsername string
+	AdminPassword string
+	// AuthSecret 是登录令牌的 HMAC 密钥：只在内存中使用，不进日志、不进响应。
+	AuthSecret string
 }
 
 // get 是全仓唯一读取环境变量的函数；空值回落到默认值。
@@ -59,6 +71,9 @@ func Load() (Config, error) {
 		Port:          get("PORT", defaultPort),
 		Host:          get("HOST", defaultHost),
 		GOEnv:         get("GO_ENV", defaultGOEnv),
+		AdminUsername: get("ADMIN_USERNAME", defaultAdminUsername),
+		AdminPassword: get("ADMIN_PASSWORD", defaultAdminPassword),
+		AuthSecret:    get("AUTH_SECRET", defaultAuthSecret),
 	}
 	cfg.IsProduction = cfg.GOEnv != "development" && cfg.GOEnv != "dev"
 
@@ -90,6 +105,10 @@ func Load() (Config, error) {
 
 	if cfg.DatabaseURL == "" {
 		return Config{}, fmt.Errorf("DATABASE_URL 不能为空")
+	}
+	// 默认密钥是公开写在仓库里的，生产环境继续使用等于没有签名校验，直接拒绝启动。
+	if cfg.IsProduction && cfg.AuthSecret == defaultAuthSecret {
+		return Config{}, fmt.Errorf("AUTH_SECRET 必须配置为随机长串（例如 openssl rand -hex 32），不得使用默认值")
 	}
 	return cfg, nil
 }

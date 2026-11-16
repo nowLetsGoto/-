@@ -136,7 +136,7 @@ func pathExt(name string) string {
 // 绝不含文件、绝不再次解析；metaSource 由服务端派生，不接受前端传入。
 func (h *BuildHandler) Commit(w http.ResponseWriter, r *http.Request) error {
 	var in contract.CommitInput
-	if err := DecodeJSON(w, r, &in); err != nil {
+	if err := DecodeJSON(w, r, &in, "stageToken/environment/platform/appName/packageId/version/buildNumber/changelog"); err != nil {
 		return err
 	}
 	if !contract.IsValidUUID(in.StageToken) {

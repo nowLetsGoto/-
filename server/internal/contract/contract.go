@@ -1,7 +1,7 @@
 // Package contract 定义跨层 DTO 与契约常量的 Go 镜像。
 // 职责：前后端共读 api/openapi.yaml；本文件把枚举、路由、长度上限镜像为 Go 常量供运行时使用。
 // 输入：无外部输入（值由契约一致性测试 contract_test.go 逐项比对 yaml 锁死）。
-// 输出：Build / StageResult / CommitInput 等 DTO、环境与平台常量、路由常量与工具函数。
+// 输出：Build / StageResult / CommitInput / LoginInput / LoginResult 等 DTO、环境与平台常量、路由常量与工具函数。
 // 边界：不含业务逻辑、不访问 DB / 文件系统、不生成 URL（三个 URL 由 service.buildURLs 唯一生成）。
 package contract
 
@@ -15,9 +15,13 @@ import (
 // 跨层错误标记：service 不依赖 handler，用 sentinel 表达可预期的业务拒绝，
 // 由 handler.WriteError 统一翻译成对应的 HTTP 状态码与中文文案。
 var (
-	ErrNotFound          = errors.New("包不存在或已被移除")
-	ErrStageInvalid      = errors.New("暂存文件已失效，请重新选择文件")
-	ErrPlatformMismatch  = errors.New("所选平台与文件类型不一致")
+	ErrNotFound         = errors.New("包不存在或已被移除")
+	ErrStageInvalid     = errors.New("暂存文件已失效，请重新选择文件")
+	ErrPlatformMismatch = errors.New("所选平台与文件类型不一致")
+	// ErrInvalidCredentials 登录凭据错误 → 400：与全站「业务参数不合法」同一口径，不占用 401。
+	ErrInvalidCredentials = errors.New("用户名或密码错误")
+	// ErrUnauthorized 未携带令牌或令牌失效 → 401：前端据此清空会话并回到登录页。
+	ErrUnauthorized = errors.New("登录状态已失效，请重新登录")
 )
 
 // 环境枚举：全仓 Go 侧唯一定义处，与 api/openapi.yaml 的 Environment.enum 顺序一致。
@@ -43,32 +47,37 @@ const (
 
 // 路由常量：servers.url + paths 键组成完整路径；契约测试比对同一份列表。
 const (
-	APIPrefix        = "/api/v1"
-	RouteStage       = APIPrefix + "/builds/stage"
-	RouteBuilds      = APIPrefix + "/builds"
-	RouteBuildByID   = APIPrefix + "/builds/{id}"
-	RouteBuildFile   = APIPrefix + "/builds/{id}/file"
-	RouteHealth      = "/healthz"
+	APIPrefix         = "/api/v1"
+	RouteLogin        = APIPrefix + "/auth/login"
+	RouteStage        = APIPrefix + "/builds/stage"
+	RouteBuilds       = APIPrefix + "/builds"
+	RouteBuildByID    = APIPrefix + "/builds/{id}"
+	RouteBuildFile    = APIPrefix + "/builds/{id}/file"
+	RouteHealth       = "/healthz"
 	RouteDownloadPage = "/d/{id}"
 )
 
 // 契约级上限，与 x-constants 对齐。
 const (
-	MaxAppNameLen      = 100
-	MaxPackageIDLen    = 100
-	MaxVersionLen      = 50
-	MaxBuildNumberLen  = 50
-	MaxChangelogLen    = 2000
+	MaxAppNameLen        = 100
+	MaxPackageIDLen      = 100
+	MaxVersionLen        = 50
+	MaxBuildNumberLen    = 50
+	MaxChangelogLen      = 2000
+	MaxUsernameLen       = 64
+	MaxPasswordLen       = 128
 	StageTokenTTLSeconds = 3600
 	ParseTimeoutSeconds  = 5
 	ParseReadLimitMB     = 5
+	// AuthTokenTTLSeconds 登录令牌有效期（12 小时）；与 x-constants.authTokenTTLSeconds 一致。
+	AuthTokenTTLSeconds = 43200
 )
 
 // Environments / Platforms / MetaSources / APIRoutes 供契约测试与页面渲染使用。
 var Environments = []string{EnvTest, EnvHotfix, EnvPre, EnvPrd}
 var Platforms = []string{PlatformAndroid, PlatformIOS}
 var MetaSources = []string{MetaParsed, MetaFallback}
-var APIRoutes = []string{RouteStage, RouteBuilds, RouteBuildByID, RouteBuildFile, RouteHealth}
+var APIRoutes = []string{RouteLogin, RouteStage, RouteBuilds, RouteBuildByID, RouteBuildFile, RouteHealth}
 
 // PlatformInfo 是平台的产品元数据，扩展名与下载 Content-Type 的唯一来源。
 type PlatformInfo struct {
@@ -81,6 +90,19 @@ type PlatformInfo struct {
 var PlatformInfos = map[string]PlatformInfo{
 	PlatformAndroid: {Label: "Android", Ext: "apk", ContentType: "application/vnd.android.package-archive"},
 	PlatformIOS:     {Label: "iOS", Ext: "ipa", ContentType: "application/octet-stream"},
+}
+
+// LoginInput 是登录请求体，**恰好 2 个字段**；不接受任何额外字段。
+type LoginInput struct {
+	Username string `json:"username"`
+	Password string `json:"password"`
+}
+
+// LoginResult 是登录成功后的无状态令牌；服务端不存会话，只校验签名与到期时间。
+type LoginResult struct {
+	Token     string `json:"token"`
+	Username  string `json:"username"`
+	ExpiresAt string `json:"expiresAt"`
 }
 
 // Build 是完整包 DTO；三个 URL 字段由 service.buildURLs 填充，repository 映射时留空。
@@ -149,10 +171,10 @@ type ListResult struct {
 
 // HealthStatus 是健康检查结果。
 type HealthStatus struct {
-	Status           string `json:"status"`
-	Uptime           int64  `json:"uptime"`
-	DbOK             bool   `json:"dbOk"`
-	StorageWritable  bool   `json:"storageWritable"`
+	Status          string `json:"status"`
+	Uptime          int64  `json:"uptime"`
+	DbOK            bool   `json:"dbOk"`
+	StorageWritable bool   `json:"storageWritable"`
 }
 
 // FileRef 是下载所需的已校验文件引用。

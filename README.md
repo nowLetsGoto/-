@@ -19,8 +19,9 @@
 | 下载页二维码 | 内容为该包下载页的**绝对地址**，手机默认相机可扫 |
 | 自动解析 | APK/IPA 解析应用名、包名、版本号、构建号并自动带出表单，字段始终可改，失败降级不阻塞 |
 | 下载次数 | 仅在完整流式下载成功后 +1，列表页与下载页展示同一口径 |
+| 登录 | 单管理员账号（默认 `admin` / `admin123456`）；令牌 12 小时有效，过期自动回登录页 |
 
-**明确不做**：iOS 浏览器直接安装（plist / itms-services）、列表页二维码入口、推送 / 通知 / Webhook / 订阅 / CI 集成 / 开放 API Key、登录鉴权与成员体系、密码或回答问题安装、有效期 / 定时发布 / 短链、渠道与统计报表、鸿蒙 / CDN / 多语言、包删除与上传后编辑、应用图标解析、后端二维码接口、`POST /builds/parse` 预览端点、提交接口携带文件、任何多板块功能。
+**明确不做**：iOS 浏览器直接安装（plist / itms-services）、列表页二维码入口、推送 / 通知 / Webhook / 订阅 / CI 集成 / 开放 API Key、多成员与角色权限（第一版只有单管理员登录，没有成员体系）、密码或回答问题安装、有效期 / 定时发布 / 短链、渠道与统计报表、鸿蒙 / CDN / 多语言、包删除与上传后编辑、应用图标解析、后端二维码接口、`POST /builds/parse` 预览端点、提交接口携带文件、任何多板块功能。
 
 ---
 
@@ -50,12 +51,13 @@ Makefile                 gen:api / dev / build / test / up / down
 
 ```bash
 docker compose -f deploy/docker-compose.yml up -d db   # 必须先起数据库
-cp .env.example .env                                   # 必改 PUBLIC_BASE_URL
+cp .env.example .env                                   # 必改 PUBLIC_BASE_URL；生产还需改 AUTH_SECRET 与 ADMIN_PASSWORD
 npm --prefix web install
 make dev                                               # 同时起 :8080（Go）与 :5173（Vite）
 ```
 
 - 开发时浏览器打开 `http://localhost:5173`；`/api` 由 Vite 代理到 :8080。
+- 首次打开会先到登录页：默认 `admin` / `admin123456`（可用 `.env` 的 `ADMIN_USERNAME` / `ADMIN_PASSWORD` 改）。
 - 手机扫码请访问 `PUBLIC_BASE_URL` 指向的**局域网地址**（Vite 已监听 `0.0.0.0`），并确保手机与开发机同网段、防火墙放行 5173。
 - 契约变更后执行 `make gen:api` 重生成 `web/src/api/schema.d.ts` 并提交入库；生成物入库后，前端 dev 不需要 Go、后端 build 不需要 Node。
 - 纯静态自检：`make test`（Go 契约一致性测试）、`npm --prefix web run build`（前端类型检查 + 构建）。
@@ -98,6 +100,9 @@ make build          # 前端产物 → server/public/，再 CGO_ENABLED=0 go bui
 | `STORAGE_DIR` | `./storage` | 运行时数据根，相对进程工作目录（make 系列命令在仓库根运行） |
 | `MAX_UPLOAD_MB` | `200` | 单包上限，不得超过契约的 200 MB |
 | `GO_ENV` | `development` | `development` 放宽不可达基址；其它值按生产严格校验、非法即 fail-fast |
+| `ADMIN_USERNAME` | `admin` | 唯一管理员账号，不落库 |
+| `ADMIN_PASSWORD` | `admin123456` | 管理员口令；**生产必须改** |
+| `AUTH_SECRET` | `dandelion-dev-only-secret-change-me` | 登录令牌的 HMAC 密钥；生产沿用默认值会 fail-fast（`openssl rand -hex 32`） |
 | `VITE_API_BASE` | 空 | 前端 API 基址，留空表示同源 / 走代理 |
 
 ### `PUBLIC_BASE_URL` 三场景
@@ -114,40 +119,51 @@ make build          # 前端产物 → server/public/，再 CGO_ENABLED=0 go bui
 
 ---
 
-## 5. 接口速查（7 个）
+## 5. 接口速查（8 个）
 
-统一响应 `{code, data, message}`：成功 `code=0`，失败 `code` = HTTP 状态码（只有 400 / 404 / 405 / 413 / 500）且 `data=null`。唯一例外是文件下载成功返回二进制流。
+统一响应 `{code, data, message}`：成功 `code=0`，失败 `code` = HTTP 状态码（只有 400 / 401 / 404 / 405 / 413 / 500）且 `data=null`。唯一例外是文件下载成功返回二进制流。
 
-| # | 方法 | 路径 | 说明 |
-| --- | --- | --- | --- |
-| 1 | POST | `/api/v1/builds/stage` | multipart `file`，暂存 + 同步解析，恒 200（解析失败只写 `warnings`） |
-| 2 | POST | `/api/v1/builds` | **application/json**，`CommitBuildRequest` **恰好 8 字段**（token + 表单值），不含文件与 `metaSource`，返回 201 完整 Build |
-| 3 | GET | `/api/v1/builds?environment=&platform=` | 列表，空结果 `items: []` |
-| 4 | GET | `/api/v1/builds/{id}` | 详情 / 404 |
-| 5 | GET | `/api/v1/builds/{id}/file` | 原始包流 |
-| 6 | GET | `/healthz` | 健康检查（独立于 `/api/v1`） |
-| 7 | GET | `/`、`/upload`、`/d/{id}` | 静态资源 + SPA fallback |
+| # | 方法 | 路径 | 鉴权 | 说明 |
+| --- | --- | --- | --- | --- |
+| 1 | POST | `/api/v1/auth/login` | 公开 | JSON `{username,password}`，返回 `{token,username,expiresAt}`；凭据错误返回 400 |
+| 2 | POST | `/api/v1/builds/stage` | 需登录 | multipart `file`，暂存 + 同步解析，恒 200（解析失败只写 `warnings`） |
+| 3 | POST | `/api/v1/builds` | 需登录 | **application/json**，`CommitBuildRequest` **恰好 8 字段**（token + 表单值），不含文件与 `metaSource`，返回 201 完整 Build |
+| 4 | GET | `/api/v1/builds?environment=&platform=` | 需登录 | 列表，空结果 `items: []` |
+| 5 | GET | `/api/v1/builds/{id}` | 公开 | 详情 / 404（下载页取数，扫码的人无需登录） |
+| 6 | GET | `/api/v1/builds/{id}/file` | 公开 | 原始包流 |
+| 7 | GET | `/healthz` | 公开 | 健康检查（独立于 `/api/v1`） |
+| 8 | GET | `/`、`/upload`、`/d/{id}` | 公开 | 静态资源 + SPA fallback |
+
+> 「需登录」的三条接口要带 `Authorization: Bearer <token>`，缺失或过期返回 401。
 
 ```bash
 # 造两个自测用小包（内容任意、扩展名正确即可，不新增脚本文件）
 printf 'fake apk for smoke test' > /tmp/demo.apk
 printf 'fake ipa for smoke test' > /tmp/demo.ipa
 
+# ⓪ 登录换令牌（默认 admin / admin123456）
+TOKEN=$(curl -sS -X POST http://localhost:8080/api/v1/auth/login \
+  -H 'Content-Type: application/json' \
+  -d '{"username":"admin","password":"admin123456"}' | python3 -c 'import sys,json;print(json.load(sys.stdin)["data"]["token"])')
+
 # ① 暂存：选文件时由前端自动触发；返回 stageToken / parsed / warnings
-curl -sS -F "file=@/tmp/demo.apk" http://localhost:8080/api/v1/builds/stage
+curl -sS -H "Authorization: Bearer $TOKEN" \
+  -F "file=@/tmp/demo.apk" http://localhost:8080/api/v1/builds/stage
 
 # ② 提交发布 commit：只发 JSON（恰好 8 字段），不带文件、不带 metaSource；把 <TOKEN> 换成上一步的 stageToken
 curl -sS -X POST http://localhost:8080/api/v1/builds \
+  -H "Authorization: Bearer $TOKEN" \
   -H 'Content-Type: application/json' \
   -d '{"stageToken":"<TOKEN>","environment":"test","platform":"android","appName":"商城 App","packageId":"com.example.shop","version":"1.2.0","buildNumber":"3","changelog":"修复登录态过期问题"}'
 
 # ③ 列表（platform 省略或 all 表示不筛）
-curl -sS 'http://localhost:8080/api/v1/builds?environment=test&platform=android'
+curl -sS -H "Authorization: Bearer $TOKEN" \
+  'http://localhost:8080/api/v1/builds?environment=test&platform=android'
 
-# ④ 详情
+# ④ 详情（公开，无需令牌）
 curl -sS http://localhost:8080/api/v1/builds/<ID>
 
-# ⑤ 下载原始文件
+# ⑤ 下载原始文件（公开）
 curl -OJ http://localhost:8080/api/v1/builds/<ID>/file
 
 # ⑥ 健康检查
@@ -169,12 +185,13 @@ curl -sS http://localhost:8080/d/<ID> | head -5
 
 ---
 
-## 6. 关键设计（读代码前先看这四条）
+## 6. 关键设计（读代码前先看这五条）
 
 1. **stage 上传对用户透明，不是两步发布**：选文件那一刻自动上传一次到 `storage/tmp/{token}.{ext}` 并同步解析（5s 超时、manifest/plist ≤5MB、zip 条目上限），前端只把解析值填进**未被用户改动**的字段；用户全程只点一次「上传并发布」，commit 请求是纯 JSON（恰好 8 个字段，不含文件、不含 `metaSource`），服务端不再调用解析器、也不覆盖任何用户值，只 rename + 写库 + 生成地址；`metaSource` 由服务端按「是否发生空值兜底」派生（`fallback` / `parsed`）后入库，前端无法伪造。token 有效期 1 小时、用后即失效，启动时清空 tmp、每次 stage 前清理 1 小时孤儿。
 2. **三个 URL 由 `service/build_service.go` 的 `buildURLs(id)` 唯一生成**，`Create` / `List` / `Get` 统一调用；repository 的 `rowToBuild` 把这三个字段留空，绝不入库（换域名不用刷数据）。前端零拼接。
 3. **下载次数在 `io.Copy` 成功且写出字节 == `Content-Length` 之后**才 `UPDATE ... +1`；404 / 路径非法 / 文件缺失 / 客户端中断 / copy 出错 / 字节不足一律不计数；计数是 2s 短超时的旁路，失败只记日志、绝不阻断已完成的下载。第一版不做强去重（按钮点击后禁用 3s）、不做 Range / 断点续传。
 4. **契约是单一来源**：环境 / 平台枚举只写在 `api/openapi.yaml`，前端用生成类型，后端用 `go test ./...` 的契约一致性测试比对（把 yaml 里的 `pre` 改成 `pre2` 测试必须失败）；数据库 `environment` 列只 `NOT NULL`、**没有 CHECK**。第一版只有 `builds` 一张业务表。
+5. **登录只有一个账号，令牌是无状态的**：账号口令来自 `ADMIN_USERNAME` / `ADMIN_PASSWORD`，不落库、不建会话表，比对用 `subtle.ConstantTimeCompare`；令牌是「到期时间戳.`HMAC-SHA256`」串，服务端不存会话，重启后仍然有效。**受保护的只有「上传 / 发布 / 列表」三条**，`/d/{id}` 与原始文件下载必须公开——扫码的人没有账号。`AUTH_SECRET` 生产沿用默认值会 fail-fast。
 
 **多板块 / push 预留**：只体现在三段式 Layout + 一个导航数组（当前仅「应用包」一项）、`/d/:id` 路由命名空间永不改动、`/api/v1` 前缀、`BuildService.Create()` 这个唯一「上传完成」时点、装配层可注入。没有任何占位菜单、空页面、事件类型、outbox 表或 `TODO`。
 
@@ -197,7 +214,7 @@ sudo systemctl daemon-reload && sudo systemctl enable --now dandelion
 
 ### ③ 容器（三服务）
 ```bash
-cp .env.example .env       # 必改 PUBLIC_BASE_URL 为对外 https 域名
+cp .env.example .env       # 必改 PUBLIC_BASE_URL 为对外 https 域名，并把 AUTH_SECRET 换成 openssl rand -hex 32
 make up                    # = docker compose -f deploy/docker-compose.yml up -d --build
 make down
 ```
@@ -244,9 +261,11 @@ tar -xzf uploads_YYYY-MM-DD.tar.gz -C storage
 | 现象 | 排查 |
 | --- | --- |
 | 上传大包返回 413 | 先看 Nginx `client_max_body_size 210m`，再看 `MAX_UPLOAD_MB`（不得超过 200）与契约 `x-constants.maxUploadMB` |
+| 操作时提示「登录状态已失效」 | 令牌 12 小时过期，或服务端换了 `AUTH_SECRET`（换密钥会让全部旧令牌失效）；重新登录即可 |
 | 手机扫码打不开 / 二维码区显示「基址不可被手机访问」 | 检查 `PUBLIC_BASE_URL` 是否是手机可达的绝对地址；本地开发要填局域网 IP + `:5173`，不能填 localhost 或 `:8080` |
 | 重启后包不见了 | 检查 `storage/` 卷挂载与 `DATABASE_URL` 是否指向同一个 PostgreSQL；DB 记录与 uploads 文件必须成对存在 |
 | 提交提示「暂存文件已失效，请重新选择文件」 | token 超过 1 小时、服务重启清空了 tmp、或已用过；重新选一次文件即可 |
+| 改了后端代码，接口却返回「接口不存在」 | 8080 上还是上一个 `dev-server` 进程（Go 没有热重载，替换二进制不影响已运行的进程）。重启 `make dev` 即可 |
 | 表单没有自动带出包名/版本 | 包可能损坏或是加固包，解析失败属预期降级，`warnings` 会提示，手填后照常上传 |
 | `go test ./...` 失败且提示枚举不一致 | 有人改了 `api/openapi.yaml` 却没同步 Go 常量，或反之；契约测试就是用来卡住这种漂移的 |
 | `/d/{id}` 刷新 404 | 单机检查 Go 的 SPA fallback，容器检查 Nginx `try_files $uri /index.html`；两处都要有 |

@@ -1,0 +1,451 @@
+/*
+ * login.css · 登录页专属样式（浅色 + 浅蓝青）。
+ * 职责：定义登录页局部设计变量、双栏布局、表单控件状态与入场动效。
+ * 输入：LoginPage 的 login- 前缀类名；输出：桌面双栏 / 窄屏单栏的登录界面。
+ * 边界：只作用于 .login-page 子树，不改全站变量与其它页面；不引入 UI 框架或预处理器。
+ */
+
+.login-page {
+  /* 局部设计变量：统一 login- 前缀，避免与全站绿色主题互相污染 */
+  --login-ink: #0f2c36;
+  --login-muted: #4b6a76;
+  /* faint 用于 12px 辅助文字与占位符：在 #fbfeff 与品牌底色上都保持 ≥4.5:1 */
+  --login-faint: #526d78;
+  --login-line: #d7e8ee;
+  --login-primary: #0e7490;
+  --login-primary-strong: #0b5c73;
+  --login-primary-soft: rgba(14, 116, 144, 0.08);
+  --login-ring: rgba(14, 116, 144, 0.16);
+  --login-danger: #a03c3c;
+  --login-serif: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif;
+  --login-ease: cubic-bezier(0.22, 1, 0.36, 1);
+
+  display: grid;
+  grid-template-columns: minmax(0, 46fr) minmax(0, 54fr);
+  min-height: 100vh;
+  min-height: 100dvh;
+  background: #fbfeff;
+  color: var(--login-ink);
+}
+
+/* ---------- 左：品牌场 ---------- */
+
+.login-brand {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 48px;
+  padding: 52px 56px 40px;
+  overflow: hidden;
+  border-right: 1px solid rgba(15, 44, 54, 0.06);
+  background:
+    radial-gradient(120% 80% at 100% 0%, #eaf8fc 0%, rgba(234, 248, 252, 0) 58%),
+    linear-gradient(158deg, #f3fbfd 0%, #e6f4f9 48%, #dcedf4 100%);
+}
+
+/* 右上柔光：只负责压住底色，不抢文字 */
+.login-orb {
+  position: absolute;
+  top: -120px;
+  left: -140px;
+  width: 360px;
+  height: 360px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(34, 211, 238, 0.16) 0%, rgba(34, 211, 238, 0) 70%);
+  pointer-events: none;
+}
+
+/* 右下同心圆：给大面积留白一个视觉落点 */
+.login-halo {
+  position: absolute;
+  right: -190px;
+  bottom: -240px;
+  width: 520px;
+  height: 520px;
+  border: 1px solid rgba(14, 116, 144, 0.12);
+  border-radius: 50%;
+  pointer-events: none;
+}
+
+.login-halo::after {
+  content: "";
+  position: absolute;
+  inset: 58px;
+  border: 1px solid rgba(14, 116, 144, 0.08);
+  border-radius: 50%;
+}
+
+/* 蒲公英种子：一根细茎 + 顶端一点，缓慢上下浮动 */
+.login-seed {
+  position: absolute;
+  width: 1px;
+  height: 38px;
+  background: linear-gradient(to bottom, rgba(14, 116, 144, 0.3), rgba(14, 116, 144, 0));
+  pointer-events: none;
+  animation: login-drift 14s var(--login-ease) infinite alternate;
+}
+
+.login-seed::after {
+  content: "";
+  position: absolute;
+  top: -3px;
+  left: -2.5px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: rgba(14, 116, 144, 0.42);
+  /* 柔光晕暗示蒲公英冠毛，比纯圆点更像"种子" */
+  box-shadow: 0 0 7px 3px rgba(14, 116, 144, 0.1);
+}
+
+.login-seed-a {
+  top: 44%;
+  right: 7%;
+  transform: rotate(12deg);
+}
+
+.login-seed-b {
+  top: 58%;
+  right: 17%;
+  height: 26px;
+  opacity: 0.75;
+  transform: rotate(-8deg);
+  animation-delay: -4s;
+}
+
+.login-seed-c {
+  right: 30%;
+  bottom: 16%;
+  height: 30px;
+  opacity: 0.6;
+  transform: rotate(6deg);
+  animation-delay: -8s;
+}
+
+.login-brand-top,
+.login-brand-bottom {
+  position: relative;
+  z-index: 1;
+}
+
+.login-lockup {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.login-mark {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
+  background: var(--login-primary);
+  color: #f2fdff;
+  font: 600 17px/1 var(--login-serif);
+}
+
+.login-wordmark {
+  font-family: var(--login-serif);
+  font-size: 19px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
+.login-tagline {
+  margin: 40px 0 14px;
+  font-size: clamp(26px, 2.5vw, 34px);
+  font-weight: 600;
+  line-height: 1.42;
+  letter-spacing: 0.01em;
+}
+
+.login-lede {
+  margin: 0;
+  max-width: 26em;
+  color: var(--login-muted);
+  font-size: 14px;
+  line-height: 1.8;
+}
+
+.login-envs-label {
+  margin: 0 0 8px;
+  color: var(--login-faint);
+  font-size: 12px;
+  letter-spacing: 0.14em;
+}
+
+.login-envs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0 0 22px;
+  padding: 0;
+  list-style: none;
+}
+
+.login-envs li {
+  padding: 4px 12px;
+  border: 1px solid rgba(14, 116, 144, 0.16);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.55);
+  color: #2c5c6b;
+  font-size: 12px;
+}
+
+.login-brand-foot {
+  margin: 0;
+  color: var(--login-faint);
+  font-size: 12px;
+}
+
+/* ---------- 右：表单 ---------- */
+
+.login-main {
+  display: grid;
+  place-items: center;
+  padding: 56px 40px;
+}
+
+.login-form {
+  width: 100%;
+  max-width: 352px;
+  animation: login-rise 520ms var(--login-ease) both;
+}
+
+.login-eyebrow {
+  margin: 0 0 10px;
+  color: var(--login-primary);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.16em;
+}
+
+.login-form h2 {
+  margin: 0 0 8px;
+  font-size: 26px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
+.login-sub {
+  margin: 0 0 30px;
+  color: var(--login-muted);
+  font-size: 14px;
+}
+
+.login-field {
+  display: block;
+  margin-bottom: 18px;
+}
+
+.login-label {
+  display: block;
+  margin-bottom: 7px;
+  color: #3d5c68;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.login-control {
+  position: relative;
+  display: block;
+}
+
+.login-input {
+  width: 100%;
+  height: 46px;
+  padding: 0 14px;
+  border: 1px solid var(--login-line);
+  border-radius: 10px;
+  background: #fff;
+  color: var(--login-ink);
+  font-family: inherit;
+  font-size: 15px;
+  transition: border-color 160ms ease, box-shadow 160ms ease;
+}
+
+.login-input::placeholder {
+  color: var(--login-faint);
+}
+
+.login-input:hover {
+  border-color: #bfdae3;
+}
+
+.login-input:focus {
+  outline: none;
+  border-color: var(--login-primary);
+  box-shadow: 0 0 0 3px var(--login-ring);
+}
+
+.login-input-password {
+  padding-right: 66px;
+}
+
+.login-eye {
+  position: absolute;
+  top: 50%;
+  right: 6px;
+  transform: translateY(-50%);
+  padding: 6px 10px;
+  border: none;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--login-primary);
+  font-family: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.login-eye:hover {
+  background: var(--login-primary-soft);
+}
+
+.login-eye:focus-visible {
+  outline: 2px solid var(--login-primary);
+  outline-offset: 1px;
+}
+
+.login-error {
+  display: flex;
+  gap: 8px;
+  margin: 0 0 16px;
+  padding: 10px 12px;
+  border: 1px solid #f2d8d8;
+  border-radius: 9px;
+  background: #fdf4f4;
+  color: var(--login-danger);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.login-error::before {
+  content: "!";
+  display: grid;
+  place-items: center;
+  flex: 0 0 16px;
+  width: 16px;
+  height: 16px;
+  margin-top: 1px;
+  border-radius: 50%;
+  background: #e8c4c4;
+  color: #7e2c2c;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.login-submit {
+  width: 100%;
+  height: 48px;
+  border: none;
+  border-radius: 10px;
+  background: var(--login-primary);
+  color: #f4fdff;
+  font-family: inherit;
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+  transition: background-color 160ms ease, box-shadow 200ms ease, transform 200ms var(--login-ease);
+}
+
+.login-submit:hover:not(:disabled) {
+  background: var(--login-primary-strong);
+  box-shadow: 0 10px 24px rgba(14, 116, 144, 0.22);
+  transform: translateY(-1px);
+}
+
+.login-submit:active:not(:disabled) {
+  transform: translateY(0);
+  box-shadow: none;
+}
+
+.login-submit:focus-visible {
+  outline: 2px solid var(--login-primary);
+  outline-offset: 3px;
+}
+
+.login-submit:disabled {
+  opacity: 0.62;
+  cursor: not-allowed;
+}
+
+.login-hint {
+  margin: 22px 0 0;
+  padding-top: 18px;
+  border-top: 1px solid rgba(15, 44, 54, 0.07);
+  color: var(--login-faint);
+  font-size: 12px;
+  line-height: 1.7;
+}
+
+@keyframes login-rise {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* 只动 translate，保留种子自身的 rotate 角度 */
+@keyframes login-drift {
+  from {
+    translate: 0 0;
+  }
+  to {
+    translate: 0 -14px;
+  }
+}
+
+/* 窄屏：品牌场收成一条标识栏，表单上移，避免首屏被品牌区挤掉 */
+@media (max-width: 900px) {
+  .login-page {
+    grid-template-columns: 1fr;
+    /* 关键：第一行按内容高度，其余空间全给表单，否则自动行会把品牌栏拉满 */
+    grid-template-rows: auto 1fr;
+  }
+
+  .login-brand {
+    gap: 0;
+    padding: 18px 24px;
+    border-right: none;
+    border-bottom: 1px solid rgba(15, 44, 54, 0.06);
+  }
+
+  .login-tagline,
+  .login-lede,
+  .login-brand-bottom,
+  .login-orb,
+  .login-halo,
+  .login-seed {
+    display: none;
+  }
+
+  .login-main {
+    place-items: start center;
+    padding: 36px 24px 48px;
+  }
+}
+
+@media (max-width: 380px) {
+  .login-main {
+    padding: 28px 18px 40px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .login-form,
+  .login-seed {
+    animation: none;
+  }
+
+  .login-submit,
+  .login-input {
+    transition: none;
+  }
+}

@@ -12,7 +12,7 @@ export default defineConfig({
   plugins: [react()],
   server: {
     // 手机与开发机同网段时可打开开发服务器，PUBLIC_BASE_URL 才能指向它。
-    host: '0.0.0.0',
+    host: '192.168.6.14',
     proxy: {
       '/api': {
         target: 'http://localhost:8080',

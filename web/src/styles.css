@@ -112,6 +112,19 @@ p {
   flex: 0 0 auto;
 }
 
+/* 账号区：仅已登录时渲染，公开下载页对访客不出现 */
+.header-account {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  flex: 0 0 auto;
+}
+
+.header-user {
+  color: var(--color-muted);
+  font-size: var(--font-size-sm);
+}
+
 .app-content {
   padding: var(--spacing-lg);
 }

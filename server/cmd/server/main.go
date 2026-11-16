@@ -77,13 +77,21 @@ func run() error {
 		return err
 	}
 
+	authSvc := service.NewAuthService(cfg)
+	auth := handler.NewAuthHandler(authSvc)
 	builds := handler.NewBuildHandler(cfg, svc, paths)
 	health := handler.NewHealthHandler(repo, paths)
 	public, err := fs.Sub(staticfs.PublicFiles, "public")
 	if err != nil {
 		return fmt.Errorf("读取内嵌静态资源失败: %w", err)
 	}
-	router := app.NewRouter(app.Deps{Builds: builds, Health: health, StaticFS: public})
+	router := app.NewRouter(app.Deps{
+		Builds:   builds,
+		Auth:     auth,
+		Verify:   authSvc.Verify,
+		Health:   health,
+		StaticFS: public,
+	})
 
 	server := &http.Server{
 		Addr:              cfg.Host + ":" + cfg.Port,

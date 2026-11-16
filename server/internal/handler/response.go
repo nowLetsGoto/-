@@ -3,13 +3,14 @@
 // 职责：构造 {code,data,message}；把 AppError / 404 / 未知错误统一成中文可读响应；失败清理 tmp 残留。
 // 输入：ResponseWriter、Request、业务数据或 error。
 // 输出：JSON 响应（成功 code=0，失败 code=HTTP 状态码且 data=null）。
-// 边界：错误码只有 400/404/405/413/500；handler 层零 try/catch；不写 SQL、不拼磁盘路径。
+// 边界：错误码只有 400/401/404/405/413/500；handler 层零 try/catch；不写 SQL、不拼磁盘路径。
 package handler
 
 import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -60,9 +61,9 @@ func writeJSON(w http.ResponseWriter, status int, code int, data any, message st
 type contextKey string
 
 const (
-	stageTmpKey     contextKey = "stage-tmp-path"
-	stageNameKey    contextKey = "stage-name-path"
-	logFieldsKey    contextKey = "log-fields"
+	stageTmpKey  contextKey = "stage-tmp-path"
+	stageNameKey contextKey = "stage-name-path"
+	logFieldsKey contextKey = "log-fields"
 )
 
 // AttachStageTmp 就地记录本请求新建的暂存文件，失败时由 WriteError 统一删除。
@@ -96,6 +97,10 @@ func WriteError(w http.ResponseWriter, r *http.Request, err error) {
 			appErr = &AppError{Status: 400, Code: 400, Message: contract.ErrStageInvalid.Error()}
 		case errors.Is(err, contract.ErrPlatformMismatch):
 			appErr = &AppError{Status: 400, Code: 400, Message: contract.ErrPlatformMismatch.Error()}
+		case errors.Is(err, contract.ErrInvalidCredentials):
+			appErr = &AppError{Status: 400, Code: 400, Message: contract.ErrInvalidCredentials.Error()}
+		case errors.Is(err, contract.ErrUnauthorized):
+			appErr = &AppError{Status: 401, Code: 401, Message: contract.ErrUnauthorized.Error()}
 		default:
 			log.Printf("[500] method=%s path=%s query=%s %s err=%v",
 				r.Method, r.URL.Path, r.URL.RawQuery, logFields(r), err)
@@ -123,15 +128,15 @@ func cleanupStageFiles(r *http.Request) {
 }
 
 // DecodeJSON 限制请求体大小、拒绝未知字段并解码。
-// 契约里 CommitBuildRequest 声明了 additionalProperties: false，这里用 DisallowUnknownFields 把它落实：
-// 多传 file / metaSource / touchedFields 等一律 400，而不是被静默忽略后照常 201。
-func DecodeJSON(w http.ResponseWriter, r *http.Request, target any) error {
+// allowed 是该接口契约允许的字段名（如 "username/password"），只用于把 DisallowUnknownFields
+// 的英文错误翻译成可上屏的中文；未知字段一律 400，而不是被静默忽略后照常成功。
+func DecodeJSON(w http.ResponseWriter, r *http.Request, target any, allowed string) error {
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 	decoder := json.NewDecoder(r.Body)
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(target); err != nil {
 		if strings.Contains(err.Error(), "unknown field") {
-			return BadRequest("请求体包含未知字段（仅允许 stageToken/environment/platform/appName/packageId/version/buildNumber/changelog）")
+			return BadRequest(fmt.Sprintf("请求体包含未知字段（仅允许 %s）", allowed))
 		}
 		return BadRequest("请求体不是合法的 JSON")
 	}

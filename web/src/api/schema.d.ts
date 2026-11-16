@@ -4,6 +4,26 @@
  */
 
 export interface paths {
+    "/auth/login": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 管理员登录，换取访问令牌
+         * @description 单管理员账号模型：凭据由部署配置（ADMIN_USERNAME / ADMIN_PASSWORD）提供，不落库。 成功返回无状态 HMAC 令牌（到期时间戳 + 签名），服务端不存会话； 前端以 Authorization: Bearer <token> 访问受保护接口。 凭据错误返回 400（与全站错误码口径一致）；401 专用于「未携带令牌或令牌失效」。
+         */
+        post: operations["login"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/builds/stage": {
         parameters: {
             query?: never;
@@ -106,6 +126,22 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** @description 管理员登录请求，application/json，恰好 2 个字段。 */
+        LoginRequest: {
+            username: string;
+            password: string;
+        };
+        /** @description 无状态令牌：载荷只有到期时间戳，签名由部署配置的 AUTH_SECRET 生成。 服务端不存会话，重启后令牌仍然有效；前端存 localStorage 并随请求发送。 */
+        LoginResult: {
+            /** @description 形如「到期时间戳.HMAC-SHA256 签名」的 BASE64URL 串 */
+            token: string;
+            username: string;
+            /**
+             * Format: date-time
+             * @description ISO 8601 UTC，由 x-constants.authTokenTTLSeconds 推出
+             */
+            expiresAt: string;
+        };
         /**
          * @description 四环境枚举，全仓唯一定义处；DB 只 NOT NULL 不加 CHECK
          * @enum {string}
@@ -221,7 +257,7 @@ export interface components {
         };
         /** @description 统一响应外壳；成功 code=0，失败 code=HTTP 状态码且 data=null */
         ApiResponse: {
-            /** @description 成功 0；失败仅 400 / 404 / 405 / 413 / 500 */
+            /** @description 成功 0；失败仅 400 / 401 / 404 / 405 / 413 / 500 */
             code: number;
             /** @description 业务数据；失败时为 null */
             data: unknown;
@@ -243,10 +279,22 @@ export interface components {
         HealthResponse: components["schemas"]["ApiResponse"] & {
             data: components["schemas"]["HealthStatus"];
         };
+        LoginResponse: components["schemas"]["ApiResponse"] & {
+            data: components["schemas"]["LoginResult"];
+        };
     };
     responses: {
-        /** @description 缺文件 / 枚举非法 / 平台与文件类型不一致 / 字段超长 / stageToken 失效 */
+        /** @description 缺文件 / 枚举非法 / 平台与文件类型不一致 / 字段超长 / stageToken 失效 / 登录凭据错误 */
         BadRequest: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["ErrorResponse"];
+            };
+        };
+        /** @description 未携带令牌、签名非法或令牌已过期；前端据此清空本地会话并回到登录页 */
+        Unauthorized: {
             headers: {
                 [name: string]: unknown;
             };
@@ -301,6 +349,33 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    login: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LoginRequest"];
+            };
+        };
+        responses: {
+            /** @description 登录成功，返回令牌与到期时间 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LoginResponse"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            405: components["responses"]["MethodNotAllowed"];
+            500: components["responses"]["InternalError"];
+        };
+    };
     stageBuild: {
         parameters: {
             query?: never;
@@ -330,6 +405,7 @@ export interface operations {
                 };
             };
             400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
             413: components["responses"]["TooLarge"];
             500: components["responses"]["InternalError"];
         };
@@ -356,6 +432,7 @@ export interface operations {
                 };
             };
             400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
             500: components["responses"]["InternalError"];
         };
     };
@@ -382,6 +459,7 @@ export interface operations {
                 };
             };
             400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
             405: components["responses"]["MethodNotAllowed"];
             500: components["responses"]["InternalError"];
         };

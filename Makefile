@@ -5,7 +5,7 @@
 # 边界：不承载业务逻辑；构建顺序「前端产物 → Go 编译」不可颠倒（//go:embed public/* 需要产物先存在）。
 
 -include .env
-export DATABASE_URL PUBLIC_BASE_URL PORT HOST STORAGE_DIR MAX_UPLOAD_MB GO_ENV VITE_API_BASE
+export DATABASE_URL PUBLIC_BASE_URL PORT HOST STORAGE_DIR MAX_UPLOAD_MB GO_ENV VITE_API_BASE ADMIN_USERNAME ADMIN_PASSWORD AUTH_SECRET
 
 .PHONY: gen\:api dev build test up down
 

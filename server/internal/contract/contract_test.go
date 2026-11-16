@@ -27,12 +27,15 @@ type openAPISpec struct {
 		StageTokenTTLSeconds int   `yaml:"stageTokenTTLSeconds"`
 		ParseTimeoutSeconds  int   `yaml:"parseTimeoutSeconds"`
 		ParseReadLimitMB     int   `yaml:"parseReadLimitMB"`
+		AuthTokenTTLSeconds  int   `yaml:"authTokenTTLSeconds"`
 		Limits               struct {
 			AppName     int `yaml:"appName"`
 			PackageID   int `yaml:"packageId"`
 			Version     int `yaml:"version"`
 			BuildNumber int `yaml:"buildNumber"`
 			Changelog   int `yaml:"changelog"`
+			Username    int `yaml:"username"`
+			Password    int `yaml:"password"`
 		} `yaml:"limits"`
 	} `yaml:"x-constants"`
 	XEnvironments map[string]string `yaml:"x-environments"`
@@ -163,11 +166,18 @@ func TestLimitsMatchContract(t *testing.T) {
 		spec.XConstants.ParseReadLimitMB != ParseReadLimitMB {
 		t.Fatal("stage/parser 常量与契约 x-constants 不一致")
 	}
+	if spec.XConstants.AuthTokenTTLSeconds != AuthTokenTTLSeconds {
+		t.Fatalf("authTokenTTLSeconds 契约=%d 与 Go=%d 不一致", spec.XConstants.AuthTokenTTLSeconds, AuthTokenTTLSeconds)
+	}
 	limits := spec.XConstants.Limits
 	if limits.AppName != MaxAppNameLen || limits.PackageID != MaxPackageIDLen ||
 		limits.Version != MaxVersionLen || limits.BuildNumber != MaxBuildNumberLen ||
 		limits.Changelog != MaxChangelogLen {
 		t.Fatal("字段长度上限与契约 x-constants.limits 不一致")
+	}
+	if limits.Username != MaxUsernameLen || limits.Password != MaxPasswordLen {
+		t.Fatalf("登录字段上限与契约不一致: 契约=%d/%d Go=%d/%d",
+			limits.Username, limits.Password, MaxUsernameLen, MaxPasswordLen)
 	}
 }
 
