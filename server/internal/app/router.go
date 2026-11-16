@@ -18,18 +18,24 @@ import (
 
 	"dandelion/server/internal/contract"
 	"dandelion/server/internal/handler"
-	loginhandler "dandelion/server/internal/handler/login"
+	"dandelion/server/internal/handler/login"
+	"dandelion/server/internal/handler/openapi"
+	settingshandler "dandelion/server/internal/handler/settings"
 	"dandelion/server/internal/middleware"
+	"dandelion/server/internal/middleware/apikey"
 	loginmw "dandelion/server/internal/middleware/login"
 )
 
 // Deps 是装配层注入的全部依赖。
 type Deps struct {
 	Builds *handler.BuildHandler
-	// Login 是登录接口；Verify 是它的令牌校验函数（同一业务服务导出）。
-	// 传函数而不是整个服务，路由层只需要「能不能校验」，不关心凭据从哪来。
-	Login    *loginhandler.Handler
+	// Open 是外部系统的一步式上传；Auth 是登录接口，Verify 是它的令牌校验函数。
+	Open     *openapi.Handler
+	Login    *login.Handler
+	Settings *settingshandler.Handler
 	Verify   loginmw.Verifier
+	// APIKey 每次请求读一次系统设置里的 Key，改配置无需重启。
+	APIKey   apikey.KeyProvider
 	Health   *handler.HealthHandler
 	StaticFS fs.FS
 }
@@ -38,11 +44,14 @@ type Deps struct {
 // chi 的默认 405 处理器会自动回填 Allow 头；一旦自定义 MethodNotAllowed 就必须自己补，
 // 否则响应缺少 Allow，与契约 §6.1 的「405 + Allow + JSON 外壳」不一致。
 var allowedMethods = map[string]string{
-	contract.RouteLogin:     "POST",
-	contract.RouteBuilds:    "GET, POST",
-	contract.RouteStage:     "POST",
-	contract.RouteBuildByID: "GET",
-	contract.RouteBuildFile: "GET",
+	contract.RouteLogin:       "POST",
+	contract.RouteOpenBuilds:  "POST",
+	contract.RouteSettings:    "GET, PUT",
+	contract.RouteWebhookTest: "POST",
+	contract.RouteBuilds:      "GET, POST",
+	contract.RouteStage:       "POST",
+	contract.RouteBuildByID:   "GET",
+	contract.RouteBuildFile:   "GET",
 }
 
 // allowedMethodsFor 返回该请求应回填的 Allow 值。
@@ -55,8 +64,10 @@ func allowedMethodsFor(req *http.Request) string {
 	}
 	path := strings.TrimSuffix(req.URL.Path, "/")
 	switch {
-	case path == contract.RouteLogin:
+	case path == contract.RouteLogin, path == contract.RouteOpenBuilds, path == contract.RouteWebhookTest:
 		return "POST"
+	case path == contract.RouteSettings:
+		return "GET, PUT"
 	case path == contract.RouteBuilds:
 		return "GET, POST"
 	case path == contract.RouteStage:
@@ -79,12 +90,18 @@ func NewRouter(d Deps) http.Handler {
 		api.Get("/builds/{id}", middleware.Wrap(d.Builds.Get))
 		api.Get("/builds/{id}/file", middleware.Wrap(d.Builds.DownloadFile))
 
-		// 管理动作（上传 / 发布 / 查列表）需要登录；分组只加中间件，不改路由前缀。
+		// 外部系统上传：X-API-Key 鉴权，与管理端登录态互不影响。
+		api.With(apikey.Require(d.APIKey)).Post("/open/builds", middleware.Wrap(d.Open.Upload))
+
+		// 管理动作（上传 / 发布 / 列表 / 系统设置）需要登录；分组只加中间件，不改路由前缀。
 		api.Group(func(private chi.Router) {
 			private.Use(loginmw.RequireAuth(d.Verify))
 			private.Post("/builds/stage", middleware.Wrap(d.Builds.Stage))
 			private.Post("/builds", middleware.Wrap(d.Builds.Commit))
 			private.Get("/builds", middleware.Wrap(d.Builds.List))
+			private.Get("/settings", middleware.Wrap(d.Settings.Get))
+			private.Put("/settings", middleware.Wrap(d.Settings.Update))
+			private.Post("/settings/webhook/test", middleware.Wrap(d.Settings.Test))
 		})
 	})
 	r.Get(contract.RouteHealth, middleware.Wrap(d.Health.Health))

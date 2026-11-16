@@ -23,10 +23,15 @@ import (
 	"dandelion/server/internal/app"
 	"dandelion/server/internal/config"
 	"dandelion/server/internal/handler"
-	loginhandler "dandelion/server/internal/handler/login"
+	"dandelion/server/internal/handler/login"
+	"dandelion/server/internal/handler/openapi"
+	settingshandler "dandelion/server/internal/handler/settings"
 	"dandelion/server/internal/repository"
+	settingsrepo "dandelion/server/internal/repository/settings"
 	"dandelion/server/internal/service"
 	loginsvc "dandelion/server/internal/service/login"
+	settingssvc "dandelion/server/internal/service/settings"
+	webhooksvc "dandelion/server/internal/service/webhook"
 	"dandelion/server/internal/storage"
 )
 
@@ -74,14 +79,22 @@ func run() error {
 		return err
 	}
 
-	svc := service.NewBuildService(cfg, paths, repo)
+	// 系统设置与 Webhook：配置读写归 settings，投递归 webhook；
+	// 发布流程只依赖 service.BuildNotifier 接口，因此不需要认识 webhook 的实现。
+	settingsRepo := settingsrepo.NewRepository(db)
+	settingsService := settingssvc.NewService(settingsRepo)
+	webhookService := webhooksvc.NewService(settingsRepo)
+
+	svc := service.NewBuildService(cfg, paths, repo, webhookService)
 	if err := svc.PurgeTmp(); err != nil {
 		return err
 	}
 
 	loginService := loginsvc.NewService(cfg)
-	loginHandler := loginhandler.NewHandler(loginService)
+	loginHandler := login.NewHandler(loginService)
 	builds := handler.NewBuildHandler(cfg, svc, paths)
+	openAPI := openapi.NewHandler(cfg, svc, paths)
+	settingsHandler := settingshandler.NewHandler(settingsService, webhookService)
 	health := handler.NewHealthHandler(repo, paths)
 	public, err := fs.Sub(staticfs.PublicFiles, "public")
 	if err != nil {
@@ -89,8 +102,11 @@ func run() error {
 	}
 	router := app.NewRouter(app.Deps{
 		Builds:   builds,
+		Open:     openAPI,
 		Login:    loginHandler,
+		Settings: settingsHandler,
 		Verify:   loginService.Verify,
+		APIKey:   settingsService.APIKey,
 		Health:   health,
 		StaticFS: public,
 	})

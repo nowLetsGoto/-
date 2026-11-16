@@ -40,15 +40,22 @@ type stagedLookup struct {
 	originalFileName string
 }
 
-// BuildService 持有配置、路径与仓储依赖，由 main.go 装配层注入。
-type BuildService struct {
-	cfg   config.Config
-	paths *storage.Paths
-	repo  *repository.BuildRepository
+// BuildNotifier 在发布成功后收到通知。
+// 实现方必须自行保证：投递失败只记日志、不阻塞、不影响发布结果（见 service/webhook）。
+type BuildNotifier interface {
+	NotifyBuild(ctx context.Context, build contract.Build)
 }
 
-func NewBuildService(cfg config.Config, paths *storage.Paths, repo *repository.BuildRepository) *BuildService {
-	return &BuildService{cfg: cfg, paths: paths, repo: repo}
+// BuildService 持有配置、路径、仓储与可选的通知旁路，由 main.go 装配层注入。
+type BuildService struct {
+	cfg      config.Config
+	paths    *storage.Paths
+	repo     *repository.BuildRepository
+	notifier BuildNotifier
+}
+
+func NewBuildService(cfg config.Config, paths *storage.Paths, repo *repository.BuildRepository, notifier BuildNotifier) *BuildService {
+	return &BuildService{cfg: cfg, paths: paths, repo: repo, notifier: notifier}
 }
 
 // PurgeTmp 启动时清空 tmp：tmp 是纯临时态，进程重启后不存在「进行中的上传」。
@@ -278,6 +285,10 @@ func (s *BuildService) Create(ctx context.Context, in contract.CommitInput) (con
 
 	s.fillURLs(&build)
 	// ★ 唯一「上传完成」时点：文件已落盘 + DB 已提交 + 绝对地址已生成且可访问。
+	if s.notifier != nil {
+		// 旁路通知：实现方异步投递，这里不等待、不重试，发布结果不受影响。
+		s.notifier.NotifyBuild(ctx, build)
+	}
 	return build, nil
 }
 

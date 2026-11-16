@@ -21,7 +21,7 @@ type openAPISpec struct {
 	Servers []struct {
 		URL string `yaml:"url"`
 	} `yaml:"servers"`
-	Paths map[string]any `yaml:"paths"`
+	Paths      map[string]any `yaml:"paths"`
 	XConstants struct {
 		MaxUploadMB          int64 `yaml:"maxUploadMB"`
 		StageTokenTTLSeconds int   `yaml:"stageTokenTTLSeconds"`
@@ -29,17 +29,20 @@ type openAPISpec struct {
 		ParseReadLimitMB     int   `yaml:"parseReadLimitMB"`
 		AuthTokenTTLSeconds  int   `yaml:"authTokenTTLSeconds"`
 		Limits               struct {
-			AppName     int `yaml:"appName"`
-			PackageID   int `yaml:"packageId"`
-			Version     int `yaml:"version"`
-			BuildNumber int `yaml:"buildNumber"`
-			Changelog   int `yaml:"changelog"`
-			Username    int `yaml:"username"`
-			Password    int `yaml:"password"`
+			AppName       int `yaml:"appName"`
+			PackageID     int `yaml:"packageId"`
+			Version       int `yaml:"version"`
+			BuildNumber   int `yaml:"buildNumber"`
+			Changelog     int `yaml:"changelog"`
+			Username      int `yaml:"username"`
+			Password      int `yaml:"password"`
+			WebhookURL    int `yaml:"webhookUrl"`
+			WebhookSecret int `yaml:"webhookSecret"`
 		} `yaml:"limits"`
 	} `yaml:"x-constants"`
-	XEnvironments map[string]string `yaml:"x-environments"`
-	XPlatforms    map[string]struct {
+	XWebhookFields map[string]string `yaml:"x-webhook-fields"`
+	XEnvironments  map[string]string `yaml:"x-environments"`
+	XPlatforms     map[string]struct {
 		Label       string `yaml:"label"`
 		Ext         string `yaml:"ext"`
 		ContentType string `yaml:"contentType"`
@@ -178,6 +181,39 @@ func TestLimitsMatchContract(t *testing.T) {
 	if limits.Username != MaxUsernameLen || limits.Password != MaxPasswordLen {
 		t.Fatalf("登录字段上限与契约不一致: 契约=%d/%d Go=%d/%d",
 			limits.Username, limits.Password, MaxUsernameLen, MaxPasswordLen)
+	}
+	if limits.WebhookURL != MaxWebhookURLLen || limits.WebhookSecret != MaxWebhookSecretLen {
+		t.Fatalf("Webhook 上限与契约不一致: 契约=%d/%d Go=%d/%d",
+			limits.WebhookURL, limits.WebhookSecret, MaxWebhookURLLen, MaxWebhookSecretLen)
+	}
+}
+
+// TestWebhookFieldsMatchContract 锁死可推送字段：yaml 键集合 = Go 标签表，枚举顺序 = WebhookFields。
+func TestWebhookFieldsMatchContract(t *testing.T) {
+	spec := loadSpec(t)
+
+	if len(spec.XWebhookFields) != len(WebhookFieldLabels) {
+		t.Fatalf("x-webhook-fields 共 %d 项，与 Go 标签表 %d 项不一致", len(spec.XWebhookFields), len(WebhookFieldLabels))
+	}
+	for key, label := range spec.XWebhookFields {
+		got, ok := WebhookFieldLabels[key]
+		if !ok {
+			t.Fatalf("契约出现 Go 未定义的字段 %s", key)
+		}
+		if got != label {
+			t.Fatalf("字段 %s 标签不一致: Go=%s 契约=%s", key, got, label)
+		}
+	}
+
+	if enum := spec.Components.Schemas["WebhookField"].Enum; !reflect.DeepEqual(enum, WebhookFields) {
+		t.Fatalf("WebhookField.enum=%v 与 Go WebhookFields=%v 不一致", enum, WebhookFields)
+	}
+
+	// 默认勾选必须是合法字段，否则新装实例的设置页会渲染出未知项。
+	for _, field := range DefaultWebhookFields {
+		if !IsValidWebhookField(field) {
+			t.Fatalf("默认勾选字段 %s 不在允许集合内", field)
+		}
 	}
 }
 

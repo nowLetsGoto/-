@@ -90,7 +90,11 @@ func logFields(r *http.Request) string {
 func WriteError(w http.ResponseWriter, r *http.Request, err error) {
 	var appErr *AppError
 	if !errors.As(err, &appErr) {
+		// 业务层的校验拒绝（如 Webhook 地址非法）直接透传中文文案。
+		var invalid *contract.ValidationError
 		switch {
+		case errors.As(err, &invalid):
+			appErr = &AppError{Status: 400, Code: 400, Message: invalid.Message}
 		case errors.Is(err, contract.ErrNotFound):
 			appErr = &AppError{Status: 404, Code: 404, Message: contract.ErrNotFound.Error()}
 		case errors.Is(err, contract.ErrStageInvalid):
@@ -101,6 +105,8 @@ func WriteError(w http.ResponseWriter, r *http.Request, err error) {
 			appErr = &AppError{Status: 400, Code: 400, Message: contract.ErrInvalidCredentials.Error()}
 		case errors.Is(err, contract.ErrUnauthorized):
 			appErr = &AppError{Status: 401, Code: 401, Message: contract.ErrUnauthorized.Error()}
+		case errors.Is(err, contract.ErrAPIKeyInvalid):
+			appErr = &AppError{Status: 401, Code: 401, Message: contract.ErrAPIKeyInvalid.Error()}
 		default:
 			log.Printf("[500] method=%s path=%s query=%s %s err=%v",
 				r.Method, r.URL.Path, r.URL.RawQuery, logFields(r), err)

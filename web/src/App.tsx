@@ -12,6 +12,7 @@ import { AppsPage } from './pages/AppsPage';
 import { DownloadPage } from './pages/DownloadPage';
 import { OverviewPage } from './pages/OverviewPage';
 import { PackagesPage } from './pages/PackagesPage';
+import { SettingsPage } from './pages/SettingsPage';
 import { UploadPage } from './pages/UploadPage';
 import { LoginPage } from './pages/login/LoginPage';
 
@@ -44,6 +45,7 @@ export function App(): JSX.Element {
           <Route path="/" element={<OverviewPage />} />
           <Route path="/packages" element={<PackagesPage />} />
           <Route path="/apps" element={<AppsPage />} />
+          <Route path="/settings" element={<SettingsPage />} />
           <Route path="/upload" element={<UploadPage />} />
         </Route>
       </Route>

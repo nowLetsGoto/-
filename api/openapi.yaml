@@ -28,6 +28,26 @@ x-constants:
     changelog: 2000
     username: 64
     password: 128
+    webhookUrl: 500
+    webhookSecret: 200
+
+# Webhook 可推送字段的唯一产品定义处：key 固定，value 是设置页展示的中文名。
+# 后端 contract.WebhookFieldLabels 镜像本表，由契约测试逐项比对；前端标签从接口返回，不再抄一份。
+x-webhook-fields:
+  id: 包 ID
+  appName: 应用名
+  packageId: 包名 / Bundle ID
+  version: 版本号
+  buildNumber: 构建号
+  environment: 环境
+  platform: 平台
+  changelog: 更新说明
+  fileSize: 文件大小
+  originalFileName: 原始文件名
+  downloadPageUrl: 下载页地址
+  downloadFileUrl: 下载文件地址
+  downloadCount: 下载次数
+  createdAt: 上传时间
 
 # 展示标签的唯一产品维度定义处；前端 utils/format.ts 以 Record<契约类型, string> 镜像。
 x-environments:
@@ -51,6 +71,127 @@ x-page-routes:
   downloadPage: /d/{id}
 
 paths:
+  /settings:
+    get:
+      operationId: getSettings
+      summary: 读取系统设置（Webhook 配置 + 外部 API Key）
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: 当前设置
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SettingsResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    put:
+      operationId: updateSettings
+      summary: 更新 Webhook 配置
+      description: 只更新 Webhook 部分；API Key 由服务端生成，不在此接口修改。
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WebhookConfig'
+      responses:
+        '200':
+          description: 更新后的完整设置
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SettingsResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /settings/webhook/test:
+    post:
+      operationId: testWebhook
+      summary: 向当前 Webhook 地址发一条示例消息
+      description: >
+        同步投递一条示例 payload，把目标返回的状态码带回来。
+        目标不可达不算接口错误：仍返回 200，由 delivered/statusCode/message 表达结果。
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: 投递结果
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WebhookTestResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /open/builds:
+    post:
+      operationId: openUploadBuild
+      summary: 外部系统一步式上传安装包（CI / 脚本调用）
+      description: >
+        multipart/form-data，一次请求完成「写入暂存 + 解析 + 落盘 + 写库 + 生成地址」。
+        鉴权用 X-API-Key（在系统设置页获取），不依赖管理员登录态。
+        文本字段可省略：省略时用解析出的包信息补齐，再缺才用文件名兜底。
+      security:
+        - apiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file, environment, platform]
+              properties:
+                file:
+                  type: string
+                  format: binary
+                  description: .apk / .ipa，单包上限 200 MB
+                environment:
+                  $ref: '#/components/schemas/Environment'
+                platform:
+                  $ref: '#/components/schemas/Platform'
+                appName:
+                  type: string
+                  maxLength: 100
+                packageId:
+                  type: string
+                  maxLength: 100
+                version:
+                  type: string
+                  maxLength: 50
+                buildNumber:
+                  type: string
+                  maxLength: 50
+                changelog:
+                  type: string
+                  maxLength: 2000
+      responses:
+        '201':
+          description: 上传成功，返回完整 Build（含下载页与下载文件绝对地址）
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BuildResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '413':
+          $ref: '#/components/responses/TooLarge'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
   /auth/login:
     post:
       operationId: login
@@ -257,6 +398,13 @@ components:
       description: >
         登录接口返回的 token。除 /auth/login、/healthz、/builds/{id}、/builds/{id}/file
         之外的管理接口都要求携带 Authorization: Bearer <token>。
+    apiKeyAuth:
+      type: apiKey
+      in: header
+      name: X-API-Key
+      description: >
+        外部系统专用。Key 在「系统设置 → 外部 API」查看，由服务端生成，
+        与管理员登录态互不影响，只授权 /open/builds。
 
   parameters:
     BuildId:
@@ -307,6 +455,73 @@ components:
             $ref: '#/components/schemas/ErrorResponse'
 
   schemas:
+    WebhookField:
+      type: string
+      description: 可推送到 Webhook 的包字段；展示名见 x-webhook-fields
+      enum:
+        [id, appName, packageId, version, buildNumber, environment, platform,
+         changelog, fileSize, originalFileName, downloadPageUrl, downloadFileUrl,
+         downloadCount, createdAt]
+
+    WebhookConfig:
+      type: object
+      description: >
+        Webhook 配置。enabled=true 时 url 必填且必须是 http(s) 绝对地址；
+        secret 非空时投递会带 X-Dandelion-Signature: sha256=<HMAC-SHA256(body)>。
+      additionalProperties: false
+      required: [enabled, url, secret, fields]
+      properties:
+        enabled:
+          type: boolean
+        url:
+          type: string
+          maxLength: 500
+        secret:
+          type: string
+          maxLength: 200
+        fields:
+          type: array
+          minItems: 1
+          items:
+            $ref: '#/components/schemas/WebhookField'
+
+    WebhookFieldOption:
+      type: object
+      description: 设置页渲染复选框用的字段目录，标签由服务端给出，前端不再抄一份
+      required: [key, label]
+      properties:
+        key:
+          $ref: '#/components/schemas/WebhookField'
+        label:
+          type: string
+
+    Settings:
+      type: object
+      required: [webhook, apiKey, availableFields]
+      properties:
+        webhook:
+          $ref: '#/components/schemas/WebhookConfig'
+        apiKey:
+          type: string
+          description: 外部上传接口的 Key，只在此接口返回，仅管理员可见
+        availableFields:
+          type: array
+          items:
+            $ref: '#/components/schemas/WebhookFieldOption'
+
+    WebhookTestResult:
+      type: object
+      description: 测试投递结果；目标不可达也是 200，用 delivered=false 表达
+      required: [delivered, statusCode, message]
+      properties:
+        delivered:
+          type: boolean
+        statusCode:
+          type: integer
+          description: 目标返回的 HTTP 状态码；未收到响应时为 0
+        message:
+          type: string
+
     LoginRequest:
       type: object
       description: 管理员登录请求，application/json，恰好 2 个字段。
@@ -595,3 +810,21 @@ components:
           properties:
             data:
               $ref: '#/components/schemas/LoginResult'
+
+    SettingsResponse:
+      allOf:
+        - $ref: '#/components/schemas/ApiResponse'
+        - type: object
+          required: [data]
+          properties:
+            data:
+              $ref: '#/components/schemas/Settings'
+
+    WebhookTestResponse:
+      allOf:
+        - $ref: '#/components/schemas/ApiResponse'
+        - type: object
+          required: [data]
+          properties:
+            data:
+              $ref: '#/components/schemas/WebhookTestResult'

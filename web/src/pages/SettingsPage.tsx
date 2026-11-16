@@ -1,0 +1,397 @@
+/**
+ * 系统设置页。
+ * 职责：配置 Webhook（开关 / 地址 / 签名密钥 / 推送字段）并测试投递；展示外部上传接口的调用方式。
+ * 输入：GET /api/v1/settings；输出：PUT 保存、POST 测试、复制 API Key 与调用示例。
+ * 边界：不做字段合法性判断（服务端校验）、不缓存设置副本；
+ *       切换 Tab 不重复取数，只有保存后以服务端返回的值为准。
+ */
+import { useEffect, useState } from 'react';
+import type { Settings, WebhookConfig, WebhookField, WebhookTestResult } from '../api/settings';
+import { getSettings, testWebhook, updateWebhook } from '../api/settings';
+import { errorMessage } from '../api/client';
+import { ErrorState, Loading } from '../components/States';
+
+type Tab = 'webhook' | 'api';
+
+export function SettingsPage(): JSX.Element {
+  const [tab, setTab] = useState<Tab>('webhook');
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [data, setData] = useState<Settings | null>(null);
+  const [form, setForm] = useState<WebhookConfig | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [testing, setTesting] = useState(false);
+  const [notice, setNotice] = useState('');
+  const [testResult, setTestResult] = useState<WebhookTestResult | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    getSettings()
+      .then((settings) => {
+        if (!cancelled) {
+          setData(settings);
+          setForm(settings.webhook);
+          setLoading(false);
+        }
+      })
+      .catch((err: unknown) => {
+        if (!cancelled) {
+          setError(errorMessage(err));
+          setLoading(false);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  /** 用服务端返回的权威值覆盖本地副本，避免保存后界面与库里不一致。 */
+  const applySettings = (settings: Settings): void => {
+    setData(settings);
+    setForm(settings.webhook);
+  };
+
+  const patchForm = (patch: Partial<WebhookConfig>): void => {
+    setForm((previous) => (previous ? { ...previous, ...patch } : previous));
+    setNotice('');
+  };
+
+  const toggleField = (field: WebhookField): void => {
+    if (!form) {
+      return;
+    }
+    const fields = form.fields.includes(field)
+      ? form.fields.filter((item) => item !== field)
+      : [...form.fields, field];
+    patchForm({ fields });
+  };
+
+  const save = async (): Promise<void> => {
+    if (!form || saving) {
+      return;
+    }
+    setSaving(true);
+    setNotice('');
+    try {
+      applySettings(await updateWebhook(form));
+      setNotice('已保存');
+    } catch (err) {
+      setNotice(errorMessage(err));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const runTest = async (): Promise<void> => {
+    if (testing) {
+      return;
+    }
+    setTesting(true);
+    setTestResult(null);
+    try {
+      setTestResult(await testWebhook());
+    } catch (err) {
+      setNotice(errorMessage(err));
+    } finally {
+      setTesting(false);
+    }
+  };
+
+  const copy = async (text: string, message: string): Promise<void> => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setNotice(message);
+    } catch {
+      setNotice('复制失败，请手动选中复制');
+    }
+  };
+
+  if (loading) {
+    return (
+      <section className="page">
+        <div className="page-head">
+          <div>
+            <h1>系统设置</h1>
+            <p className="sub">Webhook 推送与外部上传接口</p>
+          </div>
+        </div>
+        <Loading text="正在读取设置…" />
+      </section>
+    );
+  }
+
+  if (error || !data || !form) {
+    return (
+      <section className="page">
+        <div className="page-head">
+          <div>
+            <h1>系统设置</h1>
+            <p className="sub">Webhook 推送与外部上传接口</p>
+          </div>
+        </div>
+        <ErrorState message={error || '设置加载失败'} onRetry={() => window.location.reload()} />
+      </section>
+    );
+  }
+
+  return (
+    <section className="page">
+      <div className="page-head">
+        <div>
+          <h1>系统设置</h1>
+          <p className="sub">Webhook 推送与外部上传接口</p>
+        </div>
+      </div>
+
+      <div className="tabs" role="tablist">
+        <button
+          type="button"
+          role="tab"
+          aria-selected={tab === 'webhook'}
+          className={tab === 'webhook' ? 'tab tab-active' : 'tab'}
+          onClick={() => setTab('webhook')}
+        >
+          Webhook
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={tab === 'api'}
+          className={tab === 'api' ? 'tab tab-active' : 'tab'}
+          onClick={() => setTab('api')}
+        >
+          外部 API
+        </button>
+      </div>
+
+      {tab === 'webhook' ? (
+        <WebhookPanel
+          form={form}
+          data={data}
+          saving={saving}
+          testing={testing}
+          notice={notice}
+          testResult={testResult}
+          onPatch={patchForm}
+          onToggleField={toggleField}
+          onSave={() => void save()}
+          onTest={() => void runTest()}
+        />
+      ) : (
+        <ApiPanel apiKey={data.apiKey} onCopy={(text, message) => void copy(text, message)} />
+      )}
+    </section>
+  );
+}
+
+interface WebhookPanelProps {
+  form: WebhookConfig;
+  data: Settings;
+  saving: boolean;
+  testing: boolean;
+  notice: string;
+  testResult: WebhookTestResult | null;
+  onPatch: (patch: Partial<WebhookConfig>) => void;
+  onToggleField: (field: WebhookField) => void;
+  onSave: () => void;
+  onTest: () => void;
+}
+
+/** Webhook 配置面板：只负责渲染与回调，状态由页面持有。 */
+function WebhookPanel(props: WebhookPanelProps): JSX.Element {
+  const { form, data, saving, testing, notice, testResult } = props;
+
+  return (
+    <div className="card settings-card">
+      <div className="settings-row">
+        <div>
+          <div className="settings-label">启用 Webhook</div>
+          <p className="settings-hint">发布成功后，把下面勾选的包信息推送到接收地址。</p>
+        </div>
+        <button
+          type="button"
+          role="switch"
+          aria-checked={form.enabled}
+          aria-label="启用 Webhook"
+          className={form.enabled ? 'switch switch-on' : 'switch'}
+          onClick={() => props.onPatch({ enabled: !form.enabled })}
+        >
+          <span className="switch-knob" aria-hidden="true" />
+        </button>
+      </div>
+
+      <label className="settings-field">
+        <span>接收地址</span>
+        <input
+          className="text-input"
+          type="url"
+          inputMode="url"
+          placeholder="https://example.com/hooks/dandelion"
+          value={form.url}
+          onChange={(event) => props.onPatch({ url: event.target.value })}
+        />
+      </label>
+
+      <label className="settings-field">
+        <span>签名密钥（可选）</span>
+        <input
+          className="text-input"
+          type="text"
+          placeholder="填写后请求头会带 X-Dandelion-Signature"
+          value={form.secret}
+          onChange={(event) => props.onPatch({ secret: event.target.value })}
+        />
+        <em className="settings-hint">接收端用同一密钥做 HMAC-SHA256，即可确认消息来自本平台。</em>
+      </label>
+
+      <div className="settings-field">
+        <span>推送字段</span>
+        <div className="field-picker">
+          {data.availableFields.map((option) => (
+            <label
+              key={option.key}
+              className={form.fields.includes(option.key) ? 'field-check field-check-on' : 'field-check'}
+            >
+              <input
+                type="checkbox"
+                checked={form.fields.includes(option.key)}
+                onChange={() => props.onToggleField(option.key)}
+              />
+              {option.label}
+            </label>
+          ))}
+        </div>
+        <em className="settings-hint">只推送勾选的字段；勾上「下载页地址」接收端就能直接转发扫码链接。</em>
+      </div>
+
+      <div className="settings-actions">
+        <button className="button button-primary" type="button" onClick={props.onSave} disabled={saving}>
+          {saving ? '保存中…' : '保存'}
+        </button>
+        <button className="button" type="button" onClick={props.onTest} disabled={testing || !form.enabled}>
+          {testing ? '发送中…' : '发送测试消息'}
+        </button>
+        {notice ? <span className="settings-notice">{notice}</span> : null}
+      </div>
+
+      {testResult ? (
+        <p className={testResult.delivered ? 'notice notice-ok' : 'notice'}>
+          {testResult.message}
+          {testResult.statusCode > 0 ? `（HTTP ${testResult.statusCode}）` : ''}
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
+/** 外部 API 面板：把接口、Key 与可复制的 curl 放在一页，免去翻文档。 */
+function ApiPanel({ apiKey, onCopy }: { apiKey: string; onCopy: (text: string, message: string) => void }): JSX.Element {
+  // 仅用于生成给人复制的示例；真正的下载地址由服务端按 PUBLIC_BASE_URL 生成。
+  const origin = window.location.origin;
+  const curl = [
+    `curl -X POST ${origin}/api/v1/open/builds \\`,
+    `  -H "X-API-Key: ${apiKey}" \\`,
+    '  -F "file=@./app-release.apk" \\',
+    '  -F "environment=test" \\',
+    '  -F "platform=android" \\',
+    '  -F "changelog=修复登录态过期"',
+  ].join('\n');
+
+  return (
+    <div className="card settings-card">
+      <div className="settings-block">
+        <h2>调用方式</h2>
+        <p className="settings-hint">外部系统（CI / 脚本）用 API Key 上传，不需要管理员登录态。</p>
+        <dl className="kv-list">
+          <div>
+            <dt>接口</dt>
+            <dd>
+              <code>POST /api/v1/open/builds</code>
+            </dd>
+          </div>
+          <div>
+            <dt>鉴权</dt>
+            <dd>
+              <code>X-API-Key: &lt;key&gt;</code>
+            </dd>
+          </div>
+          <div>
+            <dt>格式</dt>
+            <dd>multipart/form-data，单包上限 200 MB</dd>
+          </div>
+          <div>
+            <dt>返回</dt>
+            <dd>201 + 完整 Build（含下载页与下载文件绝对地址）</dd>
+          </div>
+        </dl>
+      </div>
+
+      <div className="settings-block">
+        <h2>API Key</h2>
+        <div className="copy-row">
+          <input className="text-input mono" readOnly value={apiKey} aria-label="API Key" />
+          <button className="button button-ghost" type="button" onClick={() => onCopy(apiKey, 'API Key 已复制')}>
+            复制
+          </button>
+        </div>
+        <p className="settings-hint">Key 由服务端生成，只在登录态下可见；疑似泄露时请到数据库更换 api_key。</p>
+      </div>
+
+      <div className="settings-block">
+        <h2>字段说明</h2>
+        <div className="table-scroll">
+          <table className="table table-compact">
+            <thead>
+              <tr>
+                <th>字段</th>
+                <th>必填</th>
+                <th>说明</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>
+                  <code>file</code>
+                </td>
+                <td>是</td>
+                <td>.apk / .ipa 文件本身</td>
+              </tr>
+              <tr>
+                <td>
+                  <code>environment</code>
+                </td>
+                <td>是</td>
+                <td>test / hotfix / pre / prd</td>
+              </tr>
+              <tr>
+                <td>
+                  <code>platform</code>
+                </td>
+                <td>是</td>
+                <td>android / ios，需与文件扩展名一致</td>
+              </tr>
+              <tr>
+                <td>
+                  <code>appName</code>、<code>version</code> 等
+                </td>
+                <td>否</td>
+                <td>省略时用包内解析出的信息补齐，再缺才用文件名兜底</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div className="settings-block">
+        <h2>调用示例</h2>
+        <pre className="code-block">{curl}</pre>
+        <div className="settings-actions">
+          <button className="button button-ghost" type="button" onClick={() => onCopy(curl, '示例已复制')}>
+            复制示例
+          </button>
+        </div>
+        <p className="settings-hint">完整说明见仓库 docs/09-OPEN-API.md。</p>
+      </div>
+    </div>
+  );
+}

@@ -4,6 +4,67 @@
  */
 
 export interface paths {
+    "/settings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 读取系统设置（Webhook 配置 + 外部 API Key） */
+        get: operations["getSettings"];
+        /**
+         * 更新 Webhook 配置
+         * @description 只更新 Webhook 部分；API Key 由服务端生成，不在此接口修改。
+         */
+        put: operations["updateSettings"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/settings/webhook/test": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 向当前 Webhook 地址发一条示例消息
+         * @description 同步投递一条示例 payload，把目标返回的状态码带回来。 目标不可达不算接口错误：仍返回 200，由 delivered/statusCode/message 表达结果。
+         */
+        post: operations["testWebhook"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/open/builds": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 外部系统一步式上传安装包（CI / 脚本调用）
+         * @description multipart/form-data，一次请求完成「写入暂存 + 解析 + 落盘 + 写库 + 生成地址」。 鉴权用 X-API-Key（在系统设置页获取），不依赖管理员登录态。 文本字段可省略：省略时用解析出的包信息补齐，再缺才用文件名兜底。
+         */
+        post: operations["openUploadBuild"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/auth/login": {
         parameters: {
             query?: never;
@@ -126,6 +187,36 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /**
+         * @description 可推送到 Webhook 的包字段；展示名见 x-webhook-fields
+         * @enum {string}
+         */
+        WebhookField: "id" | "appName" | "packageId" | "version" | "buildNumber" | "environment" | "platform" | "changelog" | "fileSize" | "originalFileName" | "downloadPageUrl" | "downloadFileUrl" | "downloadCount" | "createdAt";
+        /** @description Webhook 配置。enabled=true 时 url 必填且必须是 http(s) 绝对地址； secret 非空时投递会带 X-Dandelion-Signature: sha256=<HMAC-SHA256(body)>。 */
+        WebhookConfig: {
+            enabled: boolean;
+            url: string;
+            secret: string;
+            fields: components["schemas"]["WebhookField"][];
+        };
+        /** @description 设置页渲染复选框用的字段目录，标签由服务端给出，前端不再抄一份 */
+        WebhookFieldOption: {
+            key: components["schemas"]["WebhookField"];
+            label: string;
+        };
+        Settings: {
+            webhook: components["schemas"]["WebhookConfig"];
+            /** @description 外部上传接口的 Key，只在此接口返回，仅管理员可见 */
+            apiKey: string;
+            availableFields: components["schemas"]["WebhookFieldOption"][];
+        };
+        /** @description 测试投递结果；目标不可达也是 200，用 delivered=false 表达 */
+        WebhookTestResult: {
+            delivered: boolean;
+            /** @description 目标返回的 HTTP 状态码；未收到响应时为 0 */
+            statusCode: number;
+            message: string;
+        };
         /** @description 管理员登录请求，application/json，恰好 2 个字段。 */
         LoginRequest: {
             username: string;
@@ -282,6 +373,12 @@ export interface components {
         LoginResponse: components["schemas"]["ApiResponse"] & {
             data: components["schemas"]["LoginResult"];
         };
+        SettingsResponse: components["schemas"]["ApiResponse"] & {
+            data: components["schemas"]["Settings"];
+        };
+        WebhookTestResponse: components["schemas"]["ApiResponse"] & {
+            data: components["schemas"]["WebhookTestResult"];
+        };
     };
     responses: {
         /** @description 缺文件 / 枚举非法 / 平台与文件类型不一致 / 字段超长 / stageToken 失效 / 登录凭据错误 */
@@ -349,6 +446,118 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    getSettings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 当前设置 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SettingsResponse"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    updateSettings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WebhookConfig"];
+            };
+        };
+        responses: {
+            /** @description 更新后的完整设置 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SettingsResponse"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    testWebhook: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 投递结果 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WebhookTestResponse"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+        };
+    };
+    openUploadBuild: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "multipart/form-data": {
+                    /**
+                     * Format: binary
+                     * @description .apk / .ipa，单包上限 200 MB
+                     */
+                    file: string;
+                    environment: components["schemas"]["Environment"];
+                    platform: components["schemas"]["Platform"];
+                    appName?: string;
+                    packageId?: string;
+                    version?: string;
+                    buildNumber?: string;
+                    changelog?: string;
+                };
+            };
+        };
+        responses: {
+            /** @description 上传成功，返回完整 Build（含下载页与下载文件绝对地址） */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BuildResponse"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            413: components["responses"]["TooLarge"];
+            500: components["responses"]["InternalError"];
+        };
+    };
     login: {
         parameters: {
             query?: never;

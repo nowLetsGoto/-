@@ -44,6 +44,7 @@
   --font-size-lg: 22px;
   --font-sans: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", "Segoe UI", sans-serif;
   --font-serif: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif;
+  --font-mono: "SF Mono", ui-monospace, Menlo, Consolas, monospace;
   --shadow-sm: 0 1px 2px rgba(15, 44, 54, 0.05);
   --shadow-md: 0 10px 28px rgba(15, 44, 54, 0.08);
 }
@@ -1076,37 +1077,332 @@ textarea.text-input {
   color: var(--color-primary);
 }
 
-/* ================= 下载页 ================= */
+/* ================= 系统设置 ================= */
+
+.tabs {
+  display: flex;
+  gap: 4px;
+  margin-bottom: var(--spacing-md);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.tab {
+  padding: 8px 14px;
+  border: none;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--color-muted);
+  font-family: inherit;
+  font-size: 13.5px;
+  cursor: pointer;
+}
+
+.tab:hover {
+  color: var(--color-text);
+}
+
+.tab-active {
+  border-bottom-color: var(--color-primary);
+  color: var(--color-primary-strong);
+  font-weight: 600;
+}
+
+.settings-card {
+  padding: var(--spacing-lg);
+}
+
+.settings-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--spacing-md);
+  padding-bottom: var(--spacing-md);
+  margin-bottom: var(--spacing-md);
+  border-bottom: 1px solid var(--color-border-soft);
+}
+
+.settings-label {
+  font-size: 13.5px;
+  font-weight: 600;
+}
+
+.settings-hint {
+  margin: 4px 0 0;
+  color: var(--color-muted);
+  font-size: var(--font-size-sm);
+  line-height: 1.7;
+}
+
+.settings-field {
+  display: block;
+  margin-bottom: var(--spacing-md);
+}
+
+.settings-field > span {
+  display: block;
+  margin-bottom: var(--spacing-xs);
+  color: var(--color-text-2);
+  font-size: var(--font-size-sm);
+  font-weight: 500;
+}
+
+/* 表单控件不必铺满整行：限制宽度让标签与控制项更贴近 */
+.settings-card .text-input {
+  max-width: 560px;
+}
+
+.settings-field .settings-hint {
+  display: block;
+  margin-top: var(--spacing-xs);
+  font-style: normal;
+}
+
+.settings-block {
+  padding-bottom: var(--spacing-lg);
+  margin-bottom: var(--spacing-lg);
+  border-bottom: 1px solid var(--color-border-soft);
+}
+
+.settings-block:last-child {
+  padding-bottom: 0;
+  margin-bottom: 0;
+  border-bottom: none;
+}
+
+.settings-block h2 {
+  margin-bottom: 6px;
+  font-size: 14px;
+}
+
+.settings-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  margin-top: var(--spacing-md);
+  flex-wrap: wrap;
+}
+
+.settings-notice {
+  color: var(--color-muted);
+  font-size: var(--font-size-sm);
+}
+
+/* 开关：用 button + role=switch，键盘可达 */
+.switch {
+  position: relative;
+  flex: 0 0 auto;
+  width: 42px;
+  height: 24px;
+  padding: 0;
+  border: none;
+  border-radius: 999px;
+  background: #dfeaee;
+  cursor: pointer;
+  transition: background-color 160ms ease;
+}
+
+.switch-knob {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: var(--shadow-sm);
+  transition: transform 160ms ease;
+}
+
+.switch-on {
+  background: var(--color-primary);
+}
+
+.switch-on .switch-knob {
+  transform: translateX(18px);
+}
+
+.switch:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+
+/* 字段多选 */
+.field-picker {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--spacing-xs);
+  margin-top: var(--spacing-xs);
+}
+
+.field-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  background: var(--color-surface);
+  color: var(--color-muted);
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+  user-select: none;
+  transition: border-color 140ms ease, background-color 140ms ease, color 140ms ease;
+}
+
+.field-check:hover {
+  border-color: #bcd8e1;
+  color: var(--color-text);
+}
+
+.field-check input {
+  width: 13px;
+  height: 13px;
+  margin: 0;
+  accent-color: var(--color-primary);
+}
+
+.field-check-on {
+  border-color: var(--color-primary);
+  background: var(--color-primary-soft);
+  color: var(--color-primary-strong);
+  font-weight: 500;
+}
+
+/* 键值说明与代码块 */
+.kv-list {
+  display: grid;
+  gap: 8px;
+  margin: var(--spacing-sm) 0 0;
+}
+
+.kv-list > div {
+  display: flex;
+  gap: var(--spacing-md);
+  font-size: var(--font-size-sm);
+}
+
+.kv-list dt {
+  flex: 0 0 56px;
+  color: var(--color-muted);
+}
+
+.kv-list dd {
+  margin: 0;
+  color: var(--color-text-2);
+}
+
+code {
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: #f1f7f9;
+  color: var(--color-primary-strong);
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+.mono {
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+}
+
+.code-block {
+  margin: var(--spacing-sm) 0 0;
+  padding: var(--spacing-md);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-2);
+  color: var(--color-text-2);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.8;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.table-compact {
+  min-width: 0;
+}
+
+.notice-ok {
+  border-color: #bfe3d5;
+  background: #f1faf6;
+  color: var(--color-ok);
+}
+
+/* ================= 下载页（对外扫码页） ================= */
+
+.download-page {
+  width: 100%;
+  max-width: 560px;
+}
 
 .download-card {
-  padding: var(--spacing-xl) var(--spacing-lg);
+  padding: 26px 28px 20px;
   text-align: center;
 }
 
+.download-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--spacing-sm);
+  margin-bottom: 22px;
+}
+
 .download-brand {
-  margin-bottom: var(--spacing-lg);
   color: var(--color-primary);
-  font-weight: 700;
-  letter-spacing: 0.5px;
+  font-family: var(--font-serif);
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.download-hero {
+  margin-bottom: var(--spacing-lg);
+}
+
+.download-title {
+  margin-bottom: 4px;
+  font-size: 23px;
+}
+
+.download-pkg {
+  margin: 0 0 12px;
+  color: var(--color-faint);
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  word-break: break-all;
+}
+
+.download-action {
+  height: 48px;
+  font-size: 15px;
+}
+
+.download-hint {
+  margin: var(--spacing-sm) 0 var(--spacing-lg);
+}
+
+.download-foot {
+  margin: var(--spacing-lg) 0 0;
+  padding-top: 14px;
+  border-top: 1px solid var(--color-border-soft);
+  color: var(--color-faint);
+  font-size: 11.5px;
 }
 
 .app-icon {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 72px;
-  height: 72px;
+  width: 76px;
+  height: 76px;
   margin: 0 auto var(--spacing-md);
-  border-radius: 18px;
+  border-radius: 19px;
   background: linear-gradient(135deg, #24a0bd, var(--color-primary));
   color: #fff;
   font-size: 32px;
   font-weight: 700;
-}
-
-.download-title {
-  margin-bottom: var(--spacing-sm);
-  font-size: 24px;
 }
 
 .info-list {
@@ -1123,6 +1419,11 @@ textarea.text-input {
   background: var(--color-surface-2);
 }
 
+/* 三项时（包名被省略）让最后一项占满整行，避免右下留一块空 */
+.info-list > div:last-child:nth-child(odd) {
+  grid-column: 1 / -1;
+}
+
 .info-list dt {
   color: var(--color-muted);
   font-size: 12px;
@@ -1131,6 +1432,12 @@ textarea.text-input {
 .info-list dd {
   margin: 2px 0 0;
   font-weight: 600;
+}
+
+.info-ellipsis {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .changelog {
@@ -1147,16 +1454,12 @@ textarea.text-input {
   word-break: break-word;
 }
 
-.download-hint {
-  margin-top: var(--spacing-sm);
-}
-
 .qrcode-box {
   display: inline-flex;
   flex-direction: column;
   align-items: center;
   gap: var(--spacing-sm);
-  min-width: 256px;
+  min-width: 0;
   margin: var(--spacing-lg) auto 0;
   padding: var(--spacing-md);
   border: 1px solid var(--color-border);
@@ -1196,6 +1499,13 @@ textarea.text-input {
 
   .overview-grid {
     grid-template-columns: 1fr;
+  }
+}
+
+/* 手机上不需要二维码：正在用手机看这个页面，直接点下载即可 */
+@media (max-width: 719px) {
+  .qrcode-box {
+    display: none;
   }
 }
 

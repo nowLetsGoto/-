@@ -10,6 +10,8 @@ const ICONS = {
   packages: 'M12 3.5 20 7.5v9l-8 4-8-4v-9z M4 7.5l8 4 8-4 M12 11.5v9',
   apps: 'M12 3.5 3.5 8.5 12 13.5l8.5-5z M3.5 13.5 12 18.5l8.5-5',
   plus: 'M12 5.5v13 M5.5 12h13',
+  settings:
+    'M12 9.2a2.8 2.8 0 1 0 0 5.6a2.8 2.8 0 1 0 0-5.6 M12 3v2.4 M12 18.6V21 M3 12h2.4 M18.6 12H21 M5.7 5.7l1.7 1.7 M16.6 16.6l1.7 1.7 M18.3 5.7l-1.7 1.7 M7.4 16.6l-1.7 1.7',
 } as const;
 
 export type IconName = keyof typeof ICONS;

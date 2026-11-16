@@ -33,10 +33,10 @@
 
 | 目录 / 文件 | 职责（一句话） | 现有文件 | **分类规则与禁止** |
 | --- | --- | --- | --- |
-| `api/` | HTTP 出入口与契约类型消费 | `client.ts`、`builds.ts`、`auth.ts`、`session.ts`、`schema.d.ts`（生成物） | `client.ts` 是**唯一** `fetch` 封装（解包、附带 Bearer、401 统一回登录页）；`builds.ts` / `auth.ts` 是接口函数与 URL 的**唯一**消费处；`session.ts` 是 localStorage 的**唯一**读写处；`schema.d.ts` 由 `make gen:api` 生成，**禁止手改** |
+| `api/` | HTTP 出入口与契约类型消费 | `client.ts`、`builds.ts`、`auth.ts`、`session.ts`、`settings.ts`、`schema.d.ts`（生成物） | `client.ts` 是**唯一** `fetch` 封装（解包、附带 Bearer、401 统一回登录页）；`builds.ts` / `auth.ts` / `settings.ts` 是接口函数与 URL 的**唯一**消费处；`session.ts` 是 localStorage 的**唯一**读写处；`schema.d.ts` 由 `make gen:api` 生成，**禁止手改** |
 | `hooks/` | 跨页面复用的状态逻辑 | `useEnvironment.ts`（全局环境）、`useAllBuilds.ts`（四环境聚合） | 不渲染 UI、不写业务文案；只封装状态与副作用，页面只管展示 |
 | `components/` | 无业务领域知识、可跨页面复用的 UI | `Layout.tsx`、`Sidebar.tsx`、`Topbar.tsx`、`States.tsx`、`FileDropzone.tsx`、`icons.tsx`、`navigation.ts` | **不发起请求**、不 import `api/`、不持有页面级状态、不写死某业务字段；只接受 props 与回调（`navigation.ts` 是纯配置，不含渲染） |
-| `pages/` | 路由级页面：自己取数、管加载/错误/空态、持有页面级状态 | `OverviewPage.tsx`、`PackagesPage.tsx`、`AppsPage.tsx`、`UploadPage.tsx`、`DownloadPage.tsx`、`login/`（自持样式） | **页面之间禁止互相 import**；页面**只能**通过 `api/` 取数，不直接 `fetch`；**不拼接口 URL 字符串**（用 `builds.ts`） |
+| `pages/` | 路由级页面：自己取数、管加载/错误/空态、持有页面级状态 | `OverviewPage.tsx`、`PackagesPage.tsx`、`AppsPage.tsx`、`SettingsPage.tsx`、`UploadPage.tsx`、`DownloadPage.tsx`、`login/`（自持样式） | **页面之间禁止互相 import**；页面**只能**通过 `api/` 取数，不直接 `fetch`；**不拼接口 URL 字符串**（用 `builds.ts` / `settings.ts`） |
 | `utils/` | 纯函数工具 | `format.ts`（字节/时间/标签） | **无副作用、无 React 依赖、不 import 任何 `api/`/`pages/`/`components/`**；有状态或依赖浏览器 API 的逻辑不放这里 |
 | `App.tsx` | 路由表 + 全局 Layout 包裹 | — | 不放数据获取、不放业务判断 |
 | `main.tsx` | 挂载入口 + 全局样式引入 | — | 不放业务逻辑 |
@@ -46,7 +46,7 @@
 
 ---
 
-## 3. 后端目录（`server/`，20 个 Go 源文件）
+## 3. 后端目录（`server/`，28 个 Go 源文件）
 
 | 包 / 文件 | 职责 | 输入 | 输出 | **边界（不允许做什么）** |
 | --- | --- | --- | --- | --- |
@@ -63,6 +63,12 @@
 | `internal/config/config.go` | **唯一环境变量读取与校验** | `os.Getenv` | `Config` | 不被其他地方再读 `os.Getenv`；不做业务判断 |
 | `internal/middleware/error.go` | 统一错误格式化、panic 恢复、失败清理 tmp | handler 抛出的 `AppError` | 统一错误响应 | 不做业务判断、不写 SQL |
 | **`internal/{handler,service,middleware}/login/`** | 登录功能按层归位：`handler/login` 是 HTTP 入口、`service/login` 是凭据与令牌、`middleware/login` 是鉴权中间件 | config 的账号与密钥、请求 | `LoginResult`、401 判定 | 不跨层建聚合包（不设 `internal/auth`）；三层包名统一为 `login`，import 时按需起别名（`loginhandler` / `loginsvc` / `loginmw`）；登录不落库，因此**没有** `repository/login` |
+| **`internal/{handler,service,repository}/settings/`** | 系统设置：Webhook 配置读写 + API Key | 请求、DB | `contract.Settings` | 不投递 Webhook（在 `service/webhook`）、不做 SQL 方言拼装 |
+| `internal/service/webhook/` | Webhook 投递：按配置挑字段、HMAC 签名、POST；另提供同步测试投递 | 配置、`contract.Build` | 投递结果 / 日志 | 不写库、不重试、不在失败时影响发布主流程 |
+| `internal/handler/openapi/` | 外部上传接口（stage + create 合成一次请求） | multipart | 201 + `Build` | 不复刻解析与落盘：复用 `handler.ReadUpload` 与 `service` 的 Stage/Create |
+| `internal/middleware/apikey/` | `X-API-Key` 校验 | `KeyProvider` | 401 / 放行 | 不生成或轮换 Key、不区分调用方身份 |
+| `internal/handler/upload.go` | **multipart 唯一实现**：流式写 tmp + 收集文本字段 | 请求、上限、路径 | `UploadForm` | 不调用业务层、不碰正式目录；stage 与 open 上传共用 |
+| `internal/handler/commit.go` | 提交请求的统一字段校验（枚举 + 长度） | `CommitInput` | `AppError` | 不校验 stageToken（service 负责），两条上传入口共用 |
 | `public/` | 前端构建产物（`npm run build` 输出） | — | — | **不手写**、不入库（保留兜底 `index.html`） |
 
 **后端四条硬约束**：① handler 无 SQL；② repository 不调 service；③ parser 不落盘/不写库/不碰 HTTP；④ service 不碰 `*http.Request`/`ResponseWriter`。
@@ -139,6 +145,7 @@ flowchart LR
 | 11 | 加一个部署脚本 | `deploy/` | 部署资产集中 | `README.md` 说明；必要时 `Makefile` 加目标 |
 | 12 | 加一个测试 | **与被测包同目录**，`*_test.go` / `*.test.ts` | Go/TS 惯例，便于就近维护 | 无 |
 | 13 | 改登录 / 令牌 / 鉴权范围 | `handler/login/`（HTTP 语义）、`service/login/`（凭据与令牌）、`middleware/login/`（鉴权） | 按层归位，改哪层开哪层 | 契约若改字段，重生成 `schema.d.ts`；受保护接口在 `app/router.go` 的 `private` 分组里注册 |
+| 14 | 加一个板块（如热更新） | 每层一个同名子目录：`handler/updates/`、`service/updates/`、`repository/updates/`；契约加路径；前端 `api/updates.ts` + `pages/UpdatesPage.tsx` + `navigation.ts` 加一项 | 与 login / settings 完全同构，Layout 与路由骨架不动 | 受保护接口进 `private` 分组；`contract.APIRoutes` 加常量（契约测试会卡数量） |
 
 ---
 

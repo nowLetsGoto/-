@@ -9,35 +9,43 @@ import { Link, useLocation } from 'react-router-dom';
 import { useEnvironment } from '../hooks/useEnvironment';
 import { ENVIRONMENTS, environmentLabel } from '../utils/format';
 import { Icon } from './icons';
-import { boardLabel } from './navigation';
+import { boardLabel, isEnvScoped } from './navigation';
 
 export function Topbar(): JSX.Element {
   const { pathname } = useLocation();
   const [environment, setEnvironment] = useEnvironment();
+  // 系统设置这类全局板块不按环境区分，这里就不显示环境切换，避免误导。
+  const envScoped = isEnvScoped(pathname);
 
   return (
     <header className="topbar">
       <div className="crumbs">
         <span>{boardLabel(pathname)}</span>
-        <span className="crumb-sep" aria-hidden="true">
-          /
-        </span>
-        <b>{environmentLabel(environment)}</b>
+        {envScoped ? (
+          <>
+            <span className="crumb-sep" aria-hidden="true">
+              /
+            </span>
+            <b>{environmentLabel(environment)}</b>
+          </>
+        ) : null}
       </div>
 
-      <div className="env-switch" role="group" aria-label="环境">
-        {ENVIRONMENTS.map((item) => (
-          <button
-            key={item.value}
-            type="button"
-            className={item.value === environment ? 'env-option env-option-active' : 'env-option'}
-            aria-pressed={item.value === environment}
-            onClick={() => setEnvironment(item.value)}
-          >
-            {item.label}
-          </button>
-        ))}
-      </div>
+      {envScoped ? (
+        <div className="env-switch" role="group" aria-label="环境">
+          {ENVIRONMENTS.map((item) => (
+            <button
+              key={item.value}
+              type="button"
+              className={item.value === environment ? 'env-option env-option-active' : 'env-option'}
+              aria-pressed={item.value === environment}
+              onClick={() => setEnvironment(item.value)}
+            >
+              {item.label}
+            </button>
+          ))}
+        </div>
+      ) : null}
 
       <div className="topbar-actions">
         <Link className="button button-primary" to="/upload">

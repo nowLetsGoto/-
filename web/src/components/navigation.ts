@@ -11,6 +11,8 @@ export interface NavItem {
   label: string;
   path: string;
   icon: IconName;
+  /** 该板块是否受「环境」维度影响；系统设置这类全局配置设为 false。缺省视为 true。 */
+  envScoped?: boolean;
 }
 
 export interface NavSection {
@@ -21,7 +23,13 @@ export interface NavSection {
 export const NAV_SECTIONS: ReadonlyArray<NavSection> = [
   { title: '总览', items: [{ label: '概览', path: '/', icon: 'overview' }] },
   { title: '分发', items: [{ label: '应用包', path: '/packages', icon: 'packages' }] },
-  { title: '管理', items: [{ label: '应用', path: '/apps', icon: 'apps' }] },
+  {
+    title: '管理',
+    items: [
+      { label: '应用', path: '/apps', icon: 'apps' },
+      { label: '系统设置', path: '/settings', icon: 'settings', envScoped: false },
+    ],
+  },
 ];
 
 /** 不在导航里的页面也要有面包屑名字，集中登记在这里，避免各页自己写死。 */
@@ -33,4 +41,10 @@ const EXTRA_LABELS: Record<string, string> = {
 export function boardLabel(pathname: string): string {
   const navItem = NAV_SECTIONS.flatMap((section) => section.items).find((item) => item.path === pathname);
   return navItem?.label ?? EXTRA_LABELS[pathname] ?? '概览';
+}
+
+/** isEnvScoped 判断当前板块是否按环境区分；未登记路径（如上传页）默认区分。 */
+export function isEnvScoped(pathname: string): boolean {
+  const navItem = NAV_SECTIONS.flatMap((section) => section.items).find((item) => item.path === pathname);
+  return navItem ? navItem.envScoped !== false : true;
 }

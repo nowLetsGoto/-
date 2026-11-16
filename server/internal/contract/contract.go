@@ -22,7 +22,17 @@ var (
 	ErrInvalidCredentials = errors.New("用户名或密码错误")
 	// ErrUnauthorized 未携带令牌或令牌失效 → 401：前端据此清空会话并回到登录页。
 	ErrUnauthorized = errors.New("登录状态已失效，请重新登录")
+	// ErrAPIKeyInvalid 外部接口的 Key 缺失 / 未配置 / 不匹配 → 401。
+	ErrAPIKeyInvalid = errors.New("API Key 无效，请在系统设置中查看后重试")
 )
+
+// ValidationError 是业务层对请求内容的拒绝（如 Webhook 地址非法），
+// 由 handler.WriteError 翻译成 400，避免每加一条校验规则就往 contract 里塞一个 sentinel。
+type ValidationError struct {
+	Message string
+}
+
+func (e *ValidationError) Error() string { return e.Message }
 
 // 环境枚举：全仓 Go 侧唯一定义处，与 api/openapi.yaml 的 Environment.enum 顺序一致。
 const (
@@ -49,6 +59,9 @@ const (
 const (
 	APIPrefix         = "/api/v1"
 	RouteLogin        = APIPrefix + "/auth/login"
+	RouteSettings     = APIPrefix + "/settings"
+	RouteWebhookTest  = APIPrefix + "/settings/webhook/test"
+	RouteOpenBuilds   = APIPrefix + "/open/builds"
 	RouteStage        = APIPrefix + "/builds/stage"
 	RouteBuilds       = APIPrefix + "/builds"
 	RouteBuildByID    = APIPrefix + "/builds/{id}"
@@ -66,6 +79,8 @@ const (
 	MaxChangelogLen      = 2000
 	MaxUsernameLen       = 64
 	MaxPasswordLen       = 128
+	MaxWebhookURLLen     = 500
+	MaxWebhookSecretLen  = 200
 	StageTokenTTLSeconds = 3600
 	ParseTimeoutSeconds  = 5
 	ParseReadLimitMB     = 5
@@ -77,7 +92,60 @@ const (
 var Environments = []string{EnvTest, EnvHotfix, EnvPre, EnvPrd}
 var Platforms = []string{PlatformAndroid, PlatformIOS}
 var MetaSources = []string{MetaParsed, MetaFallback}
-var APIRoutes = []string{RouteLogin, RouteStage, RouteBuilds, RouteBuildByID, RouteBuildFile, RouteHealth}
+var APIRoutes = []string{
+	RouteLogin, RouteSettings, RouteWebhookTest, RouteOpenBuilds,
+	RouteStage, RouteBuilds, RouteBuildByID, RouteBuildFile, RouteHealth,
+}
+
+// Webhook 可推送字段的键：与 api/openapi.yaml 的 x-webhook-fields 键集合一致。
+const (
+	FieldID               = "id"
+	FieldAppName          = "appName"
+	FieldPackageID        = "packageId"
+	FieldVersion          = "version"
+	FieldBuildNumber      = "buildNumber"
+	FieldEnvironment      = "environment"
+	FieldPlatform         = "platform"
+	FieldChangelog        = "changelog"
+	FieldFileSize         = "fileSize"
+	FieldOriginalFileName = "originalFileName"
+	FieldDownloadPageURL  = "downloadPageUrl"
+	FieldDownloadFileURL  = "downloadFileUrl"
+	FieldDownloadCount    = "downloadCount"
+	FieldCreatedAt        = "createdAt"
+)
+
+// WebhookFields 是设置页复选框的展示顺序，同时充当字段合法性的唯一校验集合。
+var WebhookFields = []string{
+	FieldID, FieldAppName, FieldPackageID, FieldVersion, FieldBuildNumber,
+	FieldEnvironment, FieldPlatform, FieldChangelog, FieldFileSize,
+	FieldOriginalFileName, FieldDownloadPageURL, FieldDownloadFileURL,
+	FieldDownloadCount, FieldCreatedAt,
+}
+
+// WebhookFieldLabels 是字段中文名，镜像 x-webhook-fields，由契约测试逐项锁死。
+var WebhookFieldLabels = map[string]string{
+	FieldID:               "包 ID",
+	FieldAppName:          "应用名",
+	FieldPackageID:        "包名 / Bundle ID",
+	FieldVersion:          "版本号",
+	FieldBuildNumber:      "构建号",
+	FieldEnvironment:      "环境",
+	FieldPlatform:         "平台",
+	FieldChangelog:        "更新说明",
+	FieldFileSize:         "文件大小",
+	FieldOriginalFileName: "原始文件名",
+	FieldDownloadPageURL:  "下载页地址",
+	FieldDownloadFileURL:  "下载文件地址",
+	FieldDownloadCount:    "下载次数",
+	FieldCreatedAt:        "上传时间",
+}
+
+// DefaultWebhookFields 是新装实例的默认勾选：覆盖交接所需信息，不暴露内部存储路径。
+var DefaultWebhookFields = []string{
+	FieldAppName, FieldVersion, FieldBuildNumber, FieldEnvironment,
+	FieldPlatform, FieldDownloadPageURL,
+}
 
 // PlatformInfo 是平台的产品元数据，扩展名与下载 Content-Type 的唯一来源。
 type PlatformInfo struct {
@@ -103,6 +171,40 @@ type LoginResult struct {
 	Token     string `json:"token"`
 	Username  string `json:"username"`
 	ExpiresAt string `json:"expiresAt"`
+}
+
+// WebhookConfig 是 Webhook 的完整配置；字段集合见 WebhookFields。
+type WebhookConfig struct {
+	Enabled bool     `json:"enabled"`
+	URL     string   `json:"url"`
+	Secret  string   `json:"secret"`
+	Fields  []string `json:"fields"`
+}
+
+// WebhookFieldOption 是设置页渲染复选框用的字段目录项。
+type WebhookFieldOption struct {
+	Key   string `json:"key"`
+	Label string `json:"label"`
+}
+
+// Settings 是系统设置页的全部数据；APIKey 只在此接口返回。
+type Settings struct {
+	Webhook         WebhookConfig        `json:"webhook"`
+	APIKey          string               `json:"apiKey"`
+	AvailableFields []WebhookFieldOption `json:"availableFields"`
+}
+
+// WebhookTestResult 是测试投递结果；目标不可达也返回 200，用 Delivered 表达。
+type WebhookTestResult struct {
+	Delivered  bool   `json:"delivered"`
+	StatusCode int    `json:"statusCode"`
+	Message    string `json:"message"`
+}
+
+// IsValidWebhookField 判断字段键是否在允许集合内。
+func IsValidWebhookField(field string) bool {
+	_, ok := WebhookFieldLabels[field]
+	return ok
 }
 
 // Build 是完整包 DTO；三个 URL 字段由 service.buildURLs 填充，repository 映射时留空。

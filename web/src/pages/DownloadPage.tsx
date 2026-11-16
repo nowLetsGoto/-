@@ -1,10 +1,10 @@
 /**
- * 独立下载页（P-03）。
- * 职责：按 id 取详情、展示信息（环境标签必显）与下载次数、渲染二维码、提供下载/复制/返回。
+ * 独立下载页（对外扫码页）。
+ * 职责：按 id 取详情，展示应用 / 版本 / 环境与下载次数，提供下载、复制地址与二维码。
  * 输入：URL 参数 id；输出：getBuild 请求与三态页面。
- * 边界：二维码 value、复制地址、下载按钮一律直接使用服务端给的绝对字段；
- *       绝不用 downloadPagePath 生成对外地址、绝不拼 window.location.origin；
- *       地址仅本机可达时显示中文提示且不渲染扫不开的码；列表页不放二维码入口。
+ * 边界：二维码、复制、下载一律使用服务端给的绝对字段，绝不拼 window.location.origin；
+ *       地址仅本机可达时给中文提示且不渲染扫不开的码；
+ *       页面不套后台骨架，扫码的访客看不到内部导航。
  */
 import { useEffect, useState } from 'react';
 import type { MouseEvent } from 'react';
@@ -80,14 +80,14 @@ export function DownloadPage(): JSX.Element {
 
   if (state.loading) {
     return (
-      <section className="page page-narrow">
+      <section className="download-page">
         <Loading text="正在加载包信息…" />
       </section>
     );
   }
   if (state.missing) {
     return (
-      <section className="page page-narrow">
+      <section className="download-page">
         <Empty
           title="包不存在"
           description="链接可能已失效，或这个包已被移除。"
@@ -102,7 +102,7 @@ export function DownloadPage(): JSX.Element {
   }
   if (state.error || !state.data) {
     return (
-      <section className="page page-narrow">
+      <section className="download-page">
         <ErrorState message={state.error || '加载失败'} onRetry={() => setReloadKey((value) => value + 1)} />
       </section>
     );
@@ -110,31 +110,47 @@ export function DownloadPage(): JSX.Element {
 
   const build = state.data;
   const shareable = isShareableUrl(build.downloadPageUrl);
+  const versionText = build.buildNumber ? `${build.version} (${build.buildNumber})` : build.version;
 
   return (
-    <section className="page page-narrow download-page">
-      <div className="card download-card">
-        <div className="download-brand">Dandelion</div>
-        <div className="app-icon" aria-hidden="true">
-          {build.appName.slice(0, 1).toUpperCase()}
-        </div>
-        <h1 className="download-title">{build.appName}</h1>
-
-        <div className="badge-row">
-          {/* 环境标签是本平台下载页区别于蒲公英的必显字段 */}
+    <section className="download-page">
+      <article className="card download-card">
+        <header className="download-head">
+          <span className="download-brand">Dandelion</span>
+          {/* 环境是本平台区别于其它分发工具的关键信息，必须常显 */}
           <span className="badge badge-env">{environmentLabel(build.environment)}</span>
-          <span className={`badge badge-${build.platform}`}>{platformLabel(build.platform)}</span>
-          <span className="badge badge-plain">
-            {build.version}
-            {build.buildNumber ? ` (${build.buildNumber})` : ''}
-          </span>
+        </header>
+
+        <div className="download-hero">
+          <div className="app-icon" aria-hidden="true">
+            {build.appName.slice(0, 1).toUpperCase()}
+          </div>
+          <h1 className="download-title">{build.appName}</h1>
+          {/* 包名兜底时会等于应用名，重复显示没有信息量，直接省略 */}
+          {build.packageId && build.packageId !== build.appName ? (
+            <p className="download-pkg">{build.packageId}</p>
+          ) : null}
+          <div className="badge-row">
+            <span className={`badge badge-${build.platform}`}>{platformLabel(build.platform)}</span>
+            <span className="badge badge-plain">{versionText}</span>
+          </div>
         </div>
+
+        <a
+          className={`button button-primary button-block download-action${downloadDisabled ? ' button-disabled' : ''}`}
+          href={build.downloadFileUrl}
+          onClick={onDownloadClick}
+          aria-disabled={downloadDisabled}
+        >
+          下载 / 安装 · {formatBytes(build.fileSize)}
+        </a>
+        <p className="muted download-hint">
+          {build.platform === 'ios'
+            ? 'iOS 仅提供 .ipa 文件下载，暂不支持浏览器直接安装'
+            : '下载得到与上传一致的原始安装包'}
+        </p>
 
         <dl className="info-list">
-          <div>
-            <dt>包名 / Bundle ID</dt>
-            <dd>{build.packageId || '—'}</dd>
-          </div>
           <div>
             <dt>文件大小</dt>
             <dd>{formatBytes(build.fileSize)}</dd>
@@ -145,8 +161,14 @@ export function DownloadPage(): JSX.Element {
           </div>
           <div>
             <dt>下载次数</dt>
-            <dd>已被下载 {build.downloadCount} 次</dd>
+            <dd>{build.downloadCount}</dd>
           </div>
+          {build.packageId && build.packageId !== build.appName ? (
+            <div>
+              <dt>包名 / Bundle ID</dt>
+              <dd className="info-ellipsis">{build.packageId}</dd>
+            </div>
+          ) : null}
         </dl>
 
         {build.changelog ? (
@@ -156,23 +178,18 @@ export function DownloadPage(): JSX.Element {
           </div>
         ) : null}
 
-        <a
-          className={`button button-primary button-block${downloadDisabled ? ' button-disabled' : ''}`}
-          href={build.downloadFileUrl}
-          onClick={onDownloadClick}
-          aria-disabled={downloadDisabled}
-        >
-          下载 / 安装 App
-        </a>
-        <p className="muted download-hint">
-          {build.platform === 'ios' ? 'iOS 第一版仅提供 .ipa 文件下载，暂不支持浏览器直接安装' : '下载得到与上传一致的原始安装包'}
-        </p>
-
         <div className="qrcode-box">
           {shareable ? (
             <>
-              <QRCodeSVG value={build.downloadPageUrl} size={224} level="M" marginSize={4} bgColor="#ffffff" fgColor="#000000" />
-              <p className="muted">扫码在手机上打开此下载页</p>
+              <QRCodeSVG
+                value={build.downloadPageUrl}
+                size={208}
+                level="M"
+                marginSize={4}
+                bgColor="#ffffff"
+                fgColor="#0f2c36"
+              />
+              <p className="muted">扫码在手机上打开此页</p>
             </>
           ) : (
             <>
@@ -187,12 +204,11 @@ export function DownloadPage(): JSX.Element {
           <button className="button button-ghost" type="button" onClick={() => void copyText(build.downloadPageUrl)}>
             {copied ? '已复制' : '复制页面地址'}
           </button>
-          <Link className="button button-ghost" to="/packages">
-            返回包列表
-          </Link>
         </div>
         {notice ? <p className="field-error">{notice}</p> : null}
-      </div>
+
+        <p className="download-foot">由 Dandelion 分发 · 仅限内部使用</p>
+      </article>
     </section>
   );
 }

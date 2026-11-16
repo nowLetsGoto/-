@@ -119,7 +119,7 @@ make build          # 前端产物 → server/public/，再 CGO_ENABLED=0 go bui
 
 ---
 
-## 5. 接口速查（8 个）
+## 5. 接口速查（12 个）
 
 统一响应 `{code, data, message}`：成功 `code=0`，失败 `code` = HTTP 状态码（只有 400 / 401 / 404 / 405 / 413 / 500）且 `data=null`。唯一例外是文件下载成功返回二进制流。
 
@@ -132,7 +132,11 @@ make build          # 前端产物 → server/public/，再 CGO_ENABLED=0 go bui
 | 5 | GET | `/api/v1/builds/{id}` | 公开 | 详情 / 404（下载页取数，扫码的人无需登录） |
 | 6 | GET | `/api/v1/builds/{id}/file` | 公开 | 原始包流 |
 | 7 | GET | `/healthz` | 公开 | 健康检查（独立于 `/api/v1`） |
-| 8 | GET | `/`、`/upload`、`/d/{id}` | 公开 | 静态资源 + SPA fallback |
+| 8 | GET | `/api/v1/settings` | 需登录 | Webhook 配置 + API Key + 可推送字段目录 |
+| 9 | PUT | `/api/v1/settings` | 需登录 | 覆盖保存 Webhook 配置（含字段勾选） |
+| 10 | POST | `/api/v1/settings/webhook/test` | 需登录 | 发一条测试消息，返回 `delivered / statusCode` |
+| 11 | POST | `/api/v1/open/builds` | **API Key** | 外部系统一步式上传，详见 `docs/09-OPEN-API.md` |
+| 12 | GET | `/`、`/upload`、`/d/{id}` | 公开 | 静态资源 + SPA fallback |
 
 > 「需登录」的三条接口要带 `Authorization: Bearer <token>`，缺失或过期返回 401。
 
@@ -185,13 +189,14 @@ curl -sS http://localhost:8080/d/<ID> | head -5
 
 ---
 
-## 6. 关键设计（读代码前先看这五条）
+## 6. 关键设计（读代码前先看这六条）
 
 1. **stage 上传对用户透明，不是两步发布**：选文件那一刻自动上传一次到 `storage/tmp/{token}.{ext}` 并同步解析（5s 超时、manifest/plist ≤5MB、zip 条目上限），前端只把解析值填进**未被用户改动**的字段；用户全程只点一次「上传并发布」，commit 请求是纯 JSON（恰好 8 个字段，不含文件、不含 `metaSource`），服务端不再调用解析器、也不覆盖任何用户值，只 rename + 写库 + 生成地址；`metaSource` 由服务端按「是否发生空值兜底」派生（`fallback` / `parsed`）后入库，前端无法伪造。token 有效期 1 小时、用后即失效，启动时清空 tmp、每次 stage 前清理 1 小时孤儿。
 2. **三个 URL 由 `service/build_service.go` 的 `buildURLs(id)` 唯一生成**，`Create` / `List` / `Get` 统一调用；repository 的 `rowToBuild` 把这三个字段留空，绝不入库（换域名不用刷数据）。前端零拼接。
 3. **下载次数在 `io.Copy` 成功且写出字节 == `Content-Length` 之后**才 `UPDATE ... +1`；404 / 路径非法 / 文件缺失 / 客户端中断 / copy 出错 / 字节不足一律不计数；计数是 2s 短超时的旁路，失败只记日志、绝不阻断已完成的下载。第一版不做强去重（按钮点击后禁用 3s）、不做 Range / 断点续传。
 4. **契约是单一来源**：环境 / 平台枚举只写在 `api/openapi.yaml`，前端用生成类型，后端用 `go test ./...` 的契约一致性测试比对（把 yaml 里的 `pre` 改成 `pre2` 测试必须失败）；数据库 `environment` 列只 `NOT NULL`、**没有 CHECK**。第一版只有 `builds` 一张业务表。
-5. **登录只有一个账号，令牌是无状态的**：账号口令来自 `ADMIN_USERNAME` / `ADMIN_PASSWORD`，不落库、不建会话表，比对用 `subtle.ConstantTimeCompare`；令牌是「到期时间戳.`HMAC-SHA256`」串，服务端不存会话，重启后仍然有效。**受保护的只有「上传 / 发布 / 列表」三条**，`/d/{id}` 与原始文件下载必须公开——扫码的人没有账号。`AUTH_SECRET` 生产沿用默认值会 fail-fast。
+5. **登录只有一个账号，令牌是无状态的**：账号口令来自 `ADMIN_USERNAME` / `ADMIN_PASSWORD`，不落库、不建会话表，比对用 `subtle.ConstantTimeCompare`；令牌是「到期时间戳.`HMAC-SHA256`」串，服务端不存会话，重启后仍然有效。**受保护的只有「上传 / 发布 / 列表 / 系统设置」**，`/d/{id}` 与原始文件下载必须公开——扫码的人没有账号。`AUTH_SECRET` 生产沿用默认值会 fail-fast。
+6. **Webhook 与外部接口都是旁路**：`BuildService.Create` 成功后只调一次 `BuildNotifier`（实现是 `service/webhook`，异步投递、失败只记日志），所以第三方挂了也不会让发布失败；`/open/builds` 用 `X-API-Key` 鉴权、与管理端登录态互不影响，两者都复用同一份 `handler.ReadUpload` 与 `handler.ValidateCommitInput`，不另写一套校验。
 
 **多板块 / push 预留**：只体现在三段式 Layout + 一个导航数组（当前仅「应用包」一项）、`/d/:id` 路由命名空间永不改动、`/api/v1` 前缀、`BuildService.Create()` 这个唯一「上传完成」时点、装配层可注入。没有任何占位菜单、空页面、事件类型、outbox 表或 `TODO`。
 
