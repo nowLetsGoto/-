@@ -1,0 +1,18 @@
+/**
+ * 当前登录人接口。
+ * 职责：取回「我是谁 + 我关联了哪些项目」，供列表页决定默认项目。
+ * 输入：无；输出：契约 Me（没有对应人员时 personId / projectKeys 为空）。
+ * 边界：不做缓存（只在首屏与切换项目时用一次）、不携带任何权限判断。
+ */
+import type { components } from './schema';
+import { get } from './client';
+
+type Schemas = components['schemas'];
+
+export type Me = Schemas['Me'];
+
+const ME_PATH = '/api/v1/me';
+
+export function getMe(): Promise<Me> {
+  return get<Me>(ME_PATH);
+}

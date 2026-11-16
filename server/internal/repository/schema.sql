@@ -1,14 +1,38 @@
 -- server/internal/repository/schema.sql · Dandelion 数据模型（幂等，可重复执行）
--- 职责：定义业务表 builds 与配置表 system_settings，以及 builds 的查询索引；
+-- 职责：定义业务表 builds、项目表 projects、配置表 system_settings 与索引；
 --       由 //go:embed 打进二进制，进程启动时幂等执行。
--- 输入：无参数；输出：两张表 + 一个索引 + 一行默认配置。
+-- 输入：无参数；输出：三张表 + 索引 + 一行默认项目 + 一行默认配置。
 -- 边界：environment 只 NOT NULL 不加 CHECK（枚举唯一来源是 api/openapi.yaml）；
 --       三个 URL 字段由服务端按 id 派生，绝不入库，换域名时不需刷数据；
 --       system_settings 只允许一行（id 恒为 1），避免"多份配置谁是真相"。
 --       容器部署时同一份文件也挂给 PG initdb，保证 DB 就绪即有表。
 
+-- ---------------------------------------------------------------------------
+-- projects · 业务数据的一级归属
+-- key 是 URL 段（/p/{key}/...），只允许小写字母 / 数字 / 短横线，创建后不可改。
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS projects (
+  id          UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+  key         TEXT        UNIQUE NOT NULL,
+  name        TEXT        NOT NULL,
+  description TEXT        NOT NULL DEFAULT '',
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- 项目化之前的存量包全部归到默认项目；已有同名项目时跳过。
+INSERT INTO projects (key, name, description)
+VALUES ('default', '默认项目', '项目化迁移时生成的默认项目')
+ON CONFLICT (key) DO NOTHING;
+
+-- 项目库地址（GitLab / GitHub 等）；空串表示未填，详情页据此渲染可点击链接。
+ALTER TABLE projects ADD COLUMN IF NOT EXISTS repo_url TEXT NOT NULL DEFAULT '';
+
+-- ---------------------------------------------------------------------------
+-- builds · 应用包
+-- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS builds (
   id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  project_id          UUID        REFERENCES projects(id),
   environment         TEXT        NOT NULL,
   platform            TEXT        NOT NULL,
   app_name            TEXT        NOT NULL,
@@ -25,8 +49,27 @@ CREATE TABLE IF NOT EXISTS builds (
   created_at          TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-CREATE INDEX IF NOT EXISTS idx_builds_env_platform_created
-  ON builds (environment, platform, created_at DESC);
+-- 存量库补列 + 回填 + 收紧约束（三步都幂等）
+ALTER TABLE builds ADD COLUMN IF NOT EXISTS project_id UUID;
+
+UPDATE builds
+SET project_id = (SELECT id FROM projects WHERE key = 'default')
+WHERE project_id IS NULL;
+
+ALTER TABLE builds ALTER COLUMN project_id SET NOT NULL;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'builds_project_fk') THEN
+    ALTER TABLE builds ADD CONSTRAINT builds_project_fk
+      FOREIGN KEY (project_id) REFERENCES projects(id);
+  END IF;
+END $$;
+
+-- 列表查询永远带 project_id，旧索引不再匹配，直接替换。
+DROP INDEX IF EXISTS idx_builds_env_platform_created;
+CREATE INDEX IF NOT EXISTS idx_builds_project_env_platform_created
+  ON builds (project_id, environment, platform, created_at DESC);
 
 -- ---------------------------------------------------------------------------
 -- system_settings · 单行系统配置（Webhook + 外部 API Key）
@@ -48,3 +91,50 @@ CREATE TABLE IF NOT EXISTS system_settings (
 INSERT INTO system_settings (id, api_key)
 VALUES (1, replace(gen_random_uuid()::text, '-', ''))
 ON CONFLICT (id) DO NOTHING;
+
+-- ---------------------------------------------------------------------------
+-- 基础资料 · 人员 / 团队 / 三张多对多关联表
+-- people.username 与登录账号对应：为空表示"只在通讯录里，不能登录"。
+-- 关联表都带 ON DELETE CASCADE，删人员/团队/项目时不会留下悬挂关系。
+-- project_members 是为 P2 的「项目成员 + 角色」预留的落点：届时加 role 列即可。
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS people (
+  id         UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+  name       TEXT        NOT NULL,
+  username   TEXT        UNIQUE,
+  email      TEXT        NOT NULL DEFAULT '',
+  phone      TEXT        NOT NULL DEFAULT '',
+  title      TEXT        NOT NULL DEFAULT '',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS teams (
+  id          UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+  name        TEXT        NOT NULL,
+  description TEXT        NOT NULL DEFAULT '',
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS team_members (
+  team_id   UUID NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+  person_id UUID NOT NULL REFERENCES people(id) ON DELETE CASCADE,
+  PRIMARY KEY (team_id, person_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_team_members_person ON team_members (person_id);
+
+CREATE TABLE IF NOT EXISTS project_members (
+  project_id UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  person_id  UUID NOT NULL REFERENCES people(id) ON DELETE CASCADE,
+  PRIMARY KEY (project_id, person_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_project_members_person ON project_members (person_id);
+
+CREATE TABLE IF NOT EXISTS team_projects (
+  team_id    UUID NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+  project_id UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  PRIMARY KEY (team_id, project_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_team_projects_project ON team_projects (project_id);

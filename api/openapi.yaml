@@ -30,6 +30,9 @@ x-constants:
     password: 128
     webhookUrl: 500
     webhookSecret: 200
+    projectKey: 32
+    projectName: 60
+    projectDescription: 200
 
 # Webhook 可推送字段的唯一产品定义处：key 固定，value 是设置页展示的中文名。
 # 后端 contract.WebhookFieldLabels 镜像本表，由契约测试逐项比对；前端标签从接口返回，不再抄一份。
@@ -66,11 +69,313 @@ x-platforms:
     label: iOS
     ext: ipa
     contentType: application/octet-stream
+  harmony:
+    label: 鸿蒙
+    ext: hap
+    contentType: application/octet-stream
+
+# 项目 key 的格式约束：只允许小写字母、数字与短横线，用于 URL 段。
+x-project-key-pattern: '^[a-z0-9][a-z0-9-]{1,31}$'
 
 x-page-routes:
   downloadPage: /d/{id}
 
 paths:
+  /projects:
+    get:
+      operationId: listProjects
+      summary: 列出全部项目（项目切换器与新建项目用）
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: 项目列表，按创建时间正序
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProjectsResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    post:
+      operationId: createProject
+      summary: 新建项目
+      description: key 只允许小写字母、数字与短横线，全仓唯一，创建后不可修改（它是 URL 段）。
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ProjectInput'
+      responses:
+        '201':
+          description: 创建成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProjectResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /projects/{key}:
+    get:
+      operationId: getProject
+      summary: 项目详情（含关联人员与团队的 ID）
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: key
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: 项目详情
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProjectDetailResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    put:
+      operationId: updateProject
+      summary: 编辑项目（名称 / 描述 / 库地址；key 是 URL 段，不可修改）
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: key
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ProjectInput'
+      responses:
+        '200':
+          description: 更新后的项目
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProjectResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /people:
+    get:
+      operationId: listPeople
+      summary: 人员列表（含关联团队与项目 ID）
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: 人员列表
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PersonListResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    post:
+      operationId: createPerson
+      summary: 新增人员
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PersonInput'
+      responses:
+        '201':
+          description: 创建成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PersonResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /people/{id}:
+    get:
+      operationId: getPerson
+      summary: 人员详情（含关联团队与项目 ID），编辑页回填用
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: 人员详情
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PersonResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    put:
+      operationId: updatePerson
+      summary: 编辑人员（全量覆盖字段与关联）
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PersonInput'
+      responses:
+        '200':
+          description: 更新后的人员
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PersonResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /teams:
+    get:
+      operationId: listTeams
+      summary: 团队列表（含关联人员与项目 ID）
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: 团队列表
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TeamListResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    post:
+      operationId: createTeam
+      summary: 新增团队
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TeamInput'
+      responses:
+        '201':
+          description: 创建成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TeamResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /teams/{id}:
+    get:
+      operationId: getTeam
+      summary: 团队详情（含关联人员与项目 ID），编辑页回填用
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: 团队详情
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TeamResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    put:
+      operationId: updateTeam
+      summary: 编辑团队（全量覆盖字段与关联）
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TeamInput'
+      responses:
+        '200':
+          description: 更新后的团队
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TeamResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /me:
+    get:
+      operationId: getMe
+      summary: 当前登录人档案（含关联项目 key，用于列表页默认项目）
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: 当前登录人
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MeResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
   /settings:
     get:
       operationId: getSettings
@@ -151,12 +456,15 @@ paths:
           multipart/form-data:
             schema:
               type: object
-              required: [file, environment, platform]
+              required: [file, project, environment, platform]
               properties:
                 file:
                   type: string
                   format: binary
-                  description: .apk / .ipa，单包上限 200 MB
+                  description: .apk / .ipa / .hap，单包上限 200 MB
+                project:
+                  type: string
+                  description: 项目 key
                 environment:
                   $ref: '#/components/schemas/Environment'
                 platform:
@@ -291,10 +599,16 @@ paths:
           $ref: '#/components/responses/InternalError'
     get:
       operationId: listBuilds
-      summary: 按环境（+平台）查询包列表，时间倒序，不分页
+      summary: 按项目 + 环境（+平台）查询包列表，时间倒序，不分页
       security:
         - bearerAuth: []
       parameters:
+        - name: project
+          in: query
+          required: true
+          schema:
+            type: string
+          description: 项目 key；不同项目的包互不可见
         - name: environment
           in: query
           required: true
@@ -560,12 +874,217 @@ components:
     Platform:
       type: string
       description: 平台枚举；label / ext / contentType 见 x-platforms
-      enum: [android, ios]
+      enum: [android, ios, harmony]
 
     PlatformQuery:
       type: string
       description: 平台筛选，省略或 all 表示不筛
-      enum: [all, android, ios]
+      enum: [all, android, ios, harmony]
+
+    Project:
+      type: object
+      description: 项目是业务数据的一级归属：应用包、应用、热更新都挂在项目下
+      required: [id, key, name, description, repoUrl, createdAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        key:
+          type: string
+          description: URL 段，创建后不可修改
+        name:
+          type: string
+        description:
+          type: string
+        repoUrl:
+          type: string
+          description: 项目库地址（GitLab / GitHub 等），空串表示未填；详情页渲染为可点击链接
+        createdAt:
+          type: string
+          format: date-time
+
+    ProjectInput:
+      type: object
+      description: 新建 / 编辑项目请求，恰好 4 个字段；编辑时 key 被忽略
+      additionalProperties: false
+      required: [key, name]
+      properties:
+        key:
+          type: string
+          maxLength: 32
+          pattern: '^[a-z0-9][a-z0-9-]{1,31}$'
+          description: 小写字母 / 数字 / 短横线，2-32 位，全仓唯一
+        name:
+          type: string
+          maxLength: 60
+        description:
+          type: string
+          maxLength: 200
+        repoUrl:
+          type: string
+          maxLength: 300
+          description: http(s) 绝对地址；留空表示未填
+
+    ProjectDetail:
+      type: object
+      description: 项目详情 = 项目本身 + 关联的人员与团队（带名字）
+      required: [id, key, name, description, repoUrl, createdAt, persons, teams]
+      properties:
+        id:
+          type: string
+          format: uuid
+        key:
+          type: string
+        name:
+          type: string
+        description:
+          type: string
+        repoUrl:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+        persons:
+          type: array
+          items:
+            $ref: '#/components/schemas/RelationRef'
+        teams:
+          type: array
+          items:
+            $ref: '#/components/schemas/RelationRef'
+
+    RelationRef:
+      type: object
+      description: 关联的轻量投影（id + 名字）；列表接口直接带回，前端不必再拉对方列表
+      required: [id, name]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+
+    Person:
+      type: object
+      description: 人员；teams / projects 是带名字的多选关联
+      required: [id, name, email, phone, title, teams, projects, createdAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        username:
+          type: string
+          description: 与登录账号对应；空表示只在通讯录里，不能登录
+        email:
+          type: string
+        phone:
+          type: string
+        title:
+          type: string
+        teams:
+          type: array
+          items:
+            $ref: '#/components/schemas/RelationRef'
+        projects:
+          type: array
+          items:
+            $ref: '#/components/schemas/RelationRef'
+        createdAt:
+          type: string
+          format: date-time
+
+    PersonInput:
+      type: object
+      description: 新增 / 编辑人员请求
+      additionalProperties: false
+      required: [name, username, email, phone, title, teamIds, projectIds]
+      properties:
+        name:
+          type: string
+          maxLength: 40
+        username:
+          type: string
+          maxLength: 64
+        email:
+          type: string
+          maxLength: 120
+        phone:
+          type: string
+          maxLength: 40
+        title:
+          type: string
+          maxLength: 60
+        teamIds:
+          type: array
+          items:
+            type: string
+        projectIds:
+          type: array
+          items:
+            type: string
+
+    Team:
+      type: object
+      description: 团队；persons / projects 是带名字的多选关联
+      required: [id, name, description, persons, projects, createdAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        description:
+          type: string
+        persons:
+          type: array
+          items:
+            $ref: '#/components/schemas/RelationRef'
+        projects:
+          type: array
+          items:
+            $ref: '#/components/schemas/RelationRef'
+        createdAt:
+          type: string
+          format: date-time
+
+    TeamInput:
+      type: object
+      description: 新增 / 编辑团队请求
+      additionalProperties: false
+      required: [name, description, personIds, projectIds]
+      properties:
+        name:
+          type: string
+          maxLength: 60
+        description:
+          type: string
+          maxLength: 200
+        personIds:
+          type: array
+          items:
+            type: string
+        projectIds:
+          type: array
+          items:
+            type: string
+
+    Me:
+      type: object
+      description: 当前登录人；没有对应人员记录时 personId 为空、projectKeys 为空
+      required: [username, personId, name, projectKeys]
+      properties:
+        username:
+          type: string
+        personId:
+          type: string
+        name:
+          type: string
+        projectKeys:
+          type: array
+          description: 该人员关联的项目 key，按项目创建顺序；前端据此决定列表页默认项目
+          items:
+            type: string
 
     MetaSource:
       type: string
@@ -611,11 +1130,14 @@ components:
     CommitBuildRequest:
       type: object
       description: >
-        提交发布请求，application/json，**恰好 8 个字段**：token + 表单最终值。
+        提交发布请求，application/json，**恰好 9 个字段**：项目 + token + 表单最终值。
         绝不包含 file 字段，也不携带解析结果、touched 标记或 metaSource（来源由服务端派生）。
       additionalProperties: false
-      required: [stageToken, environment, platform]
+      required: [project, stageToken, environment, platform]
       properties:
+        project:
+          type: string
+          description: 项目 key；包归属于该项目
         stageToken:
           type: string
           format: uuid
@@ -828,3 +1350,93 @@ components:
           properties:
             data:
               $ref: '#/components/schemas/WebhookTestResult'
+
+    ProjectResponse:
+      allOf:
+        - $ref: '#/components/schemas/ApiResponse'
+        - type: object
+          required: [data]
+          properties:
+            data:
+              $ref: '#/components/schemas/Project'
+
+    ProjectsResponse:
+      allOf:
+        - $ref: '#/components/schemas/ApiResponse'
+        - type: object
+          required: [data]
+          properties:
+            data:
+              type: object
+              required: [items]
+              properties:
+                items:
+                  type: array
+                  items:
+                    $ref: '#/components/schemas/Project'
+
+    ProjectDetailResponse:
+      allOf:
+        - $ref: '#/components/schemas/ApiResponse'
+        - type: object
+          required: [data]
+          properties:
+            data:
+              $ref: '#/components/schemas/ProjectDetail'
+
+    PersonResponse:
+      allOf:
+        - $ref: '#/components/schemas/ApiResponse'
+        - type: object
+          required: [data]
+          properties:
+            data:
+              $ref: '#/components/schemas/Person'
+
+    PersonListResponse:
+      allOf:
+        - $ref: '#/components/schemas/ApiResponse'
+        - type: object
+          required: [data]
+          properties:
+            data:
+              type: object
+              required: [items]
+              properties:
+                items:
+                  type: array
+                  items:
+                    $ref: '#/components/schemas/Person'
+
+    TeamResponse:
+      allOf:
+        - $ref: '#/components/schemas/ApiResponse'
+        - type: object
+          required: [data]
+          properties:
+            data:
+              $ref: '#/components/schemas/Team'
+
+    TeamListResponse:
+      allOf:
+        - $ref: '#/components/schemas/ApiResponse'
+        - type: object
+          required: [data]
+          properties:
+            data:
+              type: object
+              required: [items]
+              properties:
+                items:
+                  type: array
+                  items:
+                    $ref: '#/components/schemas/Team'
+
+    MeResponse:
+      allOf:
+        - $ref: '#/components/schemas/ApiResponse'
+        - type: object
+          required: [data]
+          properties:
+            data:
+              $ref: '#/components/schemas/Me'

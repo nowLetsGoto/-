@@ -29,14 +29,14 @@
 
 ---
 
-## 2. 前端目录（`web/src/`，12 个手写源文件 + 1 个生成物）
+## 2. 前端目录（`web/src/`，38 个手写源文件 + 1 个生成物）
 
 | 目录 / 文件 | 职责（一句话） | 现有文件 | **分类规则与禁止** |
 | --- | --- | --- | --- |
-| `api/` | HTTP 出入口与契约类型消费 | `client.ts`、`builds.ts`、`auth.ts`、`session.ts`、`settings.ts`、`schema.d.ts`（生成物） | `client.ts` 是**唯一** `fetch` 封装（解包、附带 Bearer、401 统一回登录页）；`builds.ts` / `auth.ts` / `settings.ts` 是接口函数与 URL 的**唯一**消费处；`session.ts` 是 localStorage 的**唯一**读写处；`schema.d.ts` 由 `make gen:api` 生成，**禁止手改** |
-| `hooks/` | 跨页面复用的状态逻辑 | `useEnvironment.ts`（全局环境）、`useAllBuilds.ts`（四环境聚合） | 不渲染 UI、不写业务文案；只封装状态与副作用，页面只管展示 |
-| `components/` | 无业务领域知识、可跨页面复用的 UI | `Layout.tsx`、`Sidebar.tsx`、`Topbar.tsx`、`States.tsx`、`FileDropzone.tsx`、`icons.tsx`、`navigation.ts` | **不发起请求**、不 import `api/`、不持有页面级状态、不写死某业务字段；只接受 props 与回调（`navigation.ts` 是纯配置，不含渲染） |
-| `pages/` | 路由级页面：自己取数、管加载/错误/空态、持有页面级状态 | `OverviewPage.tsx`、`PackagesPage.tsx`、`AppsPage.tsx`、`SettingsPage.tsx`、`UploadPage.tsx`、`DownloadPage.tsx`、`login/`（自持样式） | **页面之间禁止互相 import**；页面**只能**通过 `api/` 取数，不直接 `fetch`；**不拼接口 URL 字符串**（用 `builds.ts` / `settings.ts`） |
+| `api/` | HTTP 出入口与契约类型消费 | `client.ts`、`builds.ts`、`projects.ts`、`people.ts`、`teams.ts`、`me.ts`、`auth.ts`、`session.ts`、`settings.ts`、`schema.d.ts`（生成物） | `client.ts` 是**唯一** `fetch` 封装（解包、附带 Bearer、401 统一回登录页）；每个业务模块一份接口文件，是 URL 的**唯一**消费处；`session.ts` 是 localStorage 的**唯一**读写处；`schema.d.ts` 由 `make gen:api` 生成，**禁止手改** |
+| `hooks/` | 跨页面复用的状态逻辑 | `useEnvironment.ts`、`useAllBuilds.ts`、`useProjects.ts`（`useProjectKey` 不取数）、`useDirectory.ts`（`usePeople` / `useTeams` 两份独立缓存）、`useMe.ts` | 不渲染 UI、不写业务文案；每份数据只有**一处**模块级缓存；**列表页只能挂自己的那个 hook**，不要为了显示关联名字去挂别人的列表 |
+| `components/` | 无业务领域知识、可跨页面复用的 UI | `Layout.tsx`、`Sidebar.tsx`、`Topbar.tsx`、`ProjectGate.tsx`、`ProjectSelect.tsx`、`MultiSelect.tsx`、`FormPage.tsx`、`States.tsx`、`FileDropzone.tsx`、`icons.tsx`、`navigation.ts` | **不发起请求**、不 import `api/`、不持有页面级状态、不写死某业务字段；只接受 props 与回调（`navigation.ts` 是纯配置；`FormPage` 只是新增/编辑页的公共外壳，不认识任何字段） |
+| `pages/` | 路由级页面：**目录 = 一级菜单**，自己取数、管加载/错误/空态 | `overview/OverviewPage.tsx`；`distribution/`（`PackagesPage` / `UploadPage` / `AppsPage`）；`directory/`（`PeoplePage` / `PersonFormPage` / `TeamsPage` / `TeamFormPage` / `ProjectsPage` / `ProjectFormPage` / `ProjectDetailPage`）；`platform/SettingsPage.tsx`；`login/`（自持样式）；`public/DownloadPage.tsx`（公开下载页，不属于任何菜单） | **页面之间禁止互相 import**；页面**只能**通过 `api/` 取数，不直接 `fetch`；**不拼接口 URL 字符串**；列表页只读、表单页独立路由（`/new`、`/:id/edit`）；**新增一级菜单 = 新建同名目录**，不要再把页面堆回 `pages/` 根下 |
 | `utils/` | 纯函数工具 | `format.ts`（字节/时间/标签） | **无副作用、无 React 依赖、不 import 任何 `api/`/`pages/`/`components/`**；有状态或依赖浏览器 API 的逻辑不放这里 |
 | `App.tsx` | 路由表 + 全局 Layout 包裹 | — | 不放数据获取、不放业务判断 |
 | `main.tsx` | 挂载入口 + 全局样式引入 | — | 不放业务逻辑 |
@@ -46,7 +46,7 @@
 
 ---
 
-## 3. 后端目录（`server/`，28 个 Go 源文件）
+## 3. 后端目录（`server/`，39 个 Go 源文件）
 
 | 包 / 文件 | 职责 | 输入 | 输出 | **边界（不允许做什么）** |
 | --- | --- | --- | --- | --- |
@@ -56,7 +56,7 @@
 | `internal/handler/*.go` | **HTTP 语义**：取参、校验、调 service、设响应头/状态码 | `*http.Request`、service | 响应 JSON / 二进制流 | **禁止**：写 SQL、调 `parser`、自行拼接或信任客户端传入的路径、做业务规则判断。**流式 I/O 与探活属允许的例外，见下方专段** |
 | `internal/service/*.go` | **业务编排**：stage/commit 流程、字段兜底、失败补偿、URL 生成、计数旁路 | handler 传入的 DTO、repository/parser/storage | 领域对象（`Build` 等） | **不触碰 `*http.Request` / `http.ResponseWriter`**、不写 SQL、不解析 multipart |
 | `internal/repository/*.go` | **唯一 SQL 出入口**、行 ↔ DTO 映射 | 连接池、查询条件 | DTO / 受影响行数 | **不调 service**、不做业务校验、不碰文件系统、不生成 URL |
-| **`internal/repository/schema.sql`** | **DDL 唯一来源**：`builds` 表 + 索引，`//go:embed` 进二进制、启动幂等执行（不依赖 CWD） | — | 表结构 | 不放业务查询 SQL（查询在 `build_repository.go`）、不含环境相关密码、不做数据迁移 |
+| **`internal/repository/schema.sql`** | **DDL 唯一来源**：`projects` + `builds` 表与索引，`//go:embed` 进二进制、启动幂等执行（不依赖 CWD） | — | 表结构 | 不放业务查询 SQL（查询在 `build_repository.go` / `project/repository.go`）、不含环境相关密码、不做数据迁移（默认项目迁移是一次性运维脚本） |
 | `internal/parser/*.go` | 包文件 → 元数据（APK/IPA 四字段） | `io.ReaderAt` + 大小 + 平台 | `ParsedMeta` | **不落盘、不写 DB、不发网络、不读 HTTP、不调 service/repository** |
 | `internal/storage/paths.go` | **唯一路径生成/清洗/安全解析** | 环境、平台、id、扩展名 | 规范化路径 | 不做 IO（只算路径）、不写文件、不查库 |
 | `internal/contract/*.go` | DTO + 枚举常量 + 契约一致性测试 | `api/openapi.yaml`（测试读取） | 类型、常量、测试结论 | 不含业务逻辑、不访问 DB/文件（测试除外） |
@@ -65,6 +65,9 @@
 | **`internal/{handler,service,middleware}/login/`** | 登录功能按层归位：`handler/login` 是 HTTP 入口、`service/login` 是凭据与令牌、`middleware/login` 是鉴权中间件 | config 的账号与密钥、请求 | `LoginResult`、401 判定 | 不跨层建聚合包（不设 `internal/auth`）；三层包名统一为 `login`，import 时按需起别名（`loginhandler` / `loginsvc` / `loginmw`）；登录不落库，因此**没有** `repository/login` |
 | **`internal/{handler,service,repository}/settings/`** | 系统设置：Webhook 配置读写 + API Key | 请求、DB | `contract.Settings` | 不投递 Webhook（在 `service/webhook`）、不做 SQL 方言拼装 |
 | `internal/service/webhook/` | Webhook 投递：按配置挑字段、HMAC 签名、POST；另提供同步测试投递 | 配置、`contract.Build` | 投递结果 / 日志 | 不写库、不重试、不在失败时影响发布主流程 |
+| **`internal/{handler,service,repository}/project/`** | 项目：`handler` 是 `/projects` 与 `/projects/{key}`、`service` 是 key 规范化 / 库地址校验 / 详情组装、`repository` 是 projects 表与项目侧的两张关联表 | 请求、DB | `contract.Project` / `ProjectDetail` | 不改 `builds` 表结构；包的归属解析（key → project_id）在 `service/build_service.resolveProject`；**不含任何权限判断**（P2 才做） |
+| **`internal/{handler,service,repository}/people/`** | 人员：`handler` 是 `/people` 与 `/me`、`service` 是字段校验与「当前登录人」投影、`repository` 是 people 表 + 人员侧的两张关联表 | 请求、DB | `contract.Person` / `Me` | 只管人员这一侧；团队侧对 `team_members` 的写入在 `repository/teams`，两侧各自维护自己那一半 |
+| **`internal/{handler,service,repository}/teams/`** | 团队：`handler` 是 `/teams`、`service` 是字段校验、`repository` 是 teams 表 + 团队侧的关联表 | 请求、DB | `contract.Team` | 同上；不含任何权限判断 |
 | `internal/handler/openapi/` | 外部上传接口（stage + create 合成一次请求） | multipart | 201 + `Build` | 不复刻解析与落盘：复用 `handler.ReadUpload` 与 `service` 的 Stage/Create |
 | `internal/middleware/apikey/` | `X-API-Key` 校验 | `KeyProvider` | 401 / 放行 | 不生成或轮换 Key、不区分调用方身份 |
 | `internal/handler/upload.go` | **multipart 唯一实现**：流式写 tmp + 收集文本字段 | 请求、上限、路径 | `UploadForm` | 不调用业务层、不碰正式目录；stage 与 open 上传共用 |
@@ -139,13 +142,14 @@ flowchart LR
 | 5 | 新增公共 UI 组件 | `web/src/components/` | 至少两个页面会用才下沉 | 无契约改动；若需状态，props 传入 |
 | 6 | 新增纯函数（格式化/校验） | `web/src/utils/` | 无副作用、无 React 依赖 | 无 |
 | 7 | 新增环境变量 | `internal/config/config.go` + `.env.example` + `deploy/` 三处 | 配置单点 + 样例 + 部署同步 | `docs/02-ARCHITECTURE-v2.md` §10.4 变量表；compose/systemd |
-| 8 | 新增数据库表 | `internal/repository/schema.sql`（幂等 DDL，embed）+ `internal/repository/*.go` | DDL 与仓储同包，随二进制自举 | **需架构确认**（第一版只允许一张 `builds` 表）；契约可能需补 schema |
+| 8 | 新增数据库表 | `internal/repository/schema.sql`（幂等 DDL，embed）+ `internal/repository/*.go` | DDL 与仓储同包，随二进制自举 | **需架构确认**（当前只有 `projects` 与 `builds` 两张表）；契约可能需补 schema |
 | 9 | 新增解析能力（如读图标） | `internal/parser/` 新文件 | 解析器职责单一 | `ParsedMeta`/`Build` 字段 + 契约 + `internal/repository/schema.sql`；**第一版不做图标** |
 | 10 | 加 pushy 热更新板块 | `internal/{handler,service,repository}/` 加 `update_*` + `web/src/pages/updates/` | 复用现有分层，不新建大目录 | 契约新增路径、`internal/repository/schema.sql` 加表、导航数组加项（§7） |
 | 11 | 加一个部署脚本 | `deploy/` | 部署资产集中 | `README.md` 说明；必要时 `Makefile` 加目标 |
 | 12 | 加一个测试 | **与被测包同目录**，`*_test.go` / `*.test.ts` | Go/TS 惯例，便于就近维护 | 无 |
 | 13 | 改登录 / 令牌 / 鉴权范围 | `handler/login/`（HTTP 语义）、`service/login/`（凭据与令牌）、`middleware/login/`（鉴权） | 按层归位，改哪层开哪层 | 契约若改字段，重生成 `schema.d.ts`；受保护接口在 `app/router.go` 的 `private` 分组里注册 |
-| 14 | 加一个板块（如热更新） | 每层一个同名子目录：`handler/updates/`、`service/updates/`、`repository/updates/`；契约加路径；前端 `api/updates.ts` + `pages/UpdatesPage.tsx` + `navigation.ts` 加一项 | 与 login / settings 完全同构，Layout 与路由骨架不动 | 受保护接口进 `private` 分组；`contract.APIRoutes` 加常量（契约测试会卡数量） |
+| 14 | 加一个板块（如热更新） | 每层一个同名子目录：`handler/updates/`、`service/updates/`、`repository/updates/`；契约加路径；前端 `api/updates.ts` + `pages/distribution/UpdatesPage.tsx`（或按新一级菜单建同名目录）+ `navigation.ts` 加一项 | 与 login / settings 完全同构，Layout 与路由骨架不动 | 受保护接口进 `private` 分组；`contract.APIRoutes` 加常量（契约测试会卡数量） |
+| 15 | 新增**项目内**板块（如热更新、应用管理） | 后端按 §5-14 归位；前端 `navigation.ts` 里 `scope: 'project'` 的那一项 + `App.tsx` 在 `/p/:key` 子路由下加一条（**不要**新起顶层路由） | 项目是一级归属：`/p/:key/*` 前缀由 `navHref` 统一拼，页面组件拿 `useCurrentProject().key` 取项目；切项目只换前缀、板块不丢 | 契约里所有涉及包/应用的接口都必须带 `project`（列表走查询参数、写接口进请求体）；`isProjectScoped` 天然覆盖新路径，面包屑在 `navigation.ts` 补 `label` 即生效 |
 
 ---
 
@@ -174,8 +178,9 @@ flowchart LR
 | B 独立业务包 | `internal/bundle/{handler,service,repository}` 自成一套 | 板块内聚、边界清晰 | 与现有分层重复，跨板块共享逻辑（URL/路径/错误）需提升或复制 | 仅当板块 ≥ 3 个、单人维护不过来时再评估 |
 
 **触发条件（满足任一才动，均属未来）**：① 已上线板块 ≥ 3 个；② `internal/service` 单目录文件 > 8；③ 某板块需要独立权限/独立发布节奏。
-**`pages/` 拆分时机**：前端页面 > 8 个，或某板块页面 ≥ 3 个时，把扁平 `pages/` 拆为 `pages/packages/`、`pages/updates/`——**纯文件移动，不改路由、不改组件**。
-**与 §5 / §8 一致**：第一版不建 `apps`/`upd_bundles` 表、不建 `pages/updates/` 目录、不写占位代码；未来加板块只「加文件 + 加路由 + 加导航项 + 加表」。
+**`pages/` 目录 = 一级菜单**：`overview/`（总览）、`distribution/`（分发）、`directory/`（基础资料）、`platform/`（平台）与 `navigation.ts` 的四组一一对应；`login/` 与 `public/` 是不进菜单的独立页面。新增一级菜单时同步新建目录，纯文件移动、不改路由与组件。
+
+**与 §5 / §8 一致**：第一版不建 `apps`/`upd_bundles` 表、不建 `pages/updates/` 目录、不写占位代码；未来加板块只「加目录 + 加文件 + 加路由 + 加导航项 + 加表」。
 
 ---
 

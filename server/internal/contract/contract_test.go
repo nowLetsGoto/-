@@ -217,13 +217,13 @@ func TestWebhookFieldsMatchContract(t *testing.T) {
 	}
 }
 
-// TestCommitRequestHasExactlyEightFields 断言提交契约恰好 8 个字段：
+// TestCommitRequestHasExactlyNineFields 断言提交契约恰好 9 个字段（项目 + token + 7 个表单值）：
 // 多出 file / metaSource / touchedFields 中任何一个都应让本测试失败。
-func TestCommitRequestHasExactlyEightFields(t *testing.T) {
+func TestCommitRequestHasExactlyNineFields(t *testing.T) {
 	spec := loadSpec(t)
 	commit := spec.Components.Schemas["CommitBuildRequest"].Properties
 	want := []string{
-		"stageToken", "environment", "platform",
+		"project", "stageToken", "environment", "platform",
 		"appName", "packageId", "version", "buildNumber", "changelog",
 	}
 	if len(commit) != len(want) {

@@ -5,6 +5,7 @@
 package login
 
 import (
+	"context"
 	"net/http"
 	"strings"
 
@@ -15,17 +16,28 @@ import (
 // Verifier 校验令牌，成功时返回用户名。用函数而非具体类型，便于测试替换。
 type Verifier func(token string) (username string, ok bool)
 
-// RequireAuth 返回校验 Bearer 令牌的中间件；校验通过后原样放行。
+// usernameKey 是登录名在请求上下文里的键；用私有类型避免与其他包的键相撞。
+type usernameKey struct{}
+
+// RequireAuth 返回校验 Bearer 令牌的中间件；校验通过后把登录名写进上下文再放行，
+// 这样 /me 这类需要"当前登录人"的接口不必再解一次令牌。
 func RequireAuth(verify Verifier) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if _, ok := verify(bearerToken(r)); !ok {
+			username, ok := verify(bearerToken(r))
+			if !ok {
 				handler.WriteError(w, r, contract.ErrUnauthorized)
 				return
 			}
-			next.ServeHTTP(w, r)
+			next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), usernameKey{}, username)))
 		})
 	}
+}
+
+// UsernameFrom 取中间件写入的登录名；未经中间件时返回空串。
+func UsernameFrom(ctx context.Context) string {
+	username, _ := ctx.Value(usernameKey{}).(string)
+	return username
 }
 
 // bearerToken 取出 Bearer 之后的令牌；缺失或格式不符时返回空串（Verifier 会判为无效）。

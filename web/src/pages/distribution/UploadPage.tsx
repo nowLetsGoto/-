@@ -1,19 +1,20 @@
 /**
  * 上传页（P-01）。
  * 职责：选文件触发 stage、按 touched 优先级带出解析值、表单始终可编辑、一次点击完成发布、成功卡片。
- * 输入：用户选中的 .apk / .ipa 与表单值；输出：stage / commit 两个请求与成功后的绝对下载地址。
+ * 输入：用户选中的 .apk / .ipa / .hap 与表单值；输出：stage / commit 两个请求与成功后的绝对下载地址。
  * 边界：touched 只是前端本地 UI 状态，不进入 API 契约；commit 只发 8 字段 JSON，不携带文件与 metaSource；
  *       stage 对用户透明，不是两步发布，用户全程只点一次「上传并发布」；不提供上传后编辑。
  */
 import { useRef, useState } from 'react';
 import type { FormEvent } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import type { Build, CommitBuildRequest, Environment, Platform, StageResult } from '../api/builds';
-import { commitBuild, isShareableUrl, stageBuild } from '../api/builds';
-import { ApiError, errorMessage } from '../api/client';
-import { FileDropzone } from '../components/FileDropzone';
-import { useEnvironment } from '../hooks/useEnvironment';
-import { ENVIRONMENTS, PLATFORMS, platformFromFileName } from '../utils/format';
+import type { Build, CommitBuildRequest, Environment, Platform, StageResult } from '../../api/builds';
+import { commitBuild, isShareableUrl, stageBuild } from '../../api/builds';
+import { ApiError, errorMessage } from '../../api/client';
+import { FileDropzone } from '../../components/FileDropzone';
+import { useEnvironment } from '../../hooks/useEnvironment';
+import { useCurrentProject } from '../../hooks/useProjects';
+import { ENVIRONMENTS, PLATFORMS, platformFromFileName } from '../../utils/format';
 
 type ParsedField = 'appName' | 'packageId' | 'version' | 'buildNumber';
 type TextField = ParsedField | 'changelog';
@@ -42,6 +43,7 @@ const initialForm = (environment: Environment): FormState => ({
 
 export function UploadPage(): JSX.Element {
   const navigate = useNavigate();
+  const { key } = useCurrentProject();
   const [globalEnvironment] = useEnvironment();
   const [form, setForm] = useState<FormState>(() => initialForm(globalEnvironment));
   // touched 是前端局部状态，仅用于 stage 异步返回时不覆盖用户已输入字段；不进 API 契约、服务端不做合并。
@@ -106,7 +108,7 @@ export function UploadPage(): JSX.Element {
   const handleSubmit = async (event: FormEvent<HTMLFormElement>): Promise<void> => {
     event.preventDefault();
     if (!file || !stageToken) {
-      setError('请先选择 .apk 或 .ipa 文件');
+      setError('请先选择受支持的安装包（.apk / .ipa / .hap）');
       return;
     }
     if (parsing) {
@@ -121,8 +123,9 @@ export function UploadPage(): JSX.Element {
 
     setSubmitting(true);
     setError('');
-    // 恰好 8 个字段：token + 表单最终值。不含文件、不含 metaSource（由服务端派生）。
+    // 恰好 9 个字段：项目 + token + 表单最终值。不含文件、不含 metaSource（由服务端派生）。
     const payload: CommitBuildRequest = {
+      project: key,
       stageToken,
       environment: form.environment,
       platform: form.platform,
@@ -188,7 +191,7 @@ export function UploadPage(): JSX.Element {
             <button className="button button-primary" type="button" onClick={() => navigate(created.downloadPagePath)}>
               去下载页
             </button>
-            <Link className="button button-ghost" to="/packages">
+            <Link className="button button-ghost" to={`/p/${key}/packages`}>
               返回列表
             </Link>
             <button className="button button-ghost" type="button" onClick={resetAll}>
@@ -204,7 +207,7 @@ export function UploadPage(): JSX.Element {
     <section className="page page-narrow">
       <div className="page-head">
         <h1>上传 App 包</h1>
-        <Link className="button button-ghost" to="/packages">
+        <Link className="button button-ghost" to={`/p/${key}/packages`}>
           包列表
         </Link>
       </div>

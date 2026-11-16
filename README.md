@@ -119,26 +119,39 @@ make build          # 前端产物 → server/public/，再 CGO_ENABLED=0 go bui
 
 ---
 
-## 5. 接口速查（12 个）
+## 5. 接口速查（25 个）
 
 统一响应 `{code, data, message}`：成功 `code=0`，失败 `code` = HTTP 状态码（只有 400 / 401 / 404 / 405 / 413 / 500）且 `data=null`。唯一例外是文件下载成功返回二进制流。
 
 | # | 方法 | 路径 | 鉴权 | 说明 |
 | --- | --- | --- | --- | --- |
 | 1 | POST | `/api/v1/auth/login` | 公开 | JSON `{username,password}`，返回 `{token,username,expiresAt}`；凭据错误返回 400 |
-| 2 | POST | `/api/v1/builds/stage` | 需登录 | multipart `file`，暂存 + 同步解析，恒 200（解析失败只写 `warnings`） |
-| 3 | POST | `/api/v1/builds` | 需登录 | **application/json**，`CommitBuildRequest` **恰好 8 字段**（token + 表单值），不含文件与 `metaSource`，返回 201 完整 Build |
-| 4 | GET | `/api/v1/builds?environment=&platform=` | 需登录 | 列表，空结果 `items: []` |
-| 5 | GET | `/api/v1/builds/{id}` | 公开 | 详情 / 404（下载页取数，扫码的人无需登录） |
-| 6 | GET | `/api/v1/builds/{id}/file` | 公开 | 原始包流 |
-| 7 | GET | `/healthz` | 公开 | 健康检查（独立于 `/api/v1`） |
-| 8 | GET | `/api/v1/settings` | 需登录 | Webhook 配置 + API Key + 可推送字段目录 |
-| 9 | PUT | `/api/v1/settings` | 需登录 | 覆盖保存 Webhook 配置（含字段勾选） |
-| 10 | POST | `/api/v1/settings/webhook/test` | 需登录 | 发一条测试消息，返回 `delivered / statusCode` |
-| 11 | POST | `/api/v1/open/builds` | **API Key** | 外部系统一步式上传，详见 `docs/09-OPEN-API.md` |
-| 12 | GET | `/`、`/upload`、`/d/{id}` | 公开 | 静态资源 + SPA fallback |
+| 2 | GET | `/api/v1/projects` | 需登录 | 全部项目（按创建时间正序），项目切换器与新建项目用 |
+| 3 | POST | `/api/v1/projects` | 需登录 | JSON `{key,name,description}`，`key` 全仓唯一、创建后不可改（它是 URL 段），返回 201 |
+| 4 | POST | `/api/v1/builds/stage` | 需登录 | multipart `file`，暂存 + 同步解析，恒 200（解析失败只写 `warnings`） |
+| 5 | POST | `/api/v1/builds` | 需登录 | **application/json**，`CommitBuildRequest` **恰好 9 字段**（`project` + stageToken + 表单值），不含文件与 `metaSource`，返回 201 完整 Build |
+| 6 | GET | `/api/v1/builds?project=&environment=&platform=` | 需登录 | 列表，`project` 必填、`platform` 省略或 `all` 表示不筛，空结果 `items: []` |
+| 7 | GET | `/api/v1/builds/{id}` | 公开 | 详情 / 404（下载页取数，扫码的人无需登录） |
+| 8 | GET | `/api/v1/builds/{id}/file` | 公开 | 原始包流 |
+| 9 | GET | `/healthz` | 公开 | 健康检查（独立于 `/api/v1`） |
+| 10 | GET | `/api/v1/settings` | 需登录 | Webhook 配置 + API Key + 可推送字段目录 |
+| 11 | PUT | `/api/v1/settings` | 需登录 | 覆盖保存 Webhook 配置（含字段勾选） |
+| 12 | POST | `/api/v1/settings/webhook/test` | 需登录 | 发一条测试消息，返回 `delivered / statusCode` |
+| 13 | POST | `/api/v1/open/builds` | **API Key** | 外部系统一步式上传（multipart，`project` 必填），详见 `docs/09-OPEN-API.md` |
+| 14 | GET | `/api/v1/projects/{key}` | 需登录 | 项目详情（含关联人员 / 团队 ID） |
+| 15 | PUT | `/api/v1/projects/{key}` | 需登录 | 编辑项目（名称 / 描述 / 库地址；`key` 不可改） |
+| 16 | GET | `/api/v1/people` | 需登录 | 人员列表（含关联团队 / 项目 ID） |
+| 17 | POST | `/api/v1/people` | 需登录 | 新增人员，`teamIds` / `projectIds` 为多选 |
+| 18 | PUT | `/api/v1/people/{id}` | 需登录 | 编辑人员（全量覆盖字段与关联） |
+| 19 | GET | `/api/v1/teams` | 需登录 | 团队列表（含关联人员 / 项目 ID） |
+| 20 | POST | `/api/v1/teams` | 需登录 | 新增团队，`personIds` / `projectIds` 为多选 |
+| 21 | PUT | `/api/v1/teams/{id}` | 需登录 | 编辑团队（全量覆盖字段与关联） |
+| 22 | GET | `/api/v1/me` | 需登录 | 当前登录人 + 关联项目 key（列表页默认项目的来源） |
+| 23 | GET | `/api/v1/people/{id}` | 需登录 | 人员详情（编辑页回填），id 非 UUID 或不存在均 404 |
+| 24 | GET | `/api/v1/teams/{id}` | 需登录 | 团队详情（编辑页回填），同上 |
+| 25 | GET | `/`、`/upload`、`/d/{id}` | 公开 | 静态资源 + SPA fallback |
 
-> 「需登录」的三条接口要带 `Authorization: Bearer <token>`，缺失或过期返回 401。
+> 标「需登录」的接口要带 `Authorization: Bearer <token>`，缺失或过期返回 401；带了的接口也一律按 `project` 隔离，串项目的包互相看不到。
 
 ```bash
 # 造两个自测用小包（内容任意、扩展名正确即可，不新增脚本文件）
@@ -150,19 +163,22 @@ TOKEN=$(curl -sS -X POST http://localhost:8080/api/v1/auth/login \
   -H 'Content-Type: application/json' \
   -d '{"username":"admin","password":"admin123456"}' | python3 -c 'import sys,json;print(json.load(sys.stdin)["data"]["token"])')
 
+# ⓪' 项目列表（存量数据都在 key=default 的「默认项目」里）
+curl -sS -H "Authorization: Bearer $TOKEN" http://localhost:8080/api/v1/projects
+
 # ① 暂存：选文件时由前端自动触发；返回 stageToken / parsed / warnings
 curl -sS -H "Authorization: Bearer $TOKEN" \
   -F "file=@/tmp/demo.apk" http://localhost:8080/api/v1/builds/stage
 
-# ② 提交发布 commit：只发 JSON（恰好 8 字段），不带文件、不带 metaSource；把 <TOKEN> 换成上一步的 stageToken
+# ② 提交发布 commit：只发 JSON（恰好 9 字段），不带文件、不带 metaSource；把 <TOKEN> 换成上一步的 stageToken
 curl -sS -X POST http://localhost:8080/api/v1/builds \
   -H "Authorization: Bearer $TOKEN" \
   -H 'Content-Type: application/json' \
-  -d '{"stageToken":"<TOKEN>","environment":"test","platform":"android","appName":"商城 App","packageId":"com.example.shop","version":"1.2.0","buildNumber":"3","changelog":"修复登录态过期问题"}'
+  -d '{"project":"default","stageToken":"<TOKEN>","environment":"test","platform":"android","appName":"商城 App","packageId":"com.example.shop","version":"1.2.0","buildNumber":"3","changelog":"修复登录态过期问题"}'
 
-# ③ 列表（platform 省略或 all 表示不筛）
+# ③ 列表（project 必填；platform 省略或 all 表示不筛）
 curl -sS -H "Authorization: Bearer $TOKEN" \
-  'http://localhost:8080/api/v1/builds?environment=test&platform=android'
+  'http://localhost:8080/api/v1/builds?project=default&environment=test&platform=android'
 
 # ④ 详情（公开，无需令牌）
 curl -sS http://localhost:8080/api/v1/builds/<ID>
@@ -189,16 +205,19 @@ curl -sS http://localhost:8080/d/<ID> | head -5
 
 ---
 
-## 6. 关键设计（读代码前先看这六条）
+## 6. 关键设计（读代码前先看这八条）
 
-1. **stage 上传对用户透明，不是两步发布**：选文件那一刻自动上传一次到 `storage/tmp/{token}.{ext}` 并同步解析（5s 超时、manifest/plist ≤5MB、zip 条目上限），前端只把解析值填进**未被用户改动**的字段；用户全程只点一次「上传并发布」，commit 请求是纯 JSON（恰好 8 个字段，不含文件、不含 `metaSource`），服务端不再调用解析器、也不覆盖任何用户值，只 rename + 写库 + 生成地址；`metaSource` 由服务端按「是否发生空值兜底」派生（`fallback` / `parsed`）后入库，前端无法伪造。token 有效期 1 小时、用后即失效，启动时清空 tmp、每次 stage 前清理 1 小时孤儿。
+1. **stage 上传对用户透明，不是两步发布**：选文件那一刻自动上传一次到 `storage/tmp/{token}.{ext}` 并同步解析（5s 超时、manifest/plist ≤5MB、zip 条目上限），前端只把解析值填进**未被用户改动**的字段；用户全程只点一次「上传并发布」，commit 请求是纯 JSON（恰好 9 个字段，含 `project`，不含文件、不含 `metaSource`），服务端不再调用解析器、也不覆盖任何用户值，只 rename + 写库 + 生成地址；`metaSource` 由服务端按「是否发生空值兜底」派生（`fallback` / `parsed`）后入库，前端无法伪造。token 有效期 1 小时、用后即失效，启动时清空 tmp、每次 stage 前清理 1 小时孤儿。
 2. **三个 URL 由 `service/build_service.go` 的 `buildURLs(id)` 唯一生成**，`Create` / `List` / `Get` 统一调用；repository 的 `rowToBuild` 把这三个字段留空，绝不入库（换域名不用刷数据）。前端零拼接。
 3. **下载次数在 `io.Copy` 成功且写出字节 == `Content-Length` 之后**才 `UPDATE ... +1`；404 / 路径非法 / 文件缺失 / 客户端中断 / copy 出错 / 字节不足一律不计数；计数是 2s 短超时的旁路，失败只记日志、绝不阻断已完成的下载。第一版不做强去重（按钮点击后禁用 3s）、不做 Range / 断点续传。
 4. **契约是单一来源**：环境 / 平台枚举只写在 `api/openapi.yaml`，前端用生成类型，后端用 `go test ./...` 的契约一致性测试比对（把 yaml 里的 `pre` 改成 `pre2` 测试必须失败）；数据库 `environment` 列只 `NOT NULL`、**没有 CHECK**。第一版只有 `builds` 一张业务表。
 5. **登录只有一个账号，令牌是无状态的**：账号口令来自 `ADMIN_USERNAME` / `ADMIN_PASSWORD`，不落库、不建会话表，比对用 `subtle.ConstantTimeCompare`；令牌是「到期时间戳.`HMAC-SHA256`」串，服务端不存会话，重启后仍然有效。**受保护的只有「上传 / 发布 / 列表 / 系统设置」**，`/d/{id}` 与原始文件下载必须公开——扫码的人没有账号。`AUTH_SECRET` 生产沿用默认值会 fail-fast。
 6. **Webhook 与外部接口都是旁路**：`BuildService.Create` 成功后只调一次 `BuildNotifier`（实现是 `service/webhook`，异步投递、失败只记日志），所以第三方挂了也不会让发布失败；`/open/builds` 用 `X-API-Key` 鉴权、与管理端登录态互不影响，两者都复用同一份 `handler.ReadUpload` 与 `handler.ValidateCommitInput`，不另写一套校验。
+7. **项目是一级归属，不是筛选条件**：`builds.project_id` 必填 + 外键 + `(project_id, environment, platform, created_at DESC)` 索引，所有列表查询都先按项目收敛；前端路由把项目做成**路径前缀** `/p/:key/*`（环境仍留在查询参数），所以切项目只是换前缀、**不丢板块**（在「应用包」切项目仍留在「应用包」）；`/settings` 与 `/d/:id` 不带项目前缀，前者是平台级配置、后者靠全局唯一的 id 定位。存量数据整体归入 `key=default` 的「默认项目」，老链接靠前端重定向兜住。项目不存在（key 被删/改名/拼错）由 `components/ProjectGate.tsx` 在骨架层统一拦成空态卡片，不放任各页面弹红色 400。
 
-**多板块 / push 预留**：只体现在三段式 Layout + 一个导航数组（当前仅「应用包」一项）、`/d/:id` 路由命名空间永不改动、`/api/v1` 前缀、`BuildService.Create()` 这个唯一「上传完成」时点、装配层可注入。没有任何占位菜单、空页面、事件类型、outbox 表或 `TODO`。
+8. **基础资料是纯主数据，不含权限**：人员 / 团队 / 项目三张主表 + 三张多对多关联表（`team_members` / `project_members` / `team_projects`），关联由两侧各自维护自己那一半（人员页改 `teamIds`、团队页改 `personIds`，落到同一张表）；编辑一律**全量覆盖**（事务内先清后写），前端每次提交完整多选结果。**列表接口直接返回关联的 `{id,name}`（`RelationRef`）**，因此人员管理只调 `/people`、团队管理只调 `/teams`、项目管理只调 `/projects`——页面不会为了把 ID 显示成名字再去拉别的列表（这是「一个页面一个列表接口」的硬约束）。`people.username` 关联登录账号，`GET /api/v1/me` 用它把「我关联的第一个项目」投影给前端做列表页默认值——**只做默认值，不做权限**；谁能看哪个项目仍由 P2 的角色体系决定。
+
+**多板块 / push 预留**：只体现在三段式 Layout + 一个导航数组（总览 / 分发 / 基础资料 / 平台四组）、`/d/:id` 路由命名空间永不改动、`/api/v1` 前缀、`BuildService.Create()` 这个唯一「上传完成」时点、装配层可注入。没有任何占位菜单、空页面、事件类型、outbox 表或 `TODO`。
 
 ---
 

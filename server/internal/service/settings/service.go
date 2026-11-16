@@ -8,7 +8,6 @@ package settings
 import (
 	"context"
 	"fmt"
-	"net/url"
 	"strings"
 
 	"dandelion/server/internal/contract"
@@ -81,12 +80,11 @@ func normalize(in contract.WebhookConfig) (settingsrepo.Webhook, error) {
 	}
 	// 只有启用时才要求地址合法：关掉 Webhook 的人不必先清空地址。
 	if in.Enabled {
-		parsed, err := url.Parse(target)
-		if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" {
-			return settingsrepo.Webhook{}, &contract.ValidationError{
-				Message: "Webhook 地址必须是 http:// 或 https:// 开头的绝对地址",
-			}
+		normalized, err := contract.NormalizeHTTPURL(target)
+		if err != nil {
+			return settingsrepo.Webhook{}, &contract.ValidationError{Message: "Webhook 地址" + err.Error()}
 		}
+		target = normalized
 	}
 
 	fields := dedupe(in.Fields)

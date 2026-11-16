@@ -45,11 +45,11 @@ func (h *BuildHandler) Stage(w http.ResponseWriter, r *http.Request) error {
 	return OK(w, h.svc.Stage(r.Context(), form.Staged))
 }
 
-// Commit 只接受 application/json：恰好 8 个字段（token + 表单最终值），
+// Commit 只接受 application/json：恰好 9 个字段（项目 + token + 表单最终值），
 // 绝不含文件、绝不再次解析；metaSource 由服务端派生，不接受前端传入。
 func (h *BuildHandler) Commit(w http.ResponseWriter, r *http.Request) error {
 	var in contract.CommitInput
-	if err := DecodeJSON(w, r, &in, "stageToken/environment/platform/appName/packageId/version/buildNumber/changelog"); err != nil {
+	if err := DecodeJSON(w, r, &in, "project/stageToken/environment/platform/appName/packageId/version/buildNumber/changelog"); err != nil {
 		return err
 	}
 	if !contract.IsValidUUID(in.StageToken) {
@@ -67,7 +67,7 @@ func (h *BuildHandler) Commit(w http.ResponseWriter, r *http.Request) error {
 	return OKWithStatus(w, http.StatusCreated, build)
 }
 
-// List 按环境（+平台）查询；空结果由 service 返回 items: []，不是 404。
+// List 按「项目 + 环境（+平台）」查询；空结果由 service 返回 items: []，不是 404。
 func (h *BuildHandler) List(w http.ResponseWriter, r *http.Request) error {
 	environment := r.URL.Query().Get("environment")
 	if !contract.IsValidEnvironment(environment) {
@@ -80,7 +80,11 @@ func (h *BuildHandler) List(w http.ResponseWriter, r *http.Request) error {
 	if platform != "" && !contract.IsValidPlatform(platform) {
 		return BadRequest("平台参数不合法")
 	}
-	result, err := h.svc.List(r.Context(), contract.ListQuery{Environment: environment, Platform: platform})
+	result, err := h.svc.List(r.Context(), contract.ListQuery{
+		Project:     r.URL.Query().Get("project"),
+		Environment: environment,
+		Platform:    platform,
+	})
 	if err != nil {
 		return err
 	}

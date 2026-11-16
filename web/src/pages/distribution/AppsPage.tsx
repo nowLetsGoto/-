@@ -6,10 +6,12 @@
  *       这里是从包列表派生的只读视图，字段全部来自 Build DTO。
  */
 import { Link } from 'react-router-dom';
-import type { Build } from '../api/builds';
-import { Empty, ErrorState, Loading } from '../components/States';
-import { useAllBuilds } from '../hooks/useAllBuilds';
-import { formatDate, platformLabel } from '../utils/format';
+import type { Build } from '../../api/builds';
+import { ProjectSelect } from '../../components/ProjectSelect';
+import { Empty, ErrorState, Loading } from '../../components/States';
+import { useAllBuilds } from '../../hooks/useAllBuilds';
+import { useCurrentProject, useProjects } from '../../hooks/useProjects';
+import { formatDate, platformLabel } from '../../utils/format';
 
 interface AppSummary {
   name: string;
@@ -21,7 +23,9 @@ interface AppSummary {
 }
 
 export function AppsPage(): JSX.Element {
-  const { loading, error, groups, reload } = useAllBuilds();
+  const { key } = useCurrentProject();
+  const { projects } = useProjects();
+  const { loading, error, groups, reload } = useAllBuilds(key);
   const apps = loading || error ? [] : summarize(groups.flatMap((group) => group.items));
 
   return (
@@ -31,9 +35,12 @@ export function AppsPage(): JSX.Element {
           <h1>应用</h1>
           <p className="sub">按应用聚合 · 共 {apps.length} 个 · 数据来自包列表</p>
         </div>
-        <button className="button button-ghost" type="button" onClick={reload}>
-          刷新
-        </button>
+        <div className="page-head-actions">
+          <ProjectSelect projects={projects} currentKey={key} />
+          <button className="button button-ghost" type="button" onClick={reload}>
+            刷新
+          </button>
+        </div>
       </div>
 
       {loading ? <Loading text="正在汇总应用…" /> : null}
@@ -43,7 +50,7 @@ export function AppsPage(): JSX.Element {
           title="还没有可聚合的应用"
           description="应用由上传的包自动归集：同一个应用名下的包会合并成一张卡片。"
           action={
-            <Link className="button button-primary" to="/upload">
+            <Link className="button button-primary" to={`/p/${key}/upload`}>
               上传第一个包
             </Link>
           }

@@ -7,16 +7,20 @@
  *       聚合计算留在本页，hook 只负责取全四个环境。
  */
 import { Link } from 'react-router-dom';
-import type { Build, Environment } from '../api/builds';
-import { Empty, ErrorState, Loading } from '../components/States';
-import type { EnvGroup } from '../hooks/useAllBuilds';
-import { useAllBuilds } from '../hooks/useAllBuilds';
-import { ENVIRONMENTS, environmentLabel, formatBytes, formatDate, platformLabel } from '../utils/format';
+import type { Build, Environment } from '../../api/builds';
+import { ProjectSelect } from '../../components/ProjectSelect';
+import { Empty, ErrorState, Loading } from '../../components/States';
+import type { EnvGroup } from '../../hooks/useAllBuilds';
+import { useAllBuilds } from '../../hooks/useAllBuilds';
+import { useCurrentProject, useProjects } from '../../hooks/useProjects';
+import { ENVIRONMENTS, environmentLabel, formatBytes, formatDate, platformLabel } from '../../utils/format';
 
 const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
 
 export function OverviewPage(): JSX.Element {
-  const { loading, error, groups, reload } = useAllBuilds();
+  const { key } = useCurrentProject();
+  const { projects } = useProjects();
+  const { loading, error, groups, reload } = useAllBuilds(key);
   const total = groups.reduce((sum, group) => sum + group.items.length, 0);
 
   return (
@@ -24,21 +28,24 @@ export function OverviewPage(): JSX.Element {
       <div className="page-head">
         <div>
           <h1>概览</h1>
-          <p className="sub">四个环境的最新状态 · 最近 7 天</p>
+          <p className="sub">当前项目四个环境的最新状态 · 最近 7 天</p>
         </div>
-        <button className="button button-ghost" type="button" onClick={reload}>
-          刷新
-        </button>
+        <div className="page-head-actions">
+          <ProjectSelect projects={projects} currentKey={key} />
+          <button className="button button-ghost" type="button" onClick={reload}>
+            刷新
+          </button>
+        </div>
       </div>
 
       {loading ? <Loading text="正在汇总四个环境…" /> : null}
       {!loading && error ? <ErrorState message={error} onRetry={reload} /> : null}
       {!loading && !error && total === 0 ? (
         <Empty
-          title="平台里还没有任何包"
-          description="上传第一个 APK / IPA 后，这里会显示各环境的最新版本、发布趋势与下载量。"
+          title="这个项目还没有任何包"
+          description="上传第一个 APK / IPA / HAP 后，这里会显示各环境的最新版本、发布趋势与下载量。"
           action={
-            <Link className="button button-primary" to="/upload">
+            <Link className="button button-primary" to={`/p/${key}/upload`}>
               上传第一个包
             </Link>
           }

@@ -26,6 +26,8 @@ const ROUTES = {
 } as const;
 
 export interface ListQuery {
+  /** 项目 key：不同项目的包互不可见 */
+  project: string;
   environment: Environment;
   platform?: Platform | 'all';
 }
@@ -43,7 +45,7 @@ export function commitBuild(input: CommitBuildRequest): Promise<Build> {
 }
 
 export function listBuilds(query: ListQuery): Promise<ListBuildsResult> {
-  const params = new URLSearchParams({ environment: query.environment });
+  const params = new URLSearchParams({ project: query.project, environment: query.environment });
   if (query.platform && query.platform !== 'all') {
     params.set('platform', query.platform);
   }

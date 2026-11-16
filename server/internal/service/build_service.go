@@ -46,16 +46,38 @@ type BuildNotifier interface {
 	NotifyBuild(ctx context.Context, build contract.Build)
 }
 
-// BuildService 持有配置、路径、仓储与可选的通知旁路，由 main.go 装配层注入。
+// ProjectLookup 把项目 key 解析成项目实体；由 repository/project 实现。
+// 用接口而不是具体类型，发布流程就不需要认识项目仓储的全部能力。
+type ProjectLookup interface {
+	FindByKey(ctx context.Context, key string) (contract.Project, error)
+}
+
+// BuildService 持有配置、路径、仓储、项目解析与可选的通知旁路，由 main.go 装配层注入。
 type BuildService struct {
 	cfg      config.Config
 	paths    *storage.Paths
 	repo     *repository.BuildRepository
+	projects ProjectLookup
 	notifier BuildNotifier
 }
 
-func NewBuildService(cfg config.Config, paths *storage.Paths, repo *repository.BuildRepository, notifier BuildNotifier) *BuildService {
-	return &BuildService{cfg: cfg, paths: paths, repo: repo, notifier: notifier}
+func NewBuildService(
+	cfg config.Config,
+	paths *storage.Paths,
+	repo *repository.BuildRepository,
+	projects ProjectLookup,
+	notifier BuildNotifier,
+) *BuildService {
+	return &BuildService{cfg: cfg, paths: paths, repo: repo, projects: projects, notifier: notifier}
+}
+
+// resolveProject 把 key 解析成项目；key 为空或不存在都按参数错误处理（400）。
+func (s *BuildService) resolveProject(ctx context.Context, key string) (contract.Project, error) {
+	trimmed := strings.TrimSpace(key)
+	if trimmed == "" {
+		return contract.Project{}, &contract.ValidationError{Message: "请指定项目"}
+	}
+	return s.projects.FindByKey(ctx, trimmed)
 }
 
 // PurgeTmp 启动时清空 tmp：tmp 是纯临时态，进程重启后不存在「进行中的上传」。
@@ -141,6 +163,8 @@ func parseWarning(err error) string {
 	switch {
 	case strings.Contains(message, "超时"):
 		return "解析超时，请手动填写应用名、包名与版本号"
+	case strings.Contains(message, "hap"):
+		return "暂不支持解析 .hap，请手动填写应用名、包名与版本号"
 	case strings.Contains(message, "zip"), strings.Contains(message, "plist"), strings.Contains(message, "清单"):
 		return "安装包结构无法识别，请手动填写应用名、包名与版本号"
 	default:
@@ -170,7 +194,8 @@ func (s *BuildService) validateStageToken(token string) (stagedLookup, error) {
 			continue
 		}
 		candidate := strings.TrimPrefix(name, token+".")
-		if candidate == "apk" || candidate == "ipa" {
+		// 用契约的扩展名映射判断，而不是写死 apk/ipa：新增平台（如鸿蒙 .hap）不用改这里。
+		if _, ok := contract.PlatformOfExt(candidate); ok {
 			found = name
 			ext = candidate
 			break
@@ -205,6 +230,10 @@ func (s *BuildService) validateStageToken(token string) (stagedLookup, error) {
 
 // Create 是提交的唯一编排：表单即最终真值，提交时不再解析、不再覆盖用户值。
 func (s *BuildService) Create(ctx context.Context, in contract.CommitInput) (contract.Build, error) {
+	project, err := s.resolveProject(ctx, in.Project)
+	if err != nil {
+		return contract.Build{}, err
+	}
 	staged, err := s.validateStageToken(in.StageToken)
 	if err != nil {
 		return contract.Build{}, err
@@ -275,7 +304,7 @@ func (s *BuildService) Create(ctx context.Context, in contract.CommitInput) (con
 		DownloadCount:    0,
 	}
 
-	if err := s.repo.Insert(ctx, &build); err != nil {
+	if err := s.repo.Insert(ctx, project.ID, &build); err != nil {
 		// 失败补偿：写库失败必须删除已 move 的正式文件，避免磁盘留下无记录的孤儿包。
 		if removeErr := os.Remove(finalPath); removeErr != nil && !errors.Is(removeErr, os.ErrNotExist) {
 			log.Printf("失败补偿删除正式文件失败 path=%s err=%v", finalPath, removeErr)
@@ -309,9 +338,13 @@ func (s *BuildService) fillURLs(b *contract.Build) {
 	b.DownloadFileURL = fileURL
 }
 
-// List 返回按时间倒序的列表，空结果为空数组；统一填充三个 URL 字段。
+// List 返回该项目的按时间倒序列表，空结果为空数组；统一填充三个 URL 字段。
 func (s *BuildService) List(ctx context.Context, q contract.ListQuery) (contract.ListResult, error) {
-	items, err := s.repo.List(ctx, q)
+	project, err := s.resolveProject(ctx, q.Project)
+	if err != nil {
+		return contract.ListResult{}, err
+	}
+	items, err := s.repo.List(ctx, project.ID, q)
 	if err != nil {
 		return contract.ListResult{}, err
 	}

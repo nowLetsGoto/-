@@ -38,6 +38,7 @@ func (h *Handler) Upload(w http.ResponseWriter, r *http.Request) error {
 	parsed := h.svc.Stage(r.Context(), form.Staged)
 
 	in := contract.CommitInput{
+		Project:     form.Fields["project"],
 		StageToken:  form.Staged.Token,
 		Environment: form.Fields["environment"],
 		Platform:    form.Fields["platform"],
@@ -51,7 +52,7 @@ func (h *Handler) Upload(w http.ResponseWriter, r *http.Request) error {
 	if err := handler.ValidateCommitInput(in); err != nil {
 		return err
 	}
-	handler.AttachLogFields(r, "source=openapi environment="+in.Environment+" platform="+in.Platform)
+	handler.AttachLogFields(r, "source=openapi project="+in.Project+" environment="+in.Environment+" platform="+in.Platform)
 
 	build, err := h.svc.Create(r.Context(), in)
 	if err != nil {

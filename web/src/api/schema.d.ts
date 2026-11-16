@@ -4,6 +4,134 @@
  */
 
 export interface paths {
+    "/projects": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 列出全部项目（项目切换器与新建项目用） */
+        get: operations["listProjects"];
+        put?: never;
+        /**
+         * 新建项目
+         * @description key 只允许小写字母、数字与短横线，全仓唯一，创建后不可修改（它是 URL 段）。
+         */
+        post: operations["createProject"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/projects/{key}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 项目详情（含关联人员与团队的 ID） */
+        get: operations["getProject"];
+        /** 编辑项目（名称 / 描述 / 库地址；key 是 URL 段，不可修改） */
+        put: operations["updateProject"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/people": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 人员列表（含关联团队与项目 ID） */
+        get: operations["listPeople"];
+        put?: never;
+        /** 新增人员 */
+        post: operations["createPerson"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/people/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 人员详情（含关联团队与项目 ID），编辑页回填用 */
+        get: operations["getPerson"];
+        /** 编辑人员（全量覆盖字段与关联） */
+        put: operations["updatePerson"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/teams": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 团队列表（含关联人员与项目 ID） */
+        get: operations["listTeams"];
+        put?: never;
+        /** 新增团队 */
+        post: operations["createTeam"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/teams/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 团队详情（含关联人员与项目 ID），编辑页回填用 */
+        get: operations["getTeam"];
+        /** 编辑团队（全量覆盖字段与关联） */
+        put: operations["updateTeam"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/me": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 当前登录人档案（含关联项目 key，用于列表页默认项目） */
+        get: operations["getMe"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/settings": {
         parameters: {
             query?: never;
@@ -112,7 +240,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** 按环境（+平台）查询包列表，时间倒序，不分页 */
+        /** 按项目 + 环境（+平台）查询包列表，时间倒序，不分页 */
         get: operations["listBuilds"];
         put?: never;
         /**
@@ -242,12 +370,103 @@ export interface components {
          * @description 平台枚举；label / ext / contentType 见 x-platforms
          * @enum {string}
          */
-        Platform: "android" | "ios";
+        Platform: "android" | "ios" | "harmony";
         /**
          * @description 平台筛选，省略或 all 表示不筛
          * @enum {string}
          */
-        PlatformQuery: "all" | "android" | "ios";
+        PlatformQuery: "all" | "android" | "ios" | "harmony";
+        /** @description 项目是业务数据的一级归属：应用包、应用、热更新都挂在项目下 */
+        Project: {
+            /** Format: uuid */
+            id: string;
+            /** @description URL 段，创建后不可修改 */
+            key: string;
+            name: string;
+            description: string;
+            /** @description 项目库地址（GitLab / GitHub 等），空串表示未填；详情页渲染为可点击链接 */
+            repoUrl: string;
+            /** Format: date-time */
+            createdAt: string;
+        };
+        /** @description 新建 / 编辑项目请求，恰好 4 个字段；编辑时 key 被忽略 */
+        ProjectInput: {
+            /** @description 小写字母 / 数字 / 短横线，2-32 位，全仓唯一 */
+            key: string;
+            name: string;
+            description?: string;
+            /** @description http(s) 绝对地址；留空表示未填 */
+            repoUrl?: string;
+        };
+        /** @description 项目详情 = 项目本身 + 关联的人员与团队（带名字） */
+        ProjectDetail: {
+            /** Format: uuid */
+            id: string;
+            key: string;
+            name: string;
+            description: string;
+            repoUrl: string;
+            /** Format: date-time */
+            createdAt: string;
+            persons: components["schemas"]["RelationRef"][];
+            teams: components["schemas"]["RelationRef"][];
+        };
+        /** @description 关联的轻量投影（id + 名字）；列表接口直接带回，前端不必再拉对方列表 */
+        RelationRef: {
+            id: string;
+            name: string;
+        };
+        /** @description 人员；teams / projects 是带名字的多选关联 */
+        Person: {
+            /** Format: uuid */
+            id: string;
+            name: string;
+            /** @description 与登录账号对应；空表示只在通讯录里，不能登录 */
+            username?: string;
+            email: string;
+            phone: string;
+            title: string;
+            teams: components["schemas"]["RelationRef"][];
+            projects: components["schemas"]["RelationRef"][];
+            /** Format: date-time */
+            createdAt: string;
+        };
+        /** @description 新增 / 编辑人员请求 */
+        PersonInput: {
+            name: string;
+            username: string;
+            email: string;
+            phone: string;
+            title: string;
+            teamIds: string[];
+            projectIds: string[];
+        };
+        /** @description 团队；persons / projects 是带名字的多选关联 */
+        Team: {
+            /** Format: uuid */
+            id: string;
+            name: string;
+            description: string;
+            persons: components["schemas"]["RelationRef"][];
+            projects: components["schemas"]["RelationRef"][];
+            /** Format: date-time */
+            createdAt: string;
+        };
+        /** @description 新增 / 编辑团队请求 */
+        TeamInput: {
+            name: string;
+            description: string;
+            personIds: string[];
+            projectIds: string[];
+        };
+        /** @description 当前登录人；没有对应人员记录时 personId 为空、projectKeys 为空 */
+        Me: {
+            username: string;
+            personId: string;
+            name: string;
+            /** @description 该人员关联的项目 key，按项目创建顺序；前端据此决定列表页默认项目 */
+            projectKeys: string[];
+        };
         /**
          * @description 服务端派生的元数据来源内部标注：任一字段发生空值兜底 → fallback，否则 → parsed。 不出现在 CommitBuildRequest 中，前端无法伪造、也不参与请求校验。
          * @enum {string}
@@ -274,8 +493,10 @@ export interface components {
             /** @description 解析失败 / 损坏 / 超时的中文原因，不阻塞上传 */
             warnings: string[];
         };
-        /** @description 提交发布请求，application/json，**恰好 8 个字段**：token + 表单最终值。 绝不包含 file 字段，也不携带解析结果、touched 标记或 metaSource（来源由服务端派生）。 */
+        /** @description 提交发布请求，application/json，**恰好 9 个字段**：项目 + token + 表单最终值。 绝不包含 file 字段，也不携带解析结果、touched 标记或 metaSource（来源由服务端派生）。 */
         CommitBuildRequest: {
+            /** @description 项目 key；包归属于该项目 */
+            project: string;
             /** Format: uuid */
             stageToken: string;
             environment: components["schemas"]["Environment"];
@@ -379,6 +600,36 @@ export interface components {
         WebhookTestResponse: components["schemas"]["ApiResponse"] & {
             data: components["schemas"]["WebhookTestResult"];
         };
+        ProjectResponse: components["schemas"]["ApiResponse"] & {
+            data: components["schemas"]["Project"];
+        };
+        ProjectsResponse: components["schemas"]["ApiResponse"] & {
+            data: {
+                items: components["schemas"]["Project"][];
+            };
+        };
+        ProjectDetailResponse: components["schemas"]["ApiResponse"] & {
+            data: components["schemas"]["ProjectDetail"];
+        };
+        PersonResponse: components["schemas"]["ApiResponse"] & {
+            data: components["schemas"]["Person"];
+        };
+        PersonListResponse: components["schemas"]["ApiResponse"] & {
+            data: {
+                items: components["schemas"]["Person"][];
+            };
+        };
+        TeamResponse: components["schemas"]["ApiResponse"] & {
+            data: components["schemas"]["Team"];
+        };
+        TeamListResponse: components["schemas"]["ApiResponse"] & {
+            data: {
+                items: components["schemas"]["Team"][];
+            };
+        };
+        MeResponse: components["schemas"]["ApiResponse"] & {
+            data: components["schemas"]["Me"];
+        };
     };
     responses: {
         /** @description 缺文件 / 枚举非法 / 平台与文件类型不一致 / 字段超长 / stageToken 失效 / 登录凭据错误 */
@@ -446,6 +697,326 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    listProjects: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 项目列表，按创建时间正序 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProjectsResponse"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    createProject: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ProjectInput"];
+            };
+        };
+        responses: {
+            /** @description 创建成功 */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProjectResponse"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    getProject: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                key: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 项目详情 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProjectDetailResponse"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+        };
+    };
+    updateProject: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                key: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ProjectInput"];
+            };
+        };
+        responses: {
+            /** @description 更新后的项目 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProjectResponse"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+        };
+    };
+    listPeople: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 人员列表 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PersonListResponse"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+        };
+    };
+    createPerson: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PersonInput"];
+            };
+        };
+        responses: {
+            /** @description 创建成功 */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PersonResponse"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+        };
+    };
+    getPerson: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 人员详情 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PersonResponse"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    updatePerson: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PersonInput"];
+            };
+        };
+        responses: {
+            /** @description 更新后的人员 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PersonResponse"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+        };
+    };
+    listTeams: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 团队列表 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TeamListResponse"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+        };
+    };
+    createTeam: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TeamInput"];
+            };
+        };
+        responses: {
+            /** @description 创建成功 */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TeamResponse"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+        };
+    };
+    getTeam: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 团队详情 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TeamResponse"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    updateTeam: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TeamInput"];
+            };
+        };
+        responses: {
+            /** @description 更新后的团队 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TeamResponse"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+        };
+    };
+    getMe: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 当前登录人 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MeResponse"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+        };
+    };
     getSettings: {
         parameters: {
             query?: never;
@@ -529,9 +1100,11 @@ export interface operations {
                 "multipart/form-data": {
                     /**
                      * Format: binary
-                     * @description .apk / .ipa，单包上限 200 MB
+                     * @description .apk / .ipa / .hap，单包上限 200 MB
                      */
                     file: string;
+                    /** @description 项目 key */
+                    project: string;
                     environment: components["schemas"]["Environment"];
                     platform: components["schemas"]["Platform"];
                     appName?: string;
@@ -622,6 +1195,8 @@ export interface operations {
     listBuilds: {
         parameters: {
             query: {
+                /** @description 项目 key；不同项目的包互不可见 */
+                project: string;
                 environment: components["schemas"]["Environment"];
                 platform?: components["schemas"]["PlatformQuery"];
             };

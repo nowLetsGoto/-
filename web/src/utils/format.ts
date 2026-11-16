@@ -28,6 +28,7 @@ export const ENVIRONMENTS: ReadonlyArray<Option<Environment>> = [
 export const PLATFORMS: ReadonlyArray<Option<Platform>> = [
   { value: 'android', label: 'Android' },
   { value: 'ios', label: 'iOS' },
+  { value: 'harmony', label: '鸿蒙' },
 ];
 
 export function environmentLabel(value: string): string {
@@ -38,7 +39,10 @@ export function platformLabel(value: string): string {
   return PLATFORMS.find((item) => item.value === value)?.label ?? value;
 }
 
-/** 由扩展名预选平台提示；最终落盘平台仍由用户表单值决定。 */
+/**
+ * 由扩展名预选平台提示（.apk → android、.ipa → ios、.hap → harmony）；
+ * 最终落盘平台仍由用户表单值决定。acceptFile 也依赖它，扩展名白名单只有这一处。
+ */
 export function platformFromFileName(name: string): Platform | null {
   const lower = name.toLowerCase();
   if (lower.endsWith('.apk')) {
@@ -46,6 +50,9 @@ export function platformFromFileName(name: string): Platform | null {
   }
   if (lower.endsWith('.ipa')) {
     return 'ios';
+  }
+  if (lower.endsWith('.hap')) {
+    return 'harmony';
   }
   return null;
 }

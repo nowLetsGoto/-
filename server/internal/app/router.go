@@ -20,7 +20,10 @@ import (
 	"dandelion/server/internal/handler"
 	"dandelion/server/internal/handler/login"
 	"dandelion/server/internal/handler/openapi"
+	peoplehandler "dandelion/server/internal/handler/people"
+	projecthandler "dandelion/server/internal/handler/project"
 	settingshandler "dandelion/server/internal/handler/settings"
+	teamshandler "dandelion/server/internal/handler/teams"
 	"dandelion/server/internal/middleware"
 	"dandelion/server/internal/middleware/apikey"
 	loginmw "dandelion/server/internal/middleware/login"
@@ -32,6 +35,9 @@ type Deps struct {
 	// Open 是外部系统的一步式上传；Auth 是登录接口，Verify 是它的令牌校验函数。
 	Open     *openapi.Handler
 	Login    *login.Handler
+	Projects *projecthandler.Handler
+	People   *peoplehandler.Handler
+	Teams    *teamshandler.Handler
 	Settings *settingshandler.Handler
 	Verify   loginmw.Verifier
 	// APIKey 每次请求读一次系统设置里的 Key，改配置无需重启。
@@ -45,6 +51,13 @@ type Deps struct {
 // 否则响应缺少 Allow，与契约 §6.1 的「405 + Allow + JSON 外壳」不一致。
 var allowedMethods = map[string]string{
 	contract.RouteLogin:       "POST",
+	contract.RouteMe:          "GET",
+	contract.RouteProjects:    "GET, POST",
+	contract.RouteProjectByKey: "GET, PUT",
+	contract.RoutePeople:      "GET, POST",
+	contract.RoutePersonByID:  "GET, PUT",
+	contract.RouteTeams:       "GET, POST",
+	contract.RouteTeamByID:    "GET, PUT",
 	contract.RouteOpenBuilds:  "POST",
 	contract.RouteSettings:    "GET, PUT",
 	contract.RouteWebhookTest: "POST",
@@ -66,6 +79,14 @@ func allowedMethodsFor(req *http.Request) string {
 	switch {
 	case path == contract.RouteLogin, path == contract.RouteOpenBuilds, path == contract.RouteWebhookTest:
 		return "POST"
+	case path == contract.RouteMe:
+		return "GET"
+	case path == contract.RouteProjects, path == contract.RoutePeople, path == contract.RouteTeams:
+		return "GET, POST"
+	case strings.HasPrefix(path, contract.RouteProjects+"/"), strings.HasPrefix(path, contract.RoutePeople+"/"):
+		return "GET, PUT"
+	case strings.HasPrefix(path, contract.RouteTeams+"/"):
+		return "GET, PUT"
 	case path == contract.RouteSettings:
 		return "GET, PUT"
 	case path == contract.RouteBuilds:
@@ -102,6 +123,19 @@ func NewRouter(d Deps) http.Handler {
 			private.Get("/settings", middleware.Wrap(d.Settings.Get))
 			private.Put("/settings", middleware.Wrap(d.Settings.Update))
 			private.Post("/settings/webhook/test", middleware.Wrap(d.Settings.Test))
+			private.Get("/me", middleware.Wrap(d.People.Me))
+			private.Get("/projects", middleware.Wrap(d.Projects.List))
+			private.Post("/projects", middleware.Wrap(d.Projects.Create))
+			private.Get("/projects/{key}", middleware.Wrap(d.Projects.Get))
+			private.Put("/projects/{key}", middleware.Wrap(d.Projects.Update))
+			private.Get("/people", middleware.Wrap(d.People.List))
+			private.Post("/people", middleware.Wrap(d.People.Create))
+			private.Get("/people/{id}", middleware.Wrap(d.People.Get))
+			private.Put("/people/{id}", middleware.Wrap(d.People.Update))
+			private.Get("/teams", middleware.Wrap(d.Teams.List))
+			private.Post("/teams", middleware.Wrap(d.Teams.Create))
+			private.Get("/teams/{id}", middleware.Wrap(d.Teams.Get))
+			private.Put("/teams/{id}", middleware.Wrap(d.Teams.Update))
 		})
 	})
 	r.Get(contract.RouteHealth, middleware.Wrap(d.Health.Health))

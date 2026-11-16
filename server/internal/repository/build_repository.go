@@ -65,18 +65,19 @@ func (r *BuildRepository) NextID(ctx context.Context) (string, error) {
 }
 
 // Insert 写入一行完整元数据，并回填数据库生成的 created_at 与 download_count。
-func (r *BuildRepository) Insert(ctx context.Context, b *contract.Build) error {
+// projectID 由 service 先按项目 key 解析好再传入，仓储层不关心 key。
+func (r *BuildRepository) Insert(ctx context.Context, projectID string, b *contract.Build) error {
 	const query = `INSERT INTO builds (
-		id, environment, platform, app_name, package_id, version, build_number,
+		id, project_id, environment, platform, app_name, package_id, version, build_number,
 		changelog, original_file_name, file_size, file_ext, relative_path,
 		meta_source, download_count, created_at
-	) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, now())
+	) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, now())
 	RETURNING created_at, download_count`
 
 	var createdAt time.Time
 	var count int64
 	err := r.db.QueryRowContext(ctx, query,
-		b.ID, b.Environment, b.Platform, b.AppName, b.PackageID, b.Version, b.BuildNumber,
+		b.ID, projectID, b.Environment, b.Platform, b.AppName, b.PackageID, b.Version, b.BuildNumber,
 		b.Changelog, b.OriginalFileName, b.FileSize, b.FileExt, b.RelativePath,
 		b.MetaSource, 0,
 	).Scan(&createdAt, &count)
@@ -88,14 +89,14 @@ func (r *BuildRepository) Insert(ctx context.Context, b *contract.Build) error {
 	return nil
 }
 
-// List 固定 WHERE environment=$1 [AND platform=$2] ORDER BY created_at DESC，
-// 命中 idx_builds_env_platform_created；第一版不分页，空结果返回空切片而不是 404。
-func (r *BuildRepository) List(ctx context.Context, q contract.ListQuery) ([]contract.Build, error) {
+// List 固定 WHERE project_id=$1 AND environment=$2 [AND platform=$3] ORDER BY created_at DESC，
+// 命中 idx_builds_project_env_platform_created；第一版不分页，空结果返回空切片而不是 404。
+func (r *BuildRepository) List(ctx context.Context, projectID string, q contract.ListQuery) ([]contract.Build, error) {
 	var query strings.Builder
-	query.WriteString(`SELECT ` + buildColumns + ` FROM builds WHERE environment = $1`)
-	args := []any{q.Environment}
+	query.WriteString(`SELECT ` + buildColumns + ` FROM builds WHERE project_id = $1 AND environment = $2`)
+	args := []any{projectID, q.Environment}
 	if q.Platform != "" {
-		query.WriteString(` AND platform = $2`)
+		query.WriteString(` AND platform = $3`)
 		args = append(args, q.Platform)
 	}
 	query.WriteString(` ORDER BY created_at DESC`)

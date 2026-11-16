@@ -9,7 +9,9 @@ import (
 	"crypto/rand"
 	"errors"
 	"fmt"
+	"net/url"
 	"regexp"
+	"strings"
 )
 
 // 跨层错误标记：service 不依赖 handler，用 sentinel 表达可预期的业务拒绝，
@@ -24,6 +26,8 @@ var (
 	ErrUnauthorized = errors.New("登录状态已失效，请重新登录")
 	// ErrAPIKeyInvalid 外部接口的 Key 缺失 / 未配置 / 不匹配 → 401。
 	ErrAPIKeyInvalid = errors.New("API Key 无效，请在系统设置中查看后重试")
+	// ErrProjectInvalid 请求里的项目 key 不存在 → 400：属于参数错误，不是资源缺失。
+	ErrProjectInvalid = errors.New("项目不存在，请刷新项目列表后重试")
 )
 
 // ValidationError 是业务层对请求内容的拒绝（如 Webhook 地址非法），
@@ -46,6 +50,8 @@ const (
 const (
 	PlatformAndroid = "android"
 	PlatformIOS     = "ios"
+	// PlatformHarmony 鸿蒙：只支持上传与分发，暂不解析包内元数据。
+	PlatformHarmony = "harmony"
 )
 
 // 元数据来源枚举：由服务端派生（任一字段发生空值兜底 → fallback，否则 → parsed），
@@ -59,6 +65,13 @@ const (
 const (
 	APIPrefix         = "/api/v1"
 	RouteLogin        = APIPrefix + "/auth/login"
+	RouteProjects     = APIPrefix + "/projects"
+	RouteProjectByKey = APIPrefix + "/projects/{key}"
+	RoutePeople       = APIPrefix + "/people"
+	RoutePersonByID   = APIPrefix + "/people/{id}"
+	RouteTeams        = APIPrefix + "/teams"
+	RouteTeamByID     = APIPrefix + "/teams/{id}"
+	RouteMe           = APIPrefix + "/me"
 	RouteSettings     = APIPrefix + "/settings"
 	RouteWebhookTest  = APIPrefix + "/settings/webhook/test"
 	RouteOpenBuilds   = APIPrefix + "/open/builds"
@@ -81,6 +94,18 @@ const (
 	MaxPasswordLen       = 128
 	MaxWebhookURLLen     = 500
 	MaxWebhookSecretLen  = 200
+	MaxProjectKeyLen     = 32
+	MaxProjectNameLen    = 60
+	MaxProjectDescLen    = 200
+	MaxRepoURLLen        = 300
+	MaxPersonNameLen     = 40
+	MaxUsernameLen2      = 64
+	MaxEmailLen          = 120
+	MaxPhoneLen          = 40
+	MaxTitleLen          = 60
+	MaxTeamNameLen       = 60
+	MaxTeamDescLen       = 200
+	MaxRelationCount     = 200
 	StageTokenTTLSeconds = 3600
 	ParseTimeoutSeconds  = 5
 	ParseReadLimitMB     = 5
@@ -90,10 +115,12 @@ const (
 
 // Environments / Platforms / MetaSources / APIRoutes 供契约测试与页面渲染使用。
 var Environments = []string{EnvTest, EnvHotfix, EnvPre, EnvPrd}
-var Platforms = []string{PlatformAndroid, PlatformIOS}
+var Platforms = []string{PlatformAndroid, PlatformIOS, PlatformHarmony}
 var MetaSources = []string{MetaParsed, MetaFallback}
 var APIRoutes = []string{
-	RouteLogin, RouteSettings, RouteWebhookTest, RouteOpenBuilds,
+	RouteLogin, RouteMe, RouteProjects, RouteProjectByKey,
+	RoutePeople, RoutePersonByID, RouteTeams, RouteTeamByID,
+	RouteSettings, RouteWebhookTest, RouteOpenBuilds,
 	RouteStage, RouteBuilds, RouteBuildByID, RouteBuildFile, RouteHealth,
 }
 
@@ -158,6 +185,7 @@ type PlatformInfo struct {
 var PlatformInfos = map[string]PlatformInfo{
 	PlatformAndroid: {Label: "Android", Ext: "apk", ContentType: "application/vnd.android.package-archive"},
 	PlatformIOS:     {Label: "iOS", Ext: "ipa", ContentType: "application/octet-stream"},
+	PlatformHarmony: {Label: "鸿蒙", Ext: "hap", ContentType: "application/octet-stream"},
 }
 
 // LoginInput 是登录请求体，**恰好 2 个字段**；不接受任何额外字段。
@@ -207,6 +235,125 @@ func IsValidWebhookField(field string) bool {
 	return ok
 }
 
+// Project 是业务数据的一级归属：应用包、应用、热更新都挂在项目下。
+// Key 同时是 URL 段（/p/{key}/...），创建后不可修改。
+type Project struct {
+	ID          string `json:"id"`
+	Key         string `json:"key"`
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	RepoURL     string `json:"repoUrl"`
+	CreatedAt   string `json:"createdAt"`
+}
+
+// ProjectInput 是新建 / 编辑项目请求，恰好 4 个字段。
+type ProjectInput struct {
+	Key         string `json:"key"`
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	RepoURL     string `json:"repoUrl"`
+}
+
+// ProjectList 是项目列表响应体；空结果为 items: [] 而不是 nil。
+type ProjectList struct {
+	Items []Project `json:"items"`
+}
+
+// ProjectDetail 是项目详情：项目本身 + 关联的人员与团队（带名字，详情页不必再拉两份列表）。
+type ProjectDetail struct {
+	Project
+	Persons []RelationRef `json:"persons"`
+	Teams   []RelationRef `json:"teams"`
+}
+
+// RelationRef 是关联的轻量投影：只带 id 与名字。
+// 列表接口直接带回它，前端就不必为了"把 ID 显示成名字"再拉一遍对方列表。
+type RelationRef struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
+// Person 是人员；Teams / Projects 是该人员关联的团队与项目（多选）。
+type Person struct {
+	ID        string        `json:"id"`
+	Name      string        `json:"name"`
+	Username  string        `json:"username"`
+	Email     string        `json:"email"`
+	Phone     string        `json:"phone"`
+	Title     string        `json:"title"`
+	Teams     []RelationRef `json:"teams"`
+	Projects  []RelationRef `json:"projects"`
+	CreatedAt string        `json:"createdAt"`
+}
+
+// PersonInput 是新增 / 编辑人员请求；写入仍用 ID 数组。
+type PersonInput struct {
+	Name       string   `json:"name"`
+	Username   string   `json:"username"`
+	Email      string   `json:"email"`
+	Phone      string   `json:"phone"`
+	Title      string   `json:"title"`
+	TeamIDs    []string `json:"teamIds"`
+	ProjectIDs []string `json:"projectIds"`
+}
+
+// PersonList 是人员列表响应体。
+type PersonList struct {
+	Items []Person `json:"items"`
+}
+
+// Team 是团队；Persons / Projects 是该团队关联的人员与项目（多选）。
+type Team struct {
+	ID          string        `json:"id"`
+	Name        string        `json:"name"`
+	Description string        `json:"description"`
+	Persons     []RelationRef `json:"persons"`
+	Projects    []RelationRef `json:"projects"`
+	CreatedAt   string        `json:"createdAt"`
+}
+
+// TeamInput 是新增 / 编辑团队请求；写入仍用 ID 数组。
+type TeamInput struct {
+	Name        string   `json:"name"`
+	Description string   `json:"description"`
+	PersonIDs   []string `json:"personIds"`
+	ProjectIDs  []string `json:"projectIds"`
+}
+
+// TeamList 是团队列表响应体。
+type TeamList struct {
+	Items []Team `json:"items"`
+}
+
+// Me 是「当前登录人」的档案投影：没有对应人员记录时 PersonID 为空、ProjectKeys 为空。
+// 前端据此把应用包/应用的默认项目设为「我关联的第一个项目」。
+type Me struct {
+	Username    string   `json:"username"`
+	PersonID    string   `json:"personId"`
+	Name        string   `json:"name"`
+	ProjectKeys []string `json:"projectKeys"`
+}
+
+var projectKeyPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{1,31}$`)
+
+// IsValidProjectKey 校验项目 key：小写字母 / 数字 / 短横线，2-32 位，且以字母数字开头。
+func IsValidProjectKey(key string) bool {
+	return projectKeyPattern.MatchString(key)
+}
+
+// NormalizeHTTPURL 去掉首尾空白并校验是否为 http(s) 绝对地址，返回规范化结果。
+// 项目的 GitLab 地址与 Webhook 地址共用这一份判断，避免两处各写一遍。
+func NormalizeHTTPURL(raw string) (string, error) {
+	trimmed := strings.TrimSpace(raw)
+	parsed, err := url.Parse(trimmed)
+	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" {
+		return "", errInvalidHTTPURL
+	}
+	return trimmed, nil
+}
+
+var errInvalidHTTPURL = errors.New("必须是 http:// 或 https:// 开头的绝对地址")
+
 // Build 是完整包 DTO；三个 URL 字段由 service.buildURLs 填充，repository 映射时留空。
 type Build struct {
 	ID               string `json:"id"`
@@ -244,9 +391,10 @@ type StageResult struct {
 	Warnings   []string   `json:"warnings"`
 }
 
-// CommitInput 是提交发布请求体，**恰好 8 个字段**：token + 表单最终值。
+// CommitInput 是提交发布请求体，**恰好 9 个字段**：项目 + token + 表单最终值。
 // 不含文件、不含解析结果、不含 touched 标记，也不含 metaSource（来源由服务端派生）。
 type CommitInput struct {
+	Project     string `json:"project"`
 	StageToken  string `json:"stageToken"`
 	Environment string `json:"environment"`
 	Platform    string `json:"platform"`
@@ -257,8 +405,9 @@ type CommitInput struct {
 	Changelog   string `json:"changelog"`
 }
 
-// ListQuery 是列表查询条件，Platform 为空表示不筛。
+// ListQuery 是列表查询条件；Platform 为空表示不筛，Project 是项目 key。
 type ListQuery struct {
+	Project     string
 	Environment string
 	Platform    string
 }

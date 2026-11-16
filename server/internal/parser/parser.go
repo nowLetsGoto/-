@@ -41,6 +41,9 @@ func Parse(r io.ReaderAt, size int64, platform string) (contract.ParsedMeta, err
 			meta, err = parseApk(ctx, r, size)
 		case contract.PlatformIOS:
 			meta, err = parseIpa(ctx, r, size)
+		case contract.PlatformHarmony:
+			// 鸿蒙包（.hap）暂不解析：给出可上屏的原因，由调用方写成 warning，不阻塞上传。
+			err = fmt.Errorf("暂不支持解析 .hap，请手动填写应用名与版本号")
 		default:
 			err = fmt.Errorf("未知平台: %s", platform)
 		}

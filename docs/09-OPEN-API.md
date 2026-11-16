@@ -26,21 +26,27 @@ Key 为空或服务端未配置时，接口一律拒绝——宁可全拒，也�
 
 | 字段 | 必填 | 说明 |
 | --- | --- | --- |
-| `file` | 是 | `.apk` / `.ipa`，单包上限 200 MB |
+| `project` | 是 | 项目 key（小写字母/数字/短横线），包归属到该项目；在管理端左上角项目切换器里可见 |
+| `file` | 是 | `.apk` / `.ipa` / `.hap` 文件本身，单包上限 200 MB |
 | `environment` | 是 | `test` / `hotfix` / `pre` / `prd` |
-| `platform` | 是 | `android` / `ios`，必须与文件扩展名一致 |
+| `platform` | 是 | `android` / `ios` / `harmony`，必须与文件扩展名一致 |
 | `appName` | 否 | 省略时用包内解析值，再缺才用文件名 |
 | `packageId` | 否 | 同上 |
 | `version` | 否 | 同上 |
 | `buildNumber` | 否 | 同上 |
 | `changelog` | 否 | 更新说明 |
 
-**补齐规则**：`调用方传值 → 包内解析值 → 文件名兜底`，三级依次生效。
+**必填三项**：`project`、`environment`、`platform` 必须由调用方给出，服务端不做兜底——缺任意一项直接 400。
+`project` 必须已存在（先用 `GET /api/v1/projects` 查，或在管理端新建），否则返回 400「项目不存在」。
+
+**补齐规则**：`调用方传值 → 包内解析值 → 文件名兜底`，三级依次生效，**只对 `appName` / `packageId` / `version` / `buildNumber` 这四个展示字段生效**。
 只要发生过兜底，服务端会把 `metaSource` 记为 `fallback`，可在列表里识别出「字段不完整」的包。
+鸿蒙 `.hap` 暂不做解析，四个字段全部按上传时传入的值落库（缺省则用文件名兜底），不影响发布。
 
 ```bash
 curl -X POST https://dandelion.example.com/api/v1/open/builds \
   -H "X-API-Key: <key>" \
+  -F "project=default" \
   -F "file=@./app-release.apk" \
   -F "environment=test" \
   -F "platform=android" \
@@ -80,7 +86,7 @@ curl -X POST https://dandelion.example.com/api/v1/open/builds \
 
 | HTTP | code | 场景 |
 | --- | --- | --- |
-| 400 | 400 | 缺文件 / 扩展名不符 / 环境或平台非法 / 字段超长 |
+| 400 | 400 | 缺文件 / 缺 `project` / 项目不存在 / 扩展名不符 / 环境或平台非法 / 字段超长 |
 | 401 | 401 | Key 缺失、错误或服务端未配置 |
 | 413 | 413 | 超过 200 MB |
 | 500 | 500 | 写文件或写库失败 |

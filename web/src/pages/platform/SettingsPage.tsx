@@ -1,19 +1,25 @@
 /**
  * 系统设置页。
  * 职责：配置 Webhook（开关 / 地址 / 签名密钥 / 推送字段）并测试投递；展示外部上传接口的调用方式。
- * 输入：GET /api/v1/settings；输出：PUT 保存、POST 测试、复制 API Key 与调用示例。
+ * 输入：GET /api/v1/settings、当前项目 key（仅用于外部接口示例的占位值）；
+ *       输出：PUT 保存、POST 测试、复制 API Key 与调用示例。
  * 边界：不做字段合法性判断（服务端校验）、不缓存设置副本；
- *       切换 Tab 不重复取数，只有保存后以服务端返回的值为准。
+ *       切换 Tab 不重复取数，只有保存后以服务端返回的值为准；
+ *       设置页是平台级的，这里不因"当前项目"改变任何行为，只是把 key 抄进示例。
  */
 import { useEffect, useState } from 'react';
-import type { Settings, WebhookConfig, WebhookField, WebhookTestResult } from '../api/settings';
-import { getSettings, testWebhook, updateWebhook } from '../api/settings';
-import { errorMessage } from '../api/client';
-import { ErrorState, Loading } from '../components/States';
+import type { Settings, WebhookConfig, WebhookField, WebhookTestResult } from '../../api/settings';
+import { getSettings, testWebhook, updateWebhook } from '../../api/settings';
+import { errorMessage } from '../../api/client';
+import { useCurrentProject } from '../../hooks/useProjects';
+import { ErrorState, Loading } from '../../components/States';
 
 type Tab = 'webhook' | 'api';
 
 export function SettingsPage(): JSX.Element {
+  // 示例里的 project 必须取**真实解析出来的项目**：useCurrentProject().key 可能来自 URL 或
+  // localStorage 里残留的失效值（此时 key 有值但 project 为 null），那样照抄示例就会 400。
+  const { project } = useCurrentProject();
   const [tab, setTab] = useState<Tab>('webhook');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -178,7 +184,11 @@ export function SettingsPage(): JSX.Element {
           onTest={() => void runTest()}
         />
       ) : (
-        <ApiPanel apiKey={data.apiKey} onCopy={(text, message) => void copy(text, message)} />
+        <ApiPanel
+          apiKey={data.apiKey}
+          projectKey={project?.key ?? 'default'}
+          onCopy={(text, message) => void copy(text, message)}
+        />
       )}
     </section>
   );
@@ -285,12 +295,21 @@ function WebhookPanel(props: WebhookPanelProps): JSX.Element {
 }
 
 /** 外部 API 面板：把接口、Key 与可复制的 curl 放在一页，免去翻文档。 */
-function ApiPanel({ apiKey, onCopy }: { apiKey: string; onCopy: (text: string, message: string) => void }): JSX.Element {
+function ApiPanel({
+  apiKey,
+  projectKey,
+  onCopy,
+}: {
+  apiKey: string;
+  projectKey: string;
+  onCopy: (text: string, message: string) => void;
+}): JSX.Element {
   // 仅用于生成给人复制的示例；真正的下载地址由服务端按 PUBLIC_BASE_URL 生成。
   const origin = window.location.origin;
   const curl = [
     `curl -X POST ${origin}/api/v1/open/builds \\`,
     `  -H "X-API-Key: ${apiKey}" \\`,
+    `  -F "project=${projectKey}" \\`,
     '  -F "file=@./app-release.apk" \\',
     '  -F "environment=test" \\',
     '  -F "platform=android" \\',
@@ -351,10 +370,17 @@ function ApiPanel({ apiKey, onCopy }: { apiKey: string; onCopy: (text: string, m
             <tbody>
               <tr>
                 <td>
+                  <code>project</code>
+                </td>
+                <td>是</td>
+                <td>项目 key，在左上角项目切换器里可见</td>
+              </tr>
+              <tr>
+                <td>
                   <code>file</code>
                 </td>
                 <td>是</td>
-                <td>.apk / .ipa 文件本身</td>
+                <td>.apk / .ipa / .hap 文件本身</td>
               </tr>
               <tr>
                 <td>
@@ -368,7 +394,7 @@ function ApiPanel({ apiKey, onCopy }: { apiKey: string; onCopy: (text: string, m
                   <code>platform</code>
                 </td>
                 <td>是</td>
-                <td>android / ios，需与文件扩展名一致</td>
+                <td>android / ios / harmony，需与文件扩展名一致</td>
               </tr>
               <tr>
                 <td>

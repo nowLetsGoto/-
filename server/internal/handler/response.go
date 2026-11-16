@@ -97,6 +97,9 @@ func WriteError(w http.ResponseWriter, r *http.Request, err error) {
 			appErr = &AppError{Status: 400, Code: 400, Message: invalid.Message}
 		case errors.Is(err, contract.ErrNotFound):
 			appErr = &AppError{Status: 404, Code: 404, Message: contract.ErrNotFound.Error()}
+		// 项目 key 不存在属于「请求参数不对」，不是资源缺失，故 400 而非 404。
+		case errors.Is(err, contract.ErrProjectInvalid):
+			appErr = &AppError{Status: 400, Code: 400, Message: contract.ErrProjectInvalid.Error()}
 		case errors.Is(err, contract.ErrStageInvalid):
 			appErr = &AppError{Status: 400, Code: 400, Message: contract.ErrStageInvalid.Error()}
 		case errors.Is(err, contract.ErrPlatformMismatch):

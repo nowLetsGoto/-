@@ -7,12 +7,14 @@
  */
 import { useEffect, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
-import type { Build, ListBuildsResult, Platform } from '../api/builds';
-import { listBuilds } from '../api/builds';
-import { errorMessage } from '../api/client';
-import { Empty, ErrorState, Loading } from '../components/States';
-import { useEnvironment } from '../hooks/useEnvironment';
-import { PLATFORMS, environmentLabel, formatBytes, formatDate, platformLabel } from '../utils/format';
+import type { Build, ListBuildsResult, Platform } from '../../api/builds';
+import { listBuilds } from '../../api/builds';
+import { errorMessage } from '../../api/client';
+import { Empty, ErrorState, Loading } from '../../components/States';
+import { ProjectSelect } from '../../components/ProjectSelect';
+import { useEnvironment } from '../../hooks/useEnvironment';
+import { useCurrentProject, useProjects } from '../../hooks/useProjects';
+import { PLATFORMS, environmentLabel, formatBytes, formatDate, platformLabel } from '../../utils/format';
 
 interface PageState {
   loading: boolean;
@@ -28,6 +30,8 @@ function readPlatform(value: string | null): Platform | typeof ALL_PLATFORMS {
 }
 
 export function PackagesPage(): JSX.Element {
+  const { key } = useCurrentProject();
+  const { projects } = useProjects();
   const [environment] = useEnvironment();
   const [params, setParams] = useSearchParams();
   const platform = readPlatform(params.get('platform'));
@@ -36,9 +40,12 @@ export function PackagesPage(): JSX.Element {
   const [reloadKey, setReloadKey] = useState(0);
 
   useEffect(() => {
+    if (!key) {
+      return;
+    }
     let cancelled = false;
     setState({ loading: true, data: null, error: '' });
-    listBuilds({ environment, platform })
+    listBuilds({ project: key, environment, platform })
       .then((data) => {
         if (!cancelled) {
           setState({ loading: false, data, error: '' });
@@ -52,7 +59,7 @@ export function PackagesPage(): JSX.Element {
     return () => {
       cancelled = true;
     };
-  }, [environment, platform, reloadKey]);
+  }, [key, environment, platform, reloadKey]);
 
   const setPlatform = (next: Platform | typeof ALL_PLATFORMS): void => {
     const updated = new URLSearchParams(params);
@@ -76,6 +83,9 @@ export function PackagesPage(): JSX.Element {
           <p className="sub">
             {environmentLabel(environment)}环境 · {state.data ? `共 ${state.data.total} 个包` : '加载中…'} · 按上传时间倒序
           </p>
+        </div>
+        <div className="page-head-actions">
+          <ProjectSelect projects={projects} currentKey={key} />
         </div>
       </div>
 
@@ -114,7 +124,7 @@ export function PackagesPage(): JSX.Element {
               title={`${environmentLabel(environment)}环境还没有包`}
               description="上传第一个 APK / IPA 后，这里会显示版本、构建号与下载次数，并自动生成可扫码的下载页。解析失败不会阻塞发布，表单仍可手动填写。"
               action={
-                <Link className="button button-primary" to="/upload">
+                <Link className="button button-primary" to={`/p/${key}/upload`}>
                   上传第一个包
                 </Link>
               }

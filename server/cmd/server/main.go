@@ -25,12 +25,21 @@ import (
 	"dandelion/server/internal/handler"
 	"dandelion/server/internal/handler/login"
 	"dandelion/server/internal/handler/openapi"
+	peoplehandler "dandelion/server/internal/handler/people"
+	projecthandler "dandelion/server/internal/handler/project"
 	settingshandler "dandelion/server/internal/handler/settings"
+	teamshandler "dandelion/server/internal/handler/teams"
 	"dandelion/server/internal/repository"
+	peopleRepo "dandelion/server/internal/repository/people"
+	projectrepo "dandelion/server/internal/repository/project"
 	settingsrepo "dandelion/server/internal/repository/settings"
+	teamsRepo "dandelion/server/internal/repository/teams"
 	"dandelion/server/internal/service"
 	loginsvc "dandelion/server/internal/service/login"
+	peoplesvc "dandelion/server/internal/service/people"
+	projectsvc "dandelion/server/internal/service/project"
 	settingssvc "dandelion/server/internal/service/settings"
+	teamssvc "dandelion/server/internal/service/teams"
 	webhooksvc "dandelion/server/internal/service/webhook"
 	"dandelion/server/internal/storage"
 )
@@ -79,13 +88,23 @@ func run() error {
 		return err
 	}
 
+	// 项目是业务数据的一级归属：发布与查询都要先按 key 解析出项目。
+	projectRepo := projectrepo.NewRepository(db)
+	projectService := projectsvc.NewService(projectRepo)
+
+	// 基础资料：人员与团队各自持有主表，三张关联表由两侧仓储分别维护。
+	peopleRepository := peopleRepo.NewRepository(db)
+	peopleService := peoplesvc.NewService(peopleRepository)
+	teamsRepository := teamsRepo.NewRepository(db)
+	teamsService := teamssvc.NewService(teamsRepository)
+
 	// 系统设置与 Webhook：配置读写归 settings，投递归 webhook；
 	// 发布流程只依赖 service.BuildNotifier 接口，因此不需要认识 webhook 的实现。
 	settingsRepo := settingsrepo.NewRepository(db)
 	settingsService := settingssvc.NewService(settingsRepo)
 	webhookService := webhooksvc.NewService(settingsRepo)
 
-	svc := service.NewBuildService(cfg, paths, repo, webhookService)
+	svc := service.NewBuildService(cfg, paths, repo, projectRepo, webhookService)
 	if err := svc.PurgeTmp(); err != nil {
 		return err
 	}
@@ -94,6 +113,9 @@ func run() error {
 	loginHandler := login.NewHandler(loginService)
 	builds := handler.NewBuildHandler(cfg, svc, paths)
 	openAPI := openapi.NewHandler(cfg, svc, paths)
+	projectHandler := projecthandler.NewHandler(projectService)
+	peopleHandler := peoplehandler.NewHandler(peopleService)
+	teamsHandler := teamshandler.NewHandler(teamsService)
 	settingsHandler := settingshandler.NewHandler(settingsService, webhookService)
 	health := handler.NewHealthHandler(repo, paths)
 	public, err := fs.Sub(staticfs.PublicFiles, "public")
@@ -104,6 +126,9 @@ func run() error {
 		Builds:   builds,
 		Open:     openAPI,
 		Login:    loginHandler,
+		Projects: projectHandler,
+		People:   peopleHandler,
+		Teams:    teamsHandler,
 		Settings: settingsHandler,
 		Verify:   loginService.Verify,
 		APIKey:   settingsService.APIKey,

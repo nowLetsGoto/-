@@ -254,7 +254,13 @@ ul {
 }
 
 .crumb-sep {
+  margin: 0 6px;
   color: #c8dade;
+}
+
+.crumb-last {
+  color: var(--color-text);
+  font-weight: 600;
 }
 
 .env-switch {
@@ -501,6 +507,11 @@ ul {
 .badge-ios {
   background: #eaeff8;
   color: #3b5b8c;
+}
+
+.badge-harmony {
+  background: #f0ecfa;
+  color: #5b4b9e;
 }
 
 .badge-plain {
@@ -1077,6 +1088,85 @@ textarea.text-input {
   color: var(--color-primary);
 }
 
+/* ================= 页面级项目筛选 ================= */
+
+.page-head-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+}
+
+.project-filter {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--color-muted);
+  font-size: var(--font-size-sm);
+  white-space: nowrap;
+}
+
+/* 统一的下拉外观：与 .text-input 同高同圆角，避免原生控件各浏览器长不一样 */
+.select-input {
+  height: 34px;
+  padding: 0 10px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  color: var(--color-text);
+  font-family: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.select-input:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 1px;
+}
+
+/* 关联标签：表格里的团队/项目、详情页的成员列表共用 */
+.chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.chip {
+  display: inline-block;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: var(--color-surface-2);
+  border: 1px solid var(--color-border);
+  color: var(--color-text-2);
+  font-size: 11.5px;
+  white-space: nowrap;
+}
+
+/* 表单里"标签 + 多选"的竖排块 */
+.field-block {
+  margin-bottom: var(--spacing-md);
+}
+
+.field-block .field-label {
+  margin: 0 0 var(--spacing-xs);
+}
+
+/* 表格行的多个操作按钮 */
+.row-actions {
+  display: flex;
+  gap: 6px;
+  justify-content: flex-end;
+}
+
+.repo-link {
+  color: var(--color-primary);
+  font-size: var(--font-size-sm);
+  word-break: break-all;
+}
+
+.repo-link:hover {
+  text-decoration: underline;
+}
+
 /* ================= 系统设置 ================= */
 
 .tabs {
@@ -1514,26 +1604,35 @@ code {
     grid-template-columns: 1fr;
   }
 
-  /* 侧边栏收成顶部横向条：品牌一行、导航一行，账号贴右上 */
+  /* 侧边栏收成顶部三行网格：品牌 + 项目切换器 + 账号，第二行导航 */
   .sidebar {
     position: sticky;
     z-index: 30;
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 8px;
     height: auto;
-    padding: 10px 14px;
+    padding: 8px 12px;
     border-right: none;
     border-bottom: 1px solid var(--color-border);
   }
 
   .sidebar-brand {
-    padding: 0 0 8px;
+    grid-row: 1;
+    grid-column: 1;
+    padding: 0;
   }
 
+  .brand-name,
   .brand-sub,
   .nav-group {
     display: none;
   }
 
   .sidebar-nav {
+    grid-row: 2;
+    grid-column: 1 / -1;
     display: flex;
     gap: 4px;
     overflow-x: auto;
@@ -1554,9 +1653,9 @@ code {
   }
 
   .sidebar-foot {
-    position: absolute;
-    top: 10px;
-    right: 12px;
+    grid-row: 1;
+    grid-column: 3;
+    position: static;
     margin: 0;
     padding: 0;
     border: none;
@@ -1587,11 +1686,15 @@ code {
     padding: var(--spacing-md);
   }
 
-  /* 标题与操作同一行，避免「刷新」单独占一行 */
+  /* 窄屏下页头操作区换行到标题下方，项目筛选与刷新按钮同一行 */
   .page-head {
-    flex-direction: row;
-    align-items: flex-start;
-    justify-content: space-between;
+    flex-direction: column;
+    align-items: stretch;
+    gap: var(--spacing-sm);
+  }
+
+  .page-head-actions {
+    flex-wrap: wrap;
   }
 
   .field-grid,

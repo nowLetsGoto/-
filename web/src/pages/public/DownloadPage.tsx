@@ -10,11 +10,11 @@ import { useEffect, useState } from 'react';
 import type { MouseEvent } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { QRCodeSVG } from 'qrcode.react';
-import type { Build } from '../api/builds';
-import { getBuild, isShareableUrl } from '../api/builds';
-import { ApiError, errorMessage } from '../api/client';
-import { Empty, ErrorState, Loading } from '../components/States';
-import { environmentLabel, formatBytes, formatDate, platformLabel } from '../utils/format';
+import type { Build } from '../../api/builds';
+import { getBuild, isShareableUrl } from '../../api/builds';
+import { ApiError, errorMessage } from '../../api/client';
+import { Empty, ErrorState, Loading } from '../../components/States';
+import { environmentLabel, formatBytes, formatDate, platformLabel } from '../../utils/format';
 
 interface PageState {
   loading: boolean;

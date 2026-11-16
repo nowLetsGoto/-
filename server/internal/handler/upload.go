@@ -38,7 +38,7 @@ func ReadUpload(w http.ResponseWriter, r *http.Request, maxUploadMB int64, paths
 
 	reader, err := r.MultipartReader()
 	if err != nil {
-		return UploadForm{}, BadRequest("请选择 .apk 或 .ipa 文件")
+		return UploadForm{}, BadRequest("请选择受支持的安装包（.apk / .ipa / .hap）")
 	}
 
 	form := UploadForm{Fields: make(map[string]string)}
@@ -75,7 +75,7 @@ func ReadUpload(w http.ResponseWriter, r *http.Request, maxUploadMB int64, paths
 	}
 
 	if !foundFile {
-		return UploadForm{}, BadRequest("请选择 .apk 或 .ipa 文件")
+		return UploadForm{}, BadRequest("请选择受支持的安装包（.apk / .ipa / .hap）")
 	}
 	return form, nil
 }
@@ -84,8 +84,9 @@ func ReadUpload(w http.ResponseWriter, r *http.Request, maxUploadMB int64, paths
 // 同时把路径登记到请求上下文，后续任何失败都会由错误中间件清理。
 func persistUpload(part io.Reader, fileName string, limit int64, paths *storage.Paths, r *http.Request) (service.StagedFile, error) {
 	ext := strings.ToLower(strings.TrimPrefix(pathExt(fileName), "."))
-	if ext != "apk" && ext != "ipa" {
-		return service.StagedFile{}, BadRequest("请选择 .apk 或 .ipa 文件")
+	// 扩展名白名单来自契约的 x-platforms：新增平台不需要改这里。
+	if _, ok := contract.PlatformOfExt(ext); !ok {
+		return service.StagedFile{}, BadRequest("请选择受支持的安装包（.apk / .ipa / .hap）")
 	}
 
 	token, err := contract.NewStageToken()
