@@ -7,8 +7,7 @@
 import React from 'react';
 import { createRoot } from 'react-dom/client';
 import { BrowserRouter } from 'react-router-dom';
-import { ConfigProvider } from 'antd';
-import zhCN from 'antd/locale/zh_CN';
+import { ConfigProvider, zhCN } from '@seakoi/console-kit';
 import 'dayjs/locale/zh-cn';
 import { App } from './App';
 import { antdTheme } from './theme/antd';

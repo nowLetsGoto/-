@@ -26,9 +26,10 @@ export default defineConfig({
     emptyOutDir: true,
     rollupOptions: {
       output: {
-        // 把 antd 单独拆包：它体积大且极少变动，独立成 chunk 后业务代码更新不会让它重新下载。
+        // 组件库单独拆包：antd 与 console-kit 体积大且极少变动，业务代码更新不会让它们重新下载。
         manualChunks: {
           antd: ['antd'],
+          'console-kit': ['@seakoi/console-kit'],
         },
       },
     },

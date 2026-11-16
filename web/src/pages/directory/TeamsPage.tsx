@@ -5,7 +5,7 @@
  * 边界：不拉人员或项目列表（那属于对应页面自己的事）、不内嵌表单。
  */
 import { Link, useNavigate } from 'react-router-dom';
-import type { ColumnsType } from 'antd/es/table';
+import type { TableColumnsType } from '@seakoi/console-kit';
 import type { Team } from '../../api/teams';
 import { DataTable } from '../../components/DataTable';
 import { Empty, ErrorState } from '../../components/States';
@@ -17,7 +17,7 @@ export function TeamsPage(): JSX.Element {
   const { page, pageSize, change: changePage } = usePageState();
   const { items: teams, total, loading, error, reload } = useTeamsPage(page, pageSize);
 
-  const columns: ColumnsType<Team> = [
+  const columns: TableColumnsType<Team> = [
     {
       title: '团队名称',
       key: 'name',

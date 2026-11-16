@@ -5,7 +5,7 @@
  * 边界：只读页面，不提供任何修改/删除入口；日志由服务端在业务动作后自动写入。
  */
 import { useEffect, useState } from 'react';
-import type { ColumnsType } from 'antd/es/table';
+import type { TableColumnsType } from '@seakoi/console-kit';
 import { errorMessage } from '../../api/client';
 import type { AuditLog } from '../../api/audit';
 import { listAuditLogs } from '../../api/audit';
@@ -72,7 +72,7 @@ export function AuditLogsPage(): JSX.Element {
     };
   }, [page, pageSize, applied, version]);
 
-  const columns: ColumnsType<AuditLog> = [
+  const columns: TableColumnsType<AuditLog> = [
     {
       title: '时间',
       key: 'createdAt',

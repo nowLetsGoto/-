@@ -9,7 +9,7 @@
 import { useEffect, useState } from 'react';
 import type { MouseEvent } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import { QRCodeSVG } from 'qrcode.react';
+import { QRCode } from '@seakoi/console-kit';
 import type { Build } from '../../api/builds';
 import { getBuild, isShareableUrl } from '../../api/builds';
 import { ApiError, errorMessage } from '../../api/client';
@@ -181,13 +181,13 @@ export function DownloadPage(): JSX.Element {
         <div className="qrcode-box">
           {shareable ? (
             <>
-              <QRCodeSVG
+              <QRCode
                 value={build.downloadPageUrl}
                 size={208}
-                level="M"
-                marginSize={4}
+                errorLevel="M"
+                color="#0f2c36"
                 bgColor="#ffffff"
-                fgColor="#0f2c36"
+                bordered={false}
               />
               <p className="muted">扫码在手机上打开此页</p>
             </>

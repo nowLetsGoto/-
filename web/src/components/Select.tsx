@@ -6,7 +6,7 @@
  *       DataTable、DetailDrawer、ConfirmDialog 与 theme/antd.ts；
  *       本组件不取数、不持有业务状态、不拼接口 URL。
  */
-import { Select as AntSelect } from 'antd';
+import { Select as AntSelect } from '@seakoi/console-kit';
 import { useEffect, useState } from 'react';
 
 export interface SelectOption {

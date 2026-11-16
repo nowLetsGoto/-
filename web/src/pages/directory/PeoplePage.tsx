@@ -5,7 +5,7 @@
  * 边界：不拉团队或项目列表（那属于对应页面自己的事）、不内嵌表单。
  */
 import { Link, useNavigate } from 'react-router-dom';
-import type { ColumnsType } from 'antd/es/table';
+import type { TableColumnsType } from '@seakoi/console-kit';
 import type { Person } from '../../api/people';
 import { DataTable } from '../../components/DataTable';
 import { Empty, ErrorState } from '../../components/States';
@@ -17,7 +17,7 @@ export function PeoplePage(): JSX.Element {
   const { page, pageSize, change: changePage } = usePageState();
   const { items: people, total, loading, error, reload } = usePeoplePage(page, pageSize);
 
-  const columns: ColumnsType<Person> = [
+  const columns: TableColumnsType<Person> = [
     {
       title: '姓名',
       key: 'name',

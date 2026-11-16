@@ -13,14 +13,14 @@ Dandelion 是内部多环境 App 包分发平台：上传 `.apk` / `.ipa`，按�
 - `api/openapi.yaml` = 跨语言契约唯一事实来源。
 - `server/internal/repository/schema.sql` = DDL 唯一事实来源，编译进二进制，启动幂等执行。
 - 不新建第二套配置系统、第二套 HTTP 客户端、第二份权限目录。
-- **UI 组件首选 `@seakoi/console-kit`**；当前版本因发布入口缺陷只能谨慎使用，具体规则见 §6。
+- **UI 组件统一使用 `@seakoi/console-kit` 根入口命名导出**；禁止使用缺失 JS 的 `/antd` 子路径。
 
 ## 1. 技术栈与命令
 
 | 层 | 技术 |
 | --- | --- |
 | 后端 | Go 1.24、`net/http` + chi v5、pgx/v5、PostgreSQL 16 |
-| 前端 | React 18、TypeScript、Vite 5、原生 CSS 变量；组件库首选 `@seakoi/console-kit`，基础层暂用 Ant Design 5 |
+| 前端 | React 18、TypeScript、Vite 5、原生 CSS 变量；UI 组件统一来自 `@seakoi/console-kit` 根入口命名导出 |
 | 鉴权 | PBKDF2-HMAC-SHA256 密码、带版本与模式的 HMAC 无状态令牌 |
 | 构建 | 前端产物先写入 `server/public/`，再由 Go `//go:embed public/*` 打成单二进制 |
 
@@ -132,10 +132,11 @@ main.tsx（挂载） → App
 
 ## 6. UI 规范
 
-- **UI 组件库优先级**：`@seakoi/console-kit` 是首选；新增业务组件先查它是否已提供同名能力，有则优先用它，没有才自建。
-- 当前 `console-kit@0.5.16` 的实际限制：`./antd` 子入口在 npm 包中**只有 .d.ts、没有 JS**，Vite 无法解析；主入口可用但会静态带入 ahooks / corebox / TinyMCE 等业务组件依赖，业务 chunk 从 ~44KB 涨到 ~60KB(gzip)。因此现有四个薄封装（`DataTable` / `DetailDrawer` / `ConfirmDialog` / `Select`）与 `theme/antd.ts` 暂保留 `antd` 运行时导入。
-- **例外白名单**：`antd` 只允许出现在上述四个封装与 `theme/antd.ts`；业务页面既不直接 import antd，也不直接 import console-kit 的裸组件，统一经 `components/` 的封装使用。
-- 当 console-kit 提供可正常构建的按需子入口，或项目需要其业务组件（增强表格 / 筛选弹窗 / 文件上传等）并完成体积评估后，再按"新增适配封装 → 替换调用点 → 回归样式/交互"的顺序迁移，不整站一次性切换。
+- **UI 组件库统一从 `@seakoi/console-kit` 根入口的命名导出获取**，当前已覆盖 Table / Drawer / Modal / Select / ConfigProvider / zhCN / QRCode 及表格与主题类型。业务代码 **不直接 import `antd` 或 `qrcode.react`**。
+- `console-kit@0.5.16` 的 `./antd` 子入口在 npm 包中**只有 .d.ts、没有 JS**，Vite 无法解析；**禁止使用该子路径**。根入口可用，已通过 `vite.config.ts` 的 `manualChunks['console-kit']` 独立拆包，避免业务代码更新导致组件库重新下载。
+- `antd` 仅保留为 console-kit 的 peer 依赖与 Vite 的 chunk 名；新增组件一律先查 console-kit 根入口，没有合适能力才写自定义组件。
+- 业务页面不直接散用组件库裸控件：Table / Drawer / Modal / Select 仍经 `components/` 的四个封装使用，便于统一主题、空态、分页与安全交互；ConfigProvider / zhCN 只在 `main.tsx` 装配，ThemeConfig 只在 `theme/antd.ts` 映射。
+- 二维码统一用 console-kit 的 `QRCode`（`errorLevel` / `color` / `bgColor`），不再使用 `qrcode.react`。
 - 主题主色 `#0369a1`；改主色必须同步三处：`styles.css` 的 `:root`、`pages/login/login.css` 的 `--login-*`、`theme/antd.ts` 的 palette（antd CSS-in-JS 读不到 CSS 变量）。
 - 主色用于可点击/强调文字；不默认加下划线，悬停时加深并显示下划线。高危操作使用琥珀色，不与主色混淆。
 - 列表默认服务端分页；空列表交给空态卡片，不挂分页条。数据量少的列表也常驻分页条，避免误以为"不支持分页"。
@@ -155,7 +156,7 @@ main.tsx（挂载） → App
 | 新增项目内板块 | 后端按层建同名功能目录；前端 `navigation.ts` 加 `scope:'project'` 项；`App.tsx` 加到 `/p/:key/*` 下；接口带 `project` |
 | 新增一级菜单 | `navigation.ts` 加分组/项；`pages/` 新建同名目录；`App.tsx` 加路由；后端权限点同步 |
 | 改权限 | `contract.Permissions` → 内置角色默认权限 → 前端权限文案 → 接口上的 `RequirePermission` → 测试 |
-| 引入 UI 组件 | 先查 `@seakoi/console-kit` 是否提供；有则新增 `components/` 适配封装，禁止业务页直接引入；用 `npm run build` 对比 chunk，若主入口带来明显膨胀则记录原因并暂缓 |
+| 引入 UI 组件 | 从 `@seakoi/console-kit` 根入口按命名导出引入；通用控件放进 `components/` 封装，页面不散用裸控件；禁止直接 import antd / qrcode.react |
 | 改登录/令牌 | `handler/login`、`service/login`、`middleware/login`、`api/session.ts`、OpenAPI；改载荷格式会让旧令牌失效，需明确告知用户重新登录 |
 
 ## 8. 提交前自检
@@ -174,7 +175,7 @@ make build
 - [ ] handler 无 SQL、repository 无业务、service 无 HTTP、components 无 fetch、pages 无互引。
 - [ ] 新增接口已注册路由、鉴权中间件和权限点，不只是写了 handler。
 - [ ] 新增列表明确是服务端分页还是前端分页，分页参数已进 URL。
-- [ ] 新增 UI 已优先检查 `@seakoi/console-kit`；若未使用，已在代码注释或 PR 中说明原因（入口缺陷 / 体积 / 样式不兼容）。
+- [ ] 新增 UI 来自 `@seakoi/console-kit` 根入口；没有直接 import antd 或 qrcode.react，也没有使用失效的 `/antd` 子路径。
 - [ ] 新增文件有"职责 / 输入 / 输出 / 边界"中文注释。
 - [ ] 没有新占位代码、重复实现、第二份权限目录或第二处 URL 拼接。
 - [ ] 危险操作有确认与影响面说明；审计记录写入正确。

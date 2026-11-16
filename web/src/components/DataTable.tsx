@@ -6,8 +6,8 @@
  * 边界：**业务页面不得直接 import antd 的 Table**——antd 只出现在本文件与 theme/antd.ts，
  *       将来换组件库或调整表格外观，只改这两处。
  */
-import { Table } from 'antd';
-import type { ColumnsType } from 'antd/es/table';
+import { Table } from '@seakoi/console-kit';
+import type { TableColumnsType } from '@seakoi/console-kit';
 import type { ReactNode } from 'react';
 import { Empty } from './States';
 
@@ -22,7 +22,7 @@ interface ServerPagination {
 }
 
 interface DataTableProps<T> {
-  columns: ColumnsType<T>;
+  columns: TableColumnsType<T>;
   dataSource: T[];
   /** 用记录 id 做 key，避免 React 列表复用错行 */
   rowKey: (row: T) => string;

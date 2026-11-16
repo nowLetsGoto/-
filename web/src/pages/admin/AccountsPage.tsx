@@ -6,7 +6,7 @@
  */
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import type { ColumnsType } from 'antd/es/table';
+import type { TableColumnsType } from '@seakoi/console-kit';
 import { errorMessage } from '../../api/client';
 import type { User } from '../../api/users';
 import { listUsers, resetUserPassword, setUserStatus } from '../../api/users';
@@ -93,7 +93,7 @@ export function AccountsPage(): JSX.Element {
     }
   };
 
-  const columns: ColumnsType<User> = [
+  const columns: TableColumnsType<User> = [
     {
       title: '账号',
       key: 'username',

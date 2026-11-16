@@ -7,7 +7,7 @@
  */
 import { useEffect, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
-import type { ColumnsType } from 'antd/es/table';
+import type { TableColumnsType } from '@seakoi/console-kit';
 import type { Build, ListBuildsResult, Platform } from '../../api/builds';
 import { listBuilds } from '../../api/builds';
 import { errorMessage } from '../../api/client';
@@ -81,7 +81,7 @@ export function PackagesPage(): JSX.Element {
   // 空结果且没有任何筛选时，工具栏没有意义，一并隐藏。
   const showToolbar = state.loading || items.length > 0 || platform !== ALL_PLATFORMS;
 
-  const columns: ColumnsType<Build> = [
+  const columns: TableColumnsType<Build> = [
     {
       title: '应用',
       key: 'app',

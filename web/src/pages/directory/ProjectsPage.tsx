@@ -6,7 +6,7 @@
  */
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import type { ColumnsType } from 'antd/es/table';
+import type { TableColumnsType } from '@seakoi/console-kit';
 import type { Project } from '../../api/projects';
 import { DataTable } from '../../components/DataTable';
 import { Empty, ErrorState } from '../../components/States';
@@ -22,7 +22,7 @@ export function ProjectsPage(): JSX.Element {
   // 详情改用抽屉：null 表示关闭，字符串表示正在看哪个项目。
   const [detailKey, setDetailKey] = useState<string | null>(null);
 
-  const columns: ColumnsType<Project> = [
+  const columns: TableColumnsType<Project> = [
     {
       title: '项目名称',
       key: 'name',

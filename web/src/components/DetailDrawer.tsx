@@ -5,7 +5,7 @@
  * 边界：**业务页面不得直接 import antd 的 Drawer**——与 DataTable 同理，
  *       antd 只出现在 components 下的封装里，换库时只改这里。
  */
-import { Drawer } from 'antd';
+import { Drawer } from '@seakoi/console-kit';
 import type { ReactNode } from 'react';
 
 interface DetailDrawerProps {

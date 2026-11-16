@@ -6,7 +6,7 @@
  */
 import { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import type { ColumnsType } from 'antd/es/table';
+import type { TableColumnsType } from '@seakoi/console-kit';
 import { errorMessage } from '../../api/client';
 import type { Role } from '../../api/roles';
 import { listRoles } from '../../api/roles';
@@ -45,7 +45,7 @@ export function RolesPage(): JSX.Element {
     };
   }, [version]);
 
-  const columns: ColumnsType<Role> = [
+  const columns: TableColumnsType<Role> = [
     {
       title: '角色名称',
       key: 'name',

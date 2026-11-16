@@ -5,7 +5,7 @@
  * 输出：居中弹窗。
  * 边界：**业务页面不得直接 import antd 的 Modal**——与 DataTable、DetailDrawer 同理。
  */
-import { Modal } from 'antd';
+import { Modal } from '@seakoi/console-kit';
 import type { ReactNode } from 'react';
 
 interface ConfirmDialogProps {
