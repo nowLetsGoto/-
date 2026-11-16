@@ -10,11 +10,28 @@
     "gen:api": "openapi-typescript ../api/openapi.yaml -o src/api/schema.d.ts"
   },
   "dependencies": {
+    "@ant-design/icons": "^5.6.1",
+    "@kwayteow/utils": "^0.7.0",
+    "@seakoi/console-kit": "^0.5.16",
+    "@seakoi/corebox": "^0.0.10",
+    "@tinymce/tinymce-react": "^6.3.1",
+    "ahooks": "^3.11.0",
     "antd": "^5.29.3",
+    "axios": "^1.21.1",
+    "bignumber.js": "^11.1.5",
+    "classnames": "^2.5.1",
+    "dayjs": "^1.11.23",
+    "highlight.js": "^11.12.0",
+    "keepalive-for-react": "^2.0.18",
+    "ky": "^1.14.3",
+    "lodash-es": "^4.18.1",
     "qrcode.react": "^4.2.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
-    "react-router-dom": "^6.26.0"
+    "react-error-boundary": "^6.1.6",
+    "react-router-dom": "^6.26.0",
+    "tailwind-merge": "^3.7.0",
+    "ua-parser-js": "^2.0.10"
   },
   "devDependencies": {
     "@types/react": "^18.3.0",

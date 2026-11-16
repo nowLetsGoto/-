@@ -1260,9 +1260,9 @@ components:
 
     ProjectInput:
       type: object
-      description: 新建 / 编辑项目请求，恰好 4 个字段；编辑时 key 被忽略
+      description: 新建 / 编辑项目请求；编辑时 key 被忽略
       additionalProperties: false
-      required: [key, name]
+      required: [key, name, description, repoUrl, roleKey]
       properties:
         key:
           type: string

@@ -35,13 +35,15 @@
 | --- | --- | --- | --- |
 | `api/` | HTTP 出入口与契约类型消费 | `client.ts`、`builds.ts`、`projects.ts`、`people.ts`、`teams.ts`、`me.ts`、`users.ts`（超管账号）、`audit.ts`（审计查询）、`roles.ts`（角色与权限目录）、`auth.ts`、`session.ts`、`settings.ts`、`schema.d.ts`（生成物） | `client.ts` 是**唯一** `fetch` 封装（解包、附带 Bearer、401 统一回登录页）；每个业务模块一份接口文件，是 URL 的**唯一**消费处；`session.ts` 是 localStorage 的**唯一**读写处；`schema.d.ts` 由 `make gen:api` 生成，**禁止手改** |
 | `hooks/` | 跨页面复用的状态逻辑 | `useEnvironment.ts`、`useAllBuilds.ts`、`useProjects.ts`（`useProjects` 全量 + `useProjectsPage` 分页，`useProjectKey` 不取数）、`useDirectory.ts`（`usePeoplePage` / `useTeamsPage` 分页 + `useAllPeople` / `useAllTeams` 全量选项）、`usePageState.ts`（分页参数放 URL）、`useMe.ts` | 不渲染 UI、不写业务文案；每份数据只有**一处**模块级缓存；**列表页只能挂自己的那个 hook**，不要为了显示关联名字去挂别人的列表 |
-| `components/` | 无业务领域知识、可跨页面复用的 UI | `Layout.tsx`、`Sidebar.tsx`、`Topbar.tsx`、`ProjectGate.tsx`、`ProjectSelect.tsx`、`MultiSelect.tsx`、`FormPage.tsx`、**`DataTable.tsx`**（antd Table 的唯一封装）、**`DetailDrawer.tsx`**（antd Drawer 的唯一封装）、**`ConfirmDialog.tsx`**（antd Modal 的唯一封装）、`AdminGate.tsx`（超管专区守卫）、`States.tsx`、`FileDropzone.tsx`、`icons.tsx`、`navigation.ts` | **不发起请求**、不 import `api/`、不持有页面级状态、不写死某业务字段；**`antd` 只允许出现在 `DataTable.tsx`、`DetailDrawer.tsx`、`ConfirmDialog.tsx` 与 `theme/antd.ts`**，业务页面不得直接 import antd 组件 |
-| `pages/` | 路由级页面：**目录 = 一级菜单**，自己取数、管加载/错误/空态 | `overview/OverviewPage.tsx`；`distribution/`（`PackagesPage` / `UploadPage` / `AppsPage`）；`directory/`（`PeoplePage` / `PersonFormPage` / `TeamsPage` / `TeamFormPage` / `ProjectsPage` / `ProjectFormPage` / `ProjectDetailPage`）；`platform/SettingsPage.tsx`；`login/`（自持样式）；`public/DownloadPage.tsx`（公开下载页，不属于任何菜单） | **页面之间禁止互相 import**；页面**只能**通过 `api/` 取数，不直接 `fetch`；**不拼接口 URL 字符串**；列表页只读、表单页独立路由（`/new`、`/:id/edit`）；**新增一级菜单 = 新建同名目录**，不要再把页面堆回 `pages/` 根下 |
+| `components/` | 无业务领域知识、可跨页面复用的 UI | `Layout.tsx`、`Sidebar.tsx`、`Topbar.tsx`、`ProjectGate.tsx`、`ProjectSelect.tsx`、`MultiSelect.tsx`、`FormPage.tsx`、**`DataTable.tsx`**（antd Table 的唯一封装）、**`DetailDrawer.tsx`**（antd Drawer 的唯一封装）、**`ConfirmDialog.tsx`**（antd Modal 的唯一封装）、**`Select.tsx`**（antd Select 的唯一封装）、`AdminGate.tsx`（超管专区守卫）、`States.tsx`、`FileDropzone.tsx`、`icons.tsx`、`navigation.ts` | **不发起请求**、不 import `api/`、不持有页面级状态、不写死某业务字段；**`antd` 只允许出现在 `DataTable.tsx`、`DetailDrawer.tsx`、`ConfirmDialog.tsx`、`Select.tsx` 与 `theme/antd.ts`**，业务页面不得直接 import antd 组件 |
+| `pages/` | 路由级页面：**目录 = 一级菜单**，自己取数、管加载/错误/空态 | `overview/OverviewPage.tsx`；`distribution/`（`PackagesPage` / `UploadPage` / `AppsPage`）；`directory/`（`PeoplePage` / `PersonFormPage` / `TeamsPage` / `TeamFormPage` / `ProjectsPage` / `ProjectFormPage` / `ProjectDetailDrawer` / `RolesPage` / `RoleFormPage`）；`platform/SettingsPage.tsx`；`admin/`（账号管理/审计日志）；`login/`（自持样式）；`public/DownloadPage.tsx`（公开下载页，不属于任何菜单） | **页面之间禁止互相 import**；页面**只能**通过 `api/` 取数，不直接 `fetch`；**不拼接口 URL 字符串**；列表页只读、表单页独立路由（`/new`、`/:id/edit`）；**新增一级菜单 = 新建同名目录**，不要再把页面堆回 `pages/` 根下 |
 | `theme/` | 第三方组件库的主题映射 | `antd.ts`（token 对齐 CSS 变量） | 只声明 token，不改组件行为；主色改动需与 `styles.css` 的 `:root` 同步 |
 | `utils/` | 纯函数工具 | `format.ts`（字节/时间/标签） | **无副作用、无 React 依赖、不 import 任何 `api/`/`pages/`/`components/`**；有状态或依赖浏览器 API 的逻辑不放这里 |
 | `App.tsx` | 路由表 + 全局 Layout 包裹 | — | 不放数据获取、不放业务判断 |
 | `main.tsx` | 挂载入口 + 全局样式引入 | — | 不放业务逻辑 |
 | `styles.css` | 唯一样式来源（CSS 变量 + 组件类 + 断点） | — | 不引入组件库/原子化框架 |
+
+**前端 UI 组件库优先级**：新增 UI 先查 `@seakoi/console-kit`；当前 `0.5.16` 的 `./antd` 子入口缺 JS、主入口体积较大，故现有 `DataTable` / `DetailDrawer` / `ConfirmDialog` / `Select` 仍以 `antd` 作基础实现。业务页面既不直接 import antd，也不直接 import console-kit 裸组件，统一经 `components/` 封装；迁移前必须做构建体积与视觉回归。
 
 **前端五条硬约束**：① 页面互不 import；② 组件内无 `fetch`；③ 页面不拼 URL；④ 页面级私有子组件留在该页面文件内，**不进** `components/`（进 `components/` 的前提是「至少两个页面会用」）；⑤ 全局环境只能经 `useEnvironment` 读写 URL，页面不得自己再存一份。
 
@@ -68,7 +70,7 @@
 | `internal/service/webhook/` | Webhook 投递：按配置挑字段、HMAC 签名、POST；另提供同步测试投递 | 配置、`contract.Build` | 投递结果 / 日志 | 不写库、不重试、不在失败时影响发布主流程 |
 | **`internal/{handler,service,repository}/project/`** | 项目：`handler` 是 `/projects` 与 `/projects/{key}`、`service` 是 key 规范化 / 库地址校验 / 详情组装、`repository` 是 projects 表与项目侧的两张关联表 | 请求、DB | `contract.Project` / `ProjectDetail` | 不改 `builds` 表结构；包的归属解析（key → project_id）在 `service/build_service.resolveProject`；**不含任何权限判断**（P2 才做） |
 | **`internal/{handler,service,repository}/audit/`** | 审计：`handler` 是 `/admin/audit-logs`（只读）、`service` 负责组装与容错、`repository` 只提供 INSERT 与分页查询 | 请求、DB | `contract.AuditLog` | **不提供 UPDATE / DELETE**；写失败只记日志、不回滚业务 |
-| `internal/middleware/authz/`（模式限制：团队专用 / 管理员单人可用）
+| `internal/middleware/authz/` | 权限与登录模式中间件 | `RequirePermission` / `RequireProjectPermission` / `RequireTeamMode` | 平台接口忽略 `?project=`；前端菜单只是投影，接口才守边界 |
 | `internal/authctx/` | 调用者身份在 context 里的存取 | ctx、`contract.Identity` | 写入/读取 | 单独成包是为**打断 import 环**（中间件用 `handler.WriteError`，handler 又要读身份）；不含任何判定逻辑 |
 | **`internal/{handler,service,repository}/role/`** | 角色与权限：`handler` 是 `/roles`（读全员、写超管）与 `/permissions` 目录、`service` 负责校验与内置角色播种、`repository` 是 roles + role_permissions | 请求、DB | `contract.Role` / `Permission` | 权限目录只写在 `contract.Permissions`，库里不重复定义；`super-admin` 权限不可改 |
 | **`internal/{handler,service,repository}/people/`** | 人员：`handler` 是 `/people` 与 `/me`、`service` 是字段校验与「当前登录人」投影、`repository` 是 people 表 + 人员侧的两张关联表 + 角色外键（`LEFT JOIN roles` 取角色名） | 请求、DB | `contract.Person` / `Me` | 只管人员这一侧；团队侧对 `team_members` 的写入在 `repository/teams`，两侧各自维护自己那一半 |

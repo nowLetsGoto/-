@@ -13,6 +13,7 @@ import type { Role } from '../../api/roles';
 import { listRoles } from '../../api/roles';
 import { errorMessage } from '../../api/client';
 import { FormPage } from '../../components/FormPage';
+import { Select } from '../../components/Select';
 import { ErrorState, Loading } from '../../components/States';
 import { invalidateProjects } from '../../hooks/useProjects';
 
@@ -165,18 +166,14 @@ export function ProjectFormPage(): JSX.Element {
         </label>
         <label className="field">
           <span>项目角色</span>
-          <select
-            className="select-input select-block"
+          <Select
             value={form.roleKey}
-            onChange={(event) => setForm({ ...form, roleKey: event.target.value })}
-          >
-            <option value="">沿用人员角色</option>
-            {roles.map((role) => (
-              <option key={role.key} value={role.key}>
-                {role.name}
-              </option>
-            ))}
-          </select>
+            options={[
+              { value: '', label: '沿用人员角色' },
+              ...roles.map((role) => ({ value: role.key, label: role.name })),
+            ]}
+            onChange={(roleKey) => setForm({ ...form, roleKey })}
+          />
         </label>
         <label className="field">
           <span>描述</span>

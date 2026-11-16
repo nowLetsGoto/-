@@ -559,16 +559,16 @@ export interface components {
             /** Format: date-time */
             createdAt: string;
         };
-        /** @description 新建 / 编辑项目请求，恰好 4 个字段；编辑时 key 被忽略 */
+        /** @description 新建 / 编辑项目请求；编辑时 key 被忽略 */
         ProjectInput: {
             /** @description 小写字母 / 数字 / 短横线，2-32 位，全仓唯一 */
             key: string;
             name: string;
-            description?: string;
+            description: string;
             /** @description http(s) 绝对地址；留空表示未填 */
-            repoUrl?: string;
+            repoUrl: string;
             /** @description 项目角色标识；留空表示沿用人员自身角色 */
-            roleKey?: string;
+            roleKey: string;
         };
         /** @description 项目详情 = 项目本身 + 关联的人员与团队（带名字） */
         ProjectDetail: {

@@ -13,6 +13,7 @@ import type { Role } from '../../api/roles';
 import { listRoles } from '../../api/roles';
 import { errorMessage } from '../../api/client';
 import { FormPage } from '../../components/FormPage';
+import { Select } from '../../components/Select';
 import { MultiSelect } from '../../components/MultiSelect';
 import { ErrorState, Loading } from '../../components/States';
 import { invalidateDirectory, useAllTeams } from '../../hooks/useDirectory';
@@ -206,18 +207,11 @@ export function PersonFormPage(): JSX.Element {
         </label>
         <label className="field">
           <span>角色</span>
-          <select
-            className="select-input select-block"
+          <Select
             value={form.roleKey}
-            onChange={(event) => setForm({ ...form, roleKey: event.target.value })}
-          >
-            <option value="">未分配</option>
-            {roles.map((role) => (
-              <option key={role.key} value={role.key}>
-                {role.name}
-              </option>
-            ))}
-          </select>
+            options={[{ value: '', label: '未分配' }, ...roles.map((role) => ({ value: role.key, label: role.name }))]}
+            onChange={(roleKey) => setForm({ ...form, roleKey })}
+          />
         </label>
       </div>
 
