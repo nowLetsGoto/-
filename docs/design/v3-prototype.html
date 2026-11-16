@@ -1,0 +1,1410 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Dandelion · 平台结构重设计 v3</title>
+<style>
+  /* ============================================================
+     Dandelion v3 设计稿 · 单文件原型
+     主题：浅色 + 青蓝（与登录页同一套 token）
+     说明：本文件只用于评审结构与视觉，不含业务逻辑。
+     ============================================================ */
+
+  :root {
+    --ink: #0f2c36;
+    --ink-2: #33525f;
+    --muted: #5b7884;
+    --faint: #7d97a2;
+    --line: #e3eef2;
+    --line-soft: #edf5f8;
+    --bg: #f6fafb;
+    --surface: #ffffff;
+    --surface-2: #fafdfe;
+    --primary: #0e7490;
+    --primary-strong: #0b5c73;
+    --primary-soft: #e4f3f8;
+    --accent: #22d3ee;
+    --ok: #127a5c;
+    --ok-soft: #e6f5ef;
+    --warn: #a45a0b;
+    --warn-soft: #fdf3e2;
+    --danger: #b42318;
+    --danger-soft: #fdf0ef;
+    --radius: 12px;
+    --radius-sm: 8px;
+    --shadow-sm: 0 1px 2px rgba(15, 44, 54, 0.05);
+    --shadow-md: 0 10px 28px rgba(15, 44, 54, 0.08);
+    --serif: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif;
+    --mono: "SF Mono", ui-monospace, Menlo, Consolas, monospace;
+  }
+
+  * { box-sizing: border-box; }
+
+  html, body { height: 100%; }
+
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", "Segoe UI", sans-serif;
+    font-size: 14px;
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  a { color: inherit; text-decoration: none; }
+  button { font-family: inherit; }
+  ul { margin: 0; padding: 0; list-style: none; }
+
+  /* 类选择器里的 display 会盖掉 UA 的 [hidden]，这里统一兜住 */
+  [hidden] { display: none !important; }
+
+  .sprite { position: absolute; width: 0; height: 0; overflow: hidden; }
+
+  .i {
+    width: 16px;
+    height: 16px;
+    flex: 0 0 16px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.7;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+
+  /* ================= 布局骨架 ================= */
+
+  .app {
+    display: grid;
+    grid-template-columns: 248px minmax(0, 1fr);
+    min-height: 100vh;
+  }
+
+  /* ================= 侧边栏 ================= */
+
+  .sidebar {
+    position: sticky;
+    top: 0;
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+    padding: 16px 12px 12px;
+    border-right: 1px solid var(--line);
+    background: linear-gradient(180deg, #f5fbfd 0%, #edf7fa 100%);
+  }
+
+  .brand {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 4px 8px 20px;
+  }
+
+  .brand-mark {
+    display: grid;
+    place-items: center;
+    width: 32px;
+    height: 32px;
+    border-radius: 9px;
+    background: var(--primary);
+    color: #f3fdff;
+    font: 600 16px/1 var(--serif);
+  }
+
+  .brand-name {
+    font-family: var(--serif);
+    font-size: 16px;
+    font-weight: 600;
+    letter-spacing: 0.01em;
+  }
+
+  .brand-sub {
+    color: var(--faint);
+    font-size: 11px;
+    letter-spacing: 0.08em;
+  }
+
+  .nav-label {
+    margin: 14px 10px 6px;
+    color: var(--faint);
+    font-size: 11px;
+    letter-spacing: 0.12em;
+  }
+
+  .nav-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex: 0 0 auto;
+    padding: 8px 10px;
+    margin-bottom: 2px;
+    border-radius: var(--radius-sm);
+    color: #41626e;
+    font-size: 13.5px;
+    white-space: nowrap;
+    transition: background-color 140ms ease, color 140ms ease;
+  }
+
+  .nav-item:hover { background: rgba(14, 116, 144, 0.06); color: var(--ink); }
+
+  .nav-item.is-active {
+    background: var(--primary-soft);
+    box-shadow: inset 2px 0 0 var(--primary);
+    color: var(--primary-strong);
+    font-weight: 600;
+  }
+
+  .nav-item[data-future] { color: var(--muted); }
+  .nav-item[data-future] .i { opacity: 0.75; }
+
+  .tag {
+    margin-left: auto;
+    padding: 1px 6px;
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    background: #fff;
+    color: var(--faint);
+    font-size: 10px;
+    font-weight: 500;
+    letter-spacing: 0.02em;
+  }
+
+  .sidebar-foot { margin-top: auto; padding-top: 14px; }
+
+  .switch {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 10px;
+    color: var(--faint);
+    font-size: 11.5px;
+    cursor: pointer;
+    user-select: none;
+  }
+
+  .switch input { accent-color: var(--primary); width: 13px; height: 13px; }
+
+  .user-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 6px;
+    padding: 8px 10px;
+    border-top: 1px solid var(--line);
+    font-size: 12.5px;
+    color: var(--muted);
+  }
+
+  .avatar {
+    display: grid;
+    place-items: center;
+    width: 24px;
+    height: 24px;
+    border-radius: 50%;
+    background: var(--primary-soft);
+    color: var(--primary-strong);
+    font-size: 11px;
+    font-weight: 700;
+  }
+
+  .link-quiet {
+    margin-left: auto;
+    border: none;
+    background: none;
+    color: var(--muted);
+    font-size: 12px;
+    cursor: pointer;
+    padding: 2px 4px;
+    border-radius: 4px;
+  }
+
+  .link-quiet:hover { color: var(--primary); background: rgba(14, 116, 144, 0.07); }
+
+  /* ================= 顶栏 ================= */
+
+  .main { min-width: 0; display: flex; flex-direction: column; }
+
+  .topbar {
+    position: sticky;
+    top: 0;
+    z-index: 20;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    height: 58px;
+    padding: 0 24px;
+    background: var(--surface);
+    border-bottom: 1px solid var(--line);
+  }
+
+  .crumbs { display: flex; align-items: center; gap: 7px; color: var(--muted); font-size: 13px; }
+  .crumbs b { color: var(--ink); font-weight: 600; }
+  .crumbs span { color: #c8dade; }
+
+  .env-switch {
+    display: inline-flex;
+    gap: 2px;
+    margin-left: 6px;
+    padding: 3px;
+    border-radius: 9px;
+    background: #f2f8fa;
+  }
+
+  .env-switch button {
+    padding: 4px 11px;
+    border: none;
+    border-radius: 6px;
+    background: transparent;
+    color: var(--muted);
+    font-size: 12.5px;
+    cursor: pointer;
+    transition: background-color 140ms ease, color 140ms ease;
+  }
+
+  .env-switch button:hover { color: var(--ink); }
+
+  .env-switch button.is-active {
+    background: #fff;
+    box-shadow: var(--shadow-sm);
+    color: var(--primary-strong);
+    font-weight: 600;
+  }
+
+  .topbar-right { display: flex; align-items: center; gap: 10px; margin-left: auto; }
+
+  .search {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    width: 230px;
+    height: 32px;
+    padding: 0 10px;
+    border: 1px solid var(--line);
+    border-radius: var(--radius-sm);
+    background: var(--surface-2);
+    color: var(--faint);
+  }
+
+  .search input {
+    width: 100%;
+    border: none;
+    outline: none;
+    background: transparent;
+    color: var(--ink);
+    font-family: inherit;
+    font-size: 13px;
+  }
+
+  .search input::placeholder { color: var(--faint); }
+
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    height: 32px;
+    padding: 0 12px;
+    border: 1px solid var(--line);
+    border-radius: var(--radius-sm);
+    background: var(--surface);
+    color: var(--ink-2);
+    font-size: 13px;
+    white-space: nowrap;
+    cursor: pointer;
+    transition: border-color 140ms ease, color 140ms ease, background-color 140ms ease;
+  }
+
+  .btn:hover { border-color: #bcd8e1; color: var(--ink); }
+
+  .btn-primary {
+    border-color: transparent;
+    background: var(--primary);
+    color: #f4fdff;
+    font-weight: 500;
+  }
+
+  .btn-primary:hover { background: var(--primary-strong); color: #fff; }
+
+  .btn-quiet { border-color: transparent; background: transparent; color: var(--muted); }
+  .btn-quiet:hover { background: #f1f8fa; color: var(--primary); }
+
+  .draft-pill {
+    padding: 2px 8px;
+    border: 1px dashed #bcd8e1;
+    border-radius: 999px;
+    color: #6d8b96;
+    font-size: 11px;
+    white-space: nowrap;
+    flex: 0 0 auto;
+  }
+
+  /* ================= 内容区 ================= */
+
+  .content { width: 100%; max-width: 1240px; padding: 22px 26px 56px; }
+
+  .view { display: none; }
+  .view.is-active { display: block; animation: rise 200ms cubic-bezier(0.22, 1, 0.36, 1); }
+
+  @keyframes rise {
+    from { opacity: 0; transform: translateY(6px); }
+    to { opacity: 1; transform: none; }
+  }
+
+  .page-head {
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 16px;
+    margin-bottom: 18px;
+  }
+
+  h1 { margin: 0; font-size: 22px; font-weight: 600; letter-spacing: 0.01em; }
+
+  .sub { margin: 5px 0 0; color: var(--muted); font-size: 13px; }
+
+  .head-actions { display: flex; align-items: center; gap: 8px; }
+
+  /* 统计条：一条通栏，用分隔线代替四张卡片 */
+  .stat-strip {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    margin-bottom: 16px;
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    background: var(--surface);
+    overflow: hidden;
+  }
+
+  .stat { padding: 14px 18px 16px; border-right: 1px solid var(--line-soft); }
+  .stat:last-child { border-right: none; }
+
+  .stat-label { display: block; color: var(--muted); font-size: 12px; }
+
+  .stat-line { display: flex; align-items: baseline; gap: 8px; margin-top: 4px; }
+
+  .stat-value {
+    font-size: 26px;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .delta { font-size: 11.5px; font-weight: 600; }
+  .delta.up { color: var(--ok); }
+  .delta.flat { color: var(--muted); }
+  .delta.warn { color: var(--warn); }
+
+  .stat-note { color: var(--faint); font-size: 11.5px; }
+
+  /* 卡片 */
+  .card {
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    background: var(--surface);
+  }
+
+  .card-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 13px 16px;
+    border-bottom: 1px solid var(--line-soft);
+  }
+
+  .card-title { font-size: 13.5px; font-weight: 600; }
+  .card-hint { color: var(--faint); font-size: 11.5px; }
+
+  .grid-2 {
+    display: grid;
+    grid-template-columns: minmax(0, 1.65fr) minmax(0, 1fr);
+    gap: 16px;
+    margin-bottom: 16px;
+  }
+
+  /* 最近发布 */
+  .feed { padding: 4px 0; }
+
+  .feed-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 16px;
+    border-bottom: 1px solid var(--line-soft);
+  }
+
+  .feed-row:last-child { border-bottom: none; }
+
+  .app-mark {
+    display: grid;
+    place-items: center;
+    width: 28px;
+    height: 28px;
+    border-radius: 8px;
+    background: var(--primary-soft);
+    color: var(--primary-strong);
+    font-size: 12px;
+    font-weight: 700;
+    flex: 0 0 28px;
+  }
+
+  .feed-main { min-width: 0; }
+  .feed-name { font-size: 13px; font-weight: 600; }
+  .feed-meta { color: var(--muted); font-size: 11.5px; }
+
+  .feed-right { margin-left: auto; text-align: right; }
+  .feed-time { color: var(--faint); font-size: 11.5px; }
+
+  /* 环境分布 */
+  .dist { padding: 8px 16px 14px; }
+
+  .dist-row { display: flex; align-items: center; gap: 10px; padding: 7px 0; }
+
+  .dist-name { width: 62px; color: var(--ink-2); font-size: 12.5px; flex: 0 0 62px; }
+
+  .track {
+    position: relative;
+    flex: 1;
+    height: 6px;
+    border-radius: 999px;
+    background: #eef6f9;
+    overflow: hidden;
+  }
+
+  .track i {
+    position: absolute;
+    inset: 0 auto 0 0;
+    border-radius: 999px;
+    background: linear-gradient(90deg, #7fc9dd, var(--primary));
+  }
+
+  .dist-count {
+    width: 26px;
+    text-align: right;
+    color: var(--ink-2);
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* 环境矩阵 */
+  .matrix { width: 100%; border-collapse: collapse; }
+
+  .matrix th {
+    padding: 9px 14px;
+    border-bottom: 1px solid var(--line-soft);
+    color: var(--faint);
+    font-size: 11.5px;
+    font-weight: 500;
+    text-align: left;
+    white-space: nowrap;
+  }
+
+  .matrix td {
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--line-soft);
+    font-size: 12.5px;
+    vertical-align: middle;
+    white-space: nowrap;
+  }
+
+  .matrix tr:last-child td { border-bottom: none; }
+  .matrix tbody tr:hover { background: var(--surface-2); }
+
+  .ver { font-weight: 600; font-variant-numeric: tabular-nums; }
+
+  .dot {
+    display: inline-block;
+    width: 6px;
+    height: 6px;
+    margin-right: 6px;
+    border-radius: 50%;
+    vertical-align: 1px;
+  }
+
+  .dot.ok { background: var(--ok); }
+  .dot.warn { background: #d0871c; }
+  .dot.idle { background: #c6d8de; }
+  .dot.info { background: var(--primary); }
+
+  /* ================= 工具栏 + 表格 ================= */
+
+  .toolbar {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--line-soft);
+    flex-wrap: wrap;
+  }
+
+  .segment {
+    display: inline-flex;
+    gap: 2px;
+    padding: 3px;
+    border-radius: 8px;
+    background: #f2f8fa;
+  }
+
+  .segment button {
+    padding: 4px 10px;
+    border: none;
+    border-radius: 6px;
+    background: transparent;
+    color: var(--muted);
+    font-size: 12.5px;
+    cursor: pointer;
+  }
+
+  .segment button.is-active {
+    background: #fff;
+    box-shadow: var(--shadow-sm);
+    color: var(--primary-strong);
+    font-weight: 600;
+  }
+
+  .toolbar-spacer { margin-left: auto; }
+
+  .table-wrap { overflow-x: auto; }
+
+  table.data { width: 100%; border-collapse: collapse; min-width: 820px; }
+
+  table.data th {
+    padding: 0 14px;
+    height: 36px;
+    border-bottom: 1px solid var(--line-soft);
+    background: var(--surface-2);
+    color: var(--faint);
+    font-size: 11.5px;
+    font-weight: 500;
+    text-align: left;
+    white-space: nowrap;
+  }
+
+  table.data td {
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--line-soft);
+    font-size: 12.5px;
+    vertical-align: middle;
+    white-space: nowrap;
+  }
+
+  table.data tbody tr:last-child td { border-bottom: none; }
+  table.data tbody tr:hover { background: var(--surface-2); }
+
+  .cell-app { display: flex; align-items: center; gap: 10px; }
+  .cell-name { font-size: 13px; font-weight: 600; }
+  .cell-sub { color: var(--faint); font-size: 11px; font-family: var(--mono); }
+
+  .num { font-variant-numeric: tabular-nums; }
+
+  .pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 2px 8px;
+    border-radius: 999px;
+    font-size: 11.5px;
+    font-weight: 500;
+  }
+
+  .pill-env { background: var(--primary-soft); color: var(--primary-strong); }
+  .pill-os { background: #f1f5f7; color: var(--ink-2); }
+  .pill-ok { background: var(--ok-soft); color: var(--ok); }
+  .pill-warn { background: var(--warn-soft); color: var(--warn); }
+  .pill-danger { background: var(--danger-soft); color: var(--danger); }
+
+  /* 空状态：不是一句"暂无数据"，而是给出下一步 */
+  .empty {
+    display: grid;
+    justify-items: center;
+    gap: 6px;
+    padding: 52px 24px 56px;
+    text-align: center;
+  }
+
+  .empty-art { color: #bfdae3; margin-bottom: 6px; }
+  .empty-title { font-size: 15px; font-weight: 600; }
+
+  .empty-desc {
+    max-width: 34em;
+    margin: 0;
+    color: var(--muted);
+    font-size: 12.5px;
+    line-height: 1.75;
+  }
+
+  .empty-actions { display: flex; gap: 8px; margin-top: 12px; }
+
+  /* ================= 热更新（规划板块） ================= */
+
+  .banner {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 16px;
+    padding: 10px 14px;
+    border: 1px dashed #bcd8e1;
+    border-radius: 10px;
+    background: #f4fbfd;
+    color: #46697a;
+    font-size: 12.5px;
+  }
+
+  .banner b { color: var(--primary-strong); }
+
+  .hx { padding: 14px 16px 16px; margin-bottom: 12px; }
+
+  .hx-head { display: flex; align-items: center; gap: 10px; }
+  .hx-title { font-size: 13.5px; font-weight: 600; }
+  .hx-sub { color: var(--muted); font-size: 11.5px; }
+  .hx-actions { margin-left: auto; display: flex; gap: 6px; }
+
+  .hx-flow {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin: 14px 0 12px;
+    padding: 10px 12px;
+    border-radius: 9px;
+    background: var(--surface-2);
+    font-size: 12px;
+    color: var(--muted);
+    flex-wrap: wrap;
+  }
+
+  .hx-node {
+    padding: 3px 9px;
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    background: #fff;
+    color: var(--ink-2);
+    font-family: var(--mono);
+    font-size: 11.5px;
+  }
+
+  .arrow { color: #b7d2dc; }
+
+  .rollout { display: flex; align-items: center; gap: 10px; }
+  .rollout .track { height: 8px; }
+  .rollout-label { font-size: 11.5px; color: var(--muted); width: 34px; text-align: right; flex: 0 0 34px; }
+
+  /* ================= 应用 ================= */
+
+  .apps-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(268px, 1fr));
+    gap: 14px;
+  }
+
+  .app-card { padding: 16px; transition: box-shadow 160ms ease, border-color 160ms ease, transform 160ms ease; }
+  .app-card:hover { border-color: #c4dde6; box-shadow: var(--shadow-md); transform: translateY(-2px); }
+
+  .app-card-head { display: flex; align-items: center; gap: 10px; }
+
+  .app-icon {
+    display: grid;
+    place-items: center;
+    width: 36px;
+    height: 36px;
+    border-radius: 10px;
+    background: linear-gradient(140deg, #d8eef5, #eaf7fa);
+    color: var(--primary-strong);
+    font-size: 14px;
+    font-weight: 700;
+  }
+
+  .app-name { font-size: 13.5px; font-weight: 600; }
+  .app-pkg { color: var(--faint); font-size: 11px; font-family: var(--mono); }
+
+  .app-rows { margin-top: 12px; display: grid; gap: 6px; }
+  .app-row { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--muted); }
+  .app-row b { color: var(--ink-2); font-weight: 600; margin-left: auto; font-variant-numeric: tabular-nums; }
+
+  .app-tags { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 12px; }
+
+  /* ================= 响应式 ================= */
+
+  @media (max-width: 1080px) {
+    .grid-2 { grid-template-columns: 1fr; }
+    .stat-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .stat:nth-child(2) { border-right: none; }
+    .stat:nth-child(1), .stat:nth-child(2) { border-bottom: 1px solid var(--line-soft); }
+  }
+
+  @media (max-width: 900px) {
+    .app { grid-template-columns: 1fr; }
+
+    .sidebar {
+      position: sticky;
+      z-index: 30;
+      height: auto;
+      padding: 10px 14px;
+      border-right: none;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .brand { padding: 0 0 8px; }
+    .brand-sub, .nav-label, .sidebar-foot { display: none; }
+
+    .nav { display: flex; gap: 4px; overflow-x: auto; }
+    .nav-item { padding: 6px 10px; margin: 0; }
+    .nav-item.is-active { box-shadow: inset 0 -2px 0 var(--primary); }
+    .tag { display: none; }
+
+    .topbar { height: auto; flex-wrap: wrap; gap: 10px; padding: 10px 16px; }
+    .crumbs { display: none; }
+    .search { width: 100%; }
+    .draft-pill { display: none; }
+    .topbar-right { width: 100%; margin-left: 0; }
+    .content { padding: 16px 16px 40px; }
+    .env-switch { margin-left: 0; }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    * { animation: none !important; transition: none !important; }
+  }
+</style>
+</head>
+<body>
+
+<svg class="sprite" aria-hidden="true">
+  <defs>
+    <symbol id="i-grid" viewBox="0 0 24 24"><rect x="4" y="4" width="7" height="7" rx="1.5"/><rect x="13" y="4" width="7" height="7" rx="1.5"/><rect x="4" y="13" width="7" height="7" rx="1.5"/><rect x="13" y="13" width="7" height="7" rx="1.5"/></symbol>
+    <symbol id="i-box" viewBox="0 0 24 24"><path d="M12 3 20 7v10l-8 4-8-4V7z"/><path d="M4 7l8 4 8-4M12 11v10"/></symbol>
+    <symbol id="i-zap" viewBox="0 0 24 24"><path d="M13 3 5 14h5l-1 7 8-11h-5z"/></symbol>
+    <symbol id="i-layers" viewBox="0 0 24 24"><path d="M12 3 3 8l9 5 9-5z"/><path d="M3 13l9 5 9-5"/></symbol>
+    <symbol id="i-users" viewBox="0 0 24 24"><circle cx="9" cy="8" r="3.2"/><path d="M3.5 20c0-3 2.5-5 5.5-5s5.5 2 5.5 5"/><path d="M16 5.6A3 3 0 0 1 16 14"/></symbol>
+    <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"/><path d="m16 16 4 4"/></symbol>
+    <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+    <symbol id="i-download" viewBox="0 0 24 24"><path d="M12 4v11m0 0 4-4m-4 4-4-4"/><path d="M4 19h16"/></symbol>
+    <symbol id="i-more" viewBox="0 0 24 24"><circle cx="6" cy="12" r="1.3" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1.3" fill="currentColor" stroke="none"/><circle cx="18" cy="12" r="1.3" fill="currentColor" stroke="none"/></symbol>
+    <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 11v6"/><circle cx="12" cy="7.8" r=".9" fill="currentColor" stroke="none"/></symbol>
+  </defs>
+</svg>
+
+<div class="app">
+  <!-- ============ 侧边栏：板块 ============ -->
+  <aside class="sidebar">
+    <div class="brand">
+      <span class="brand-mark">D</span>
+      <div>
+        <div class="brand-name">Dandelion</div>
+        <div class="brand-sub">研发交付平台</div>
+      </div>
+    </div>
+
+    <nav class="nav" aria-label="主导航">
+      <p class="nav-label">总览</p>
+      <a class="nav-item is-active" href="#/overview"><svg class="i"><use href="#i-grid"/></svg>概览</a>
+
+      <p class="nav-label">分发</p>
+      <a class="nav-item" href="#/packages"><svg class="i"><use href="#i-box"/></svg>应用包</a>
+      <a class="nav-item" href="#/hotfix" data-future><svg class="i"><use href="#i-zap"/></svg>热更新<span class="tag">规划中</span></a>
+
+      <p class="nav-label">管理</p>
+      <a class="nav-item" href="#/apps"><svg class="i"><use href="#i-layers"/></svg>应用</a>
+      <a class="nav-item" href="#/members" data-future><svg class="i"><use href="#i-users"/></svg>成员与权限<span class="tag">规划中</span></a>
+    </nav>
+
+    <div class="sidebar-foot">
+      <label class="switch">
+        <input type="checkbox" id="future-toggle" checked />
+        显示规划中的板块
+      </label>
+      <div class="user-row">
+        <span class="avatar">A</span>
+        admin
+        <button class="link-quiet" type="button">退出</button>
+      </div>
+    </div>
+  </aside>
+
+  <div class="main">
+    <!-- ============ 顶栏：全局维度 ============ -->
+    <header class="topbar">
+      <div class="crumbs"><span id="crumb-board">概览</span><span>/</span><b id="crumb-env">生产</b></div>
+
+      <div class="env-switch" role="group" aria-label="环境">
+        <button type="button">测试</button>
+        <button type="button">紧急修复</button>
+        <button type="button">预发</button>
+        <button type="button" class="is-active">生产</button>
+      </div>
+
+      <div class="topbar-right">
+        <label class="search">
+          <svg class="i"><use href="#i-search"/></svg>
+          <input type="search" placeholder="搜索应用、包名、版本…" />
+        </label>
+        <span class="draft-pill">设计稿 v3</span>
+        <button class="btn btn-primary" type="button"><svg class="i"><use href="#i-plus"/></svg>上传包</button>
+      </div>
+    </header>
+
+    <div class="content">
+
+      <!-- ==================== 概览 ==================== -->
+      <section class="view is-active" id="view-overview">
+        <div class="page-head">
+          <div>
+            <h1>概览</h1>
+            <p class="sub"><span class="env-word">生产</span>环境 · 2026-11-16 周一 · 最近 7 天</p>
+          </div>
+          <div class="head-actions">
+            <button class="btn" type="button">导出周报</button>
+          </div>
+        </div>
+
+        <div class="stat-strip">
+          <div class="stat">
+            <span class="stat-label">本周发布</span>
+            <div class="stat-line"><span class="stat-value">12</span><span class="delta up">+4</span></div>
+            <span class="stat-note">Android 7 · iOS 5</span>
+          </div>
+          <div class="stat">
+            <span class="stat-label">覆盖应用</span>
+            <div class="stat-line"><span class="stat-value">6</span><span class="delta flat">持平</span></div>
+            <span class="stat-note">全部已接入四环境</span>
+          </div>
+          <div class="stat">
+            <span class="stat-label">下载总量</span>
+            <div class="stat-line"><span class="stat-value">1,284</span><span class="delta up">+18.2%</span></div>
+            <span class="stat-note">生产环境累计</span>
+          </div>
+          <div class="stat">
+            <span class="stat-label">待处理</span>
+            <div class="stat-line"><span class="stat-value">2</span><span class="delta warn">需关注</span></div>
+            <span class="stat-note">1 个灰度观察 · 1 个解析告警</span>
+          </div>
+        </div>
+
+        <div class="grid-2">
+          <div class="card">
+            <div class="card-head">
+              <span class="card-title">最近发布</span>
+              <a class="card-hint" href="#/packages">查看全部 →</a>
+            </div>
+            <div class="feed">
+              <div class="feed-row">
+                <span class="app-mark">商</span>
+                <div class="feed-main">
+                  <div class="feed-name">商城 App · 1.4.2 (142)</div>
+                  <div class="feed-meta"><span class="pill pill-os">Android</span> 38.2 MB</div>
+                </div>
+                <div class="feed-right"><div class="feed-time">今天 10:24</div></div>
+              </div>
+              <div class="feed-row">
+                <span class="app-mark">商</span>
+                <div class="feed-main">
+                  <div class="feed-name">商城 App · 1.4.2 (91)</div>
+                  <div class="feed-meta"><span class="pill pill-os">iOS</span> 42.6 MB</div>
+                </div>
+                <div class="feed-right"><div class="feed-time">今天 09:58</div></div>
+              </div>
+              <div class="feed-row">
+                <span class="app-mark">巡</span>
+                <div class="feed-main">
+                  <div class="feed-name">巡检助手 · 2.1.0 (35)</div>
+                  <div class="feed-meta"><span class="pill pill-os">Android</span> 21.4 MB</div>
+                </div>
+                <div class="feed-right"><div class="feed-time">昨天 17:12</div></div>
+              </div>
+              <div class="feed-row">
+                <span class="app-mark">工</span>
+                <div class="feed-main">
+                  <div class="feed-name">工单系统 · 1.2.6 (18)</div>
+                  <div class="feed-meta"><span class="pill pill-os">Android</span> 18.9 MB</div>
+                </div>
+                <div class="feed-right"><div class="feed-time">11-14 15:40</div></div>
+              </div>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-head">
+              <span class="card-title">包分布</span>
+              <span class="card-hint">按环境</span>
+            </div>
+            <div class="dist">
+              <div class="dist-row"><span class="dist-name">测试</span><span class="track"><i style="width:82%"></i></span><span class="dist-count">18</span></div>
+              <div class="dist-row"><span class="dist-name">紧急修复</span><span class="track"><i style="width:22%"></i></span><span class="dist-count">4</span></div>
+              <div class="dist-row"><span class="dist-name">预发</span><span class="track"><i style="width:36%"></i></span><span class="dist-count">7</span></div>
+              <div class="dist-row"><span class="dist-name">生产</span><span class="track"><i style="width:58%"></i></span><span class="dist-count">12</span></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-head">
+            <span class="card-title">应用 × 环境</span>
+            <span class="card-hint">每格为该环境下的最新版本</span>
+          </div>
+          <div class="table-wrap">
+            <table class="matrix">
+              <thead>
+                <tr>
+                  <th style="width:26%">应用</th>
+                  <th>测试</th>
+                  <th>紧急修复</th>
+                  <th>预发</th>
+                  <th>生产</th>
+                  <th style="width:14%">热更新</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><span class="cell-name">商城 App</span></td>
+                  <td><span class="ver">1.4.2</span> <span class="dot ok"></span></td>
+                  <td><span class="ver">1.4.1</span> <span class="dot idle"></span></td>
+                  <td><span class="ver">1.4.2</span> <span class="dot ok"></span></td>
+                  <td><span class="ver">1.4.2</span> <span class="dot ok"></span></td>
+                  <td><span class="dot info"></span>灰度 30%</td>
+                </tr>
+                <tr>
+                  <td><span class="cell-name">巡检助手</span></td>
+                  <td><span class="ver">2.1.0</span> <span class="dot ok"></span></td>
+                  <td><span class="ver">—</span> <span class="dot idle"></span></td>
+                  <td><span class="ver">2.1.0</span> <span class="dot warn"></span></td>
+                  <td><span class="ver">2.0.8</span> <span class="dot ok"></span></td>
+                  <td><span class="dot warn"></span>已暂停</td>
+                </tr>
+                <tr>
+                  <td><span class="cell-name">工单系统</span></td>
+                  <td><span class="ver">1.2.6</span> <span class="dot ok"></span></td>
+                  <td><span class="ver">1.2.5</span> <span class="dot idle"></span></td>
+                  <td><span class="ver">1.2.6</span> <span class="dot ok"></span></td>
+                  <td><span class="ver">1.2.6</span> <span class="dot ok"></span></td>
+                  <td><span class="dot ok"></span>全量</td>
+                </tr>
+                <tr>
+                  <td><span class="cell-name">数据看板</span></td>
+                  <td><span class="ver">0.9.4</span> <span class="dot ok"></span></td>
+                  <td><span class="ver">—</span> <span class="dot idle"></span></td>
+                  <td><span class="ver">0.9.4</span> <span class="dot ok"></span></td>
+                  <td><span class="ver">0.9.4</span> <span class="dot ok"></span></td>
+                  <td><span class="dot idle"></span>未接入</td>
+                </tr>
+                <tr>
+                  <td><span class="cell-name">现场采集</span></td>
+                  <td><span class="ver">3.0.1</span> <span class="dot ok"></span></td>
+                  <td><span class="ver">3.0.0</span> <span class="dot idle"></span></td>
+                  <td><span class="ver">—</span> <span class="dot idle"></span></td>
+                  <td><span class="ver">3.0.1</span> <span class="dot ok"></span></td>
+                  <td><span class="dot idle"></span>未接入</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- ==================== 应用包 ==================== -->
+      <section class="view" id="view-packages">
+        <div class="page-head">
+          <div>
+            <h1>应用包</h1>
+            <p class="sub"><span class="env-word">生产</span>环境 · <span id="packages-count">共 6 个包</span> · 按上传时间倒序</p>
+          </div>
+          <div class="head-actions">
+            <label class="switch" style="padding:0 6px">
+              <input type="checkbox" id="empty-toggle" />
+              空状态预览
+            </label>
+            <button class="btn btn-primary" type="button"><svg class="i"><use href="#i-plus"/></svg>上传包</button>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="toolbar" id="packages-toolbar">
+            <div class="segment" role="group" aria-label="平台">
+              <button type="button" class="is-active">全部</button>
+              <button type="button">Android</button>
+              <button type="button">iOS</button>
+            </div>
+            <button class="btn" type="button">全部应用</button>
+            <button class="btn" type="button">最新优先</button>
+            <div class="toolbar-spacer"></div>
+            <button class="btn btn-quiet" type="button"><svg class="i"><use href="#i-download"/></svg>导出清单</button>
+          </div>
+
+          <div class="table-wrap" id="packages-table">
+            <table class="data">
+              <thead>
+                <tr>
+                  <th style="width:30%">应用</th>
+                  <th>版本（构建号）</th>
+                  <th>平台</th>
+                  <th>大小</th>
+                  <th>上传人</th>
+                  <th>上传时间</th>
+                  <th>下载</th>
+                  <th style="width:70px"></th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>
+                    <div class="cell-app">
+                      <span class="app-mark">商</span>
+                      <div><div class="cell-name">商城 App</div><div class="cell-sub">com.seakoi.shop</div></div>
+                    </div>
+                  </td>
+                  <td><span class="ver">1.4.2</span> <span class="cell-sub">(142)</span></td>
+                  <td><span class="pill pill-os">Android</span></td>
+                  <td class="num">38.2 MB</td>
+                  <td>linanan</td>
+                  <td class="cell-sub">今天 10:24</td>
+                  <td class="num">128</td>
+                  <td><button class="btn btn-quiet" type="button"><svg class="i"><use href="#i-more"/></svg></button></td>
+                </tr>
+                <tr>
+                  <td>
+                    <div class="cell-app">
+                      <span class="app-mark">商</span>
+                      <div><div class="cell-name">商城 App</div><div class="cell-sub">com.seakoi.shop</div></div>
+                    </div>
+                  </td>
+                  <td><span class="ver">1.4.2</span> <span class="cell-sub">(91)</span></td>
+                  <td><span class="pill pill-os">iOS</span></td>
+                  <td class="num">42.6 MB</td>
+                  <td>linanan</td>
+                  <td class="cell-sub">今天 09:58</td>
+                  <td class="num">64</td>
+                  <td><button class="btn btn-quiet" type="button"><svg class="i"><use href="#i-more"/></svg></button></td>
+                </tr>
+                <tr>
+                  <td>
+                    <div class="cell-app">
+                      <span class="app-mark">巡</span>
+                      <div><div class="cell-name">巡检助手</div><div class="cell-sub">com.seakoi.inspect</div></div>
+                    </div>
+                  </td>
+                  <td><span class="ver">2.1.0</span> <span class="cell-sub">(35)</span></td>
+                  <td><span class="pill pill-os">Android</span></td>
+                  <td class="num">21.4 MB</td>
+                  <td>chenyu</td>
+                  <td class="cell-sub">昨天 17:12</td>
+                  <td class="num">41</td>
+                  <td><button class="btn btn-quiet" type="button"><svg class="i"><use href="#i-more"/></svg></button></td>
+                </tr>
+                <tr>
+                  <td>
+                    <div class="cell-app">
+                      <span class="app-mark">工</span>
+                      <div><div class="cell-name">工单系统</div><div class="cell-sub">com.seakoi.ticket</div></div>
+                    </div>
+                  </td>
+                  <td><span class="ver">1.2.6</span> <span class="cell-sub">(18)</span></td>
+                  <td><span class="pill pill-os">Android</span></td>
+                  <td class="num">18.9 MB</td>
+                  <td>wangqi</td>
+                  <td class="cell-sub">11-14 15:40</td>
+                  <td class="num">23</td>
+                  <td><button class="btn btn-quiet" type="button"><svg class="i"><use href="#i-more"/></svg></button></td>
+                </tr>
+                <tr>
+                  <td>
+                    <div class="cell-app">
+                      <span class="app-mark">数</span>
+                      <div><div class="cell-name">数据看板</div><div class="cell-sub">com.seakoi.dashboard</div></div>
+                    </div>
+                  </td>
+                  <td><span class="ver">0.9.4</span> <span class="cell-sub">(7)</span></td>
+                  <td><span class="pill pill-os">iOS</span></td>
+                  <td class="num">33.1 MB</td>
+                  <td>chenyu</td>
+                  <td class="cell-sub">11-13 11:02</td>
+                  <td class="num">9</td>
+                  <td><button class="btn btn-quiet" type="button"><svg class="i"><use href="#i-more"/></svg></button></td>
+                </tr>
+                <tr>
+                  <td>
+                    <div class="cell-app">
+                      <span class="app-mark">现</span>
+                      <div><div class="cell-name">现场采集</div><div class="cell-sub">com.seakoi.collect</div></div>
+                    </div>
+                  </td>
+                  <td><span class="ver">3.0.1</span> <span class="cell-sub">(52)</span></td>
+                  <td><span class="pill pill-os">Android</span></td>
+                  <td class="num">26.7 MB</td>
+                  <td>wangqi</td>
+                  <td class="cell-sub">11-12 16:35</td>
+                  <td class="num">57</td>
+                  <td><button class="btn btn-quiet" type="button"><svg class="i"><use href="#i-more"/></svg></button></td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <!-- 空状态：解释 + 下一步，而不是一句"暂无数据" -->
+          <div class="empty" id="packages-empty" hidden>
+            <svg class="empty-art" width="72" height="72" viewBox="0 0 72 72" fill="none" aria-hidden="true">
+              <path d="M36 44V62" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+              <path d="M36 44c-7-3-11-9-11-16M36 44c7-3 11-9 11-16M36 44c0-8 3-14 8-19M36 44c0-8-3-14-8-19" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+              <circle cx="36" cy="20" r="2.4" fill="currentColor"/>
+              <circle cx="25" cy="27" r="1.8" fill="currentColor"/>
+              <circle cx="47" cy="27" r="1.8" fill="currentColor"/>
+              <circle cx="44" cy="24" r="1.4" fill="currentColor"/>
+            </svg>
+            <div class="empty-title">生产环境还没有包</div>
+            <p class="empty-desc">
+              上传第一个 APK / IPA 后，这里会显示版本、构建号、下载次数，并自动生成可扫码的下载页。
+              解析失败不会阻塞发布，表单仍可手动填写。
+            </p>
+            <div class="empty-actions">
+              <button class="btn btn-primary" type="button"><svg class="i"><use href="#i-plus"/></svg>上传第一个包</button>
+              <button class="btn" type="button">查看上传规范</button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ==================== 热更新（规划板块） ==================== -->
+      <section class="view" id="view-hotfix">
+        <div class="page-head">
+          <div>
+            <h1>热更新</h1>
+            <p class="sub"><span class="env-word">生产</span>环境 · 按「应用 × 基线原生版本」管理 bundle</p>
+          </div>
+          <div class="head-actions">
+            <button class="btn btn-primary" type="button"><svg class="i"><use href="#i-plus"/></svg>发布 bundle</button>
+          </div>
+        </div>
+
+        <div class="banner">
+          <svg class="i"><use href="#i-info"/></svg>
+          <span><b>规划中的板块</b>：以下为结构预览，用于确认信息层级与操作位置，后端尚未接入。</span>
+        </div>
+
+        <div class="card hx">
+          <div class="hx-head">
+            <span class="app-mark">商</span>
+            <div>
+              <div class="hx-title">商城 App · Android</div>
+              <div class="hx-sub">灰度中 · 最近发布 2 小时前</div>
+            </div>
+            <span class="pill pill-env">灰度 30%</span>
+            <div class="hx-actions">
+              <button class="btn" type="button">调整灰度</button>
+              <button class="btn" type="button">回滚</button>
+            </div>
+          </div>
+
+          <div class="hx-flow">
+            <span>基线原生版本</span>
+            <span class="hx-node">1.4.2 (142)</span>
+            <span class="arrow">→</span>
+            <span>bundle</span>
+            <span class="hx-node">v12 · 2.4 MB</span>
+            <span class="arrow">→</span>
+            <span>兼容范围</span>
+            <span class="hx-node">&gt;= 1.4.0 &lt; 1.5.0</span>
+          </div>
+
+          <div class="rollout">
+            <span class="rollout-label">30%</span>
+            <span class="track"><i style="width:30%"></i></span>
+            <span class="card-hint">下一档 50% · 观察 24h 无崩溃后自动继续</span>
+          </div>
+        </div>
+
+        <div class="card hx">
+          <div class="hx-head">
+            <span class="app-mark">商</span>
+            <div>
+              <div class="hx-title">商城 App · iOS</div>
+              <div class="hx-sub">已全量 · 昨天 16:20</div>
+            </div>
+            <span class="pill pill-ok">已全量</span>
+            <div class="hx-actions">
+              <button class="btn" type="button">查看记录</button>
+              <button class="btn" type="button">回滚</button>
+            </div>
+          </div>
+          <div class="hx-flow">
+            <span>基线原生版本</span>
+            <span class="hx-node">1.4.2 (91)</span>
+            <span class="arrow">→</span>
+            <span>bundle</span>
+            <span class="hx-node">v8 · 2.1 MB</span>
+          </div>
+          <div class="rollout">
+            <span class="rollout-label">100%</span>
+            <span class="track"><i style="width:100%"></i></span>
+            <span class="card-hint">全量已生效</span>
+          </div>
+        </div>
+
+        <div class="card hx">
+          <div class="hx-head">
+            <span class="app-mark">巡</span>
+            <div>
+              <div class="hx-title">巡检助手 · Android</div>
+              <div class="hx-sub">3 天前暂停 · 崩溃率高于阈值</div>
+            </div>
+            <span class="pill pill-warn">已暂停</span>
+            <div class="hx-actions">
+              <button class="btn" type="button">恢复灰度</button>
+              <button class="btn" type="button">回滚</button>
+            </div>
+          </div>
+          <div class="hx-flow">
+            <span>基线原生版本</span>
+            <span class="hx-node">2.1.0 (35)</span>
+            <span class="arrow">→</span>
+            <span>bundle</span>
+            <span class="hx-node">v3 · 1.8 MB</span>
+          </div>
+          <div class="rollout">
+            <span class="rollout-label">10%</span>
+            <span class="track"><i style="width:10%"></i></span>
+            <span class="card-hint">暂停原因：崩溃率 1.8% &gt; 阈值 0.5%</span>
+          </div>
+        </div>
+      </section>
+
+      <!-- ==================== 应用 ==================== -->
+      <section class="view" id="view-apps">
+        <div class="page-head">
+          <div>
+            <h1>应用</h1>
+            <p class="sub">平台级主体：包与热更新都挂在应用下</p>
+          </div>
+          <div class="head-actions">
+            <button class="btn btn-primary" type="button"><svg class="i"><use href="#i-plus"/></svg>新建应用</button>
+          </div>
+        </div>
+
+        <div class="apps-grid">
+          <div class="card app-card">
+            <div class="app-card-head">
+              <span class="app-icon">商</span>
+              <div><div class="app-name">商城 App</div><div class="app-pkg">com.seakoi.shop</div></div>
+            </div>
+            <div class="app-rows">
+              <div class="app-row">最新生产版本 <b>1.4.2</b></div>
+              <div class="app-row">累计包数量 <b>36</b></div>
+              <div class="app-row">最近更新 <b>今天 10:24</b></div>
+            </div>
+            <div class="app-tags">
+              <span class="pill pill-os">Android</span>
+              <span class="pill pill-os">iOS</span>
+              <span class="pill pill-ok">热更新已接入</span>
+            </div>
+          </div>
+
+          <div class="card app-card">
+            <div class="app-card-head">
+              <span class="app-icon">巡</span>
+              <div><div class="app-name">巡检助手</div><div class="app-pkg">com.seakoi.inspect</div></div>
+            </div>
+            <div class="app-rows">
+              <div class="app-row">最新生产版本 <b>2.0.8</b></div>
+              <div class="app-row">累计包数量 <b>21</b></div>
+              <div class="app-row">最近更新 <b>昨天 17:12</b></div>
+            </div>
+            <div class="app-tags">
+              <span class="pill pill-os">Android</span>
+              <span class="pill pill-warn">热更新已暂停</span>
+            </div>
+          </div>
+
+          <div class="card app-card">
+            <div class="app-card-head">
+              <span class="app-icon">工</span>
+              <div><div class="app-name">工单系统</div><div class="app-pkg">com.seakoi.ticket</div></div>
+            </div>
+            <div class="app-rows">
+              <div class="app-row">最新生产版本 <b>1.2.6</b></div>
+              <div class="app-row">累计包数量 <b>18</b></div>
+              <div class="app-row">最近更新 <b>11-14 15:40</b></div>
+            </div>
+            <div class="app-tags">
+              <span class="pill pill-os">Android</span>
+              <span class="pill pill-ok">热更新已接入</span>
+            </div>
+          </div>
+
+          <div class="card app-card">
+            <div class="app-card-head">
+              <span class="app-icon">数</span>
+              <div><div class="app-name">数据看板</div><div class="app-pkg">com.seakoi.dashboard</div></div>
+            </div>
+            <div class="app-rows">
+              <div class="app-row">最新生产版本 <b>0.9.4</b></div>
+              <div class="app-row">累计包数量 <b>9</b></div>
+              <div class="app-row">最近更新 <b>11-13 11:02</b></div>
+            </div>
+            <div class="app-tags">
+              <span class="pill pill-os">iOS</span>
+              <span class="pill pill-os">未接入热更新</span>
+            </div>
+          </div>
+        </div>
+      </section>
+
+    </div>
+  </div>
+</div>
+
+<script>
+  /* 极简 hash 路由：只用于原型切页，不承载业务 */
+  const BOARD_NAMES = { overview: '概览', packages: '应用包', hotfix: '热更新', apps: '应用' };
+  const views = Array.from(document.querySelectorAll('.view'));
+  const navItems = Array.from(document.querySelectorAll('.nav-item[href]'));
+
+  function route() {
+    const name = (location.hash.replace('#/', '') || 'overview').split('?')[0];
+    const target = document.getElementById('view-' + name) || document.getElementById('view-overview');
+    views.forEach((view) => view.classList.toggle('is-active', view === target));
+    navItems.forEach((item) => item.classList.toggle('is-active', item.getAttribute('href') === '#/' + name));
+    document.getElementById('crumb-board').textContent = BOARD_NAMES[name] ?? '概览';
+  }
+
+  window.addEventListener('hashchange', route);
+  route();
+
+  /* 原型控件：切掉规划中板块，验证"只上有后端支撑的板块"时的导航观感 */
+  document.getElementById('future-toggle').addEventListener('change', (event) => {
+    document.body.classList.toggle('hide-future', !event.target.checked);
+    document.querySelectorAll('.nav-item[data-future]').forEach((item) => {
+      item.style.display = event.target.checked ? '' : 'none';
+    });
+  });
+
+  /* 原型控件：对比有数据 / 空数据两种形态。
+     真实规则：结果为空且没有任何筛选条件时，工具栏一并隐藏——没数据就别让人筛平台。 */
+  const emptyToggle = document.getElementById('empty-toggle');
+  const table = document.getElementById('packages-table');
+  const empty = document.getElementById('packages-empty');
+  const toolbar = document.getElementById('packages-toolbar');
+  emptyToggle.addEventListener('change', () => {
+    table.hidden = emptyToggle.checked;
+    empty.hidden = !emptyToggle.checked;
+    toolbar.hidden = emptyToggle.checked;
+    document.getElementById('packages-count').textContent = emptyToggle.checked ? '共 0 个包' : '共 6 个包';
+  });
+
+  /* 环境是全局维度：切换时同步面包屑与各页副标题，避免"位置不同步"的错觉 */
+  document.querySelectorAll('.env-switch').forEach((group) => {
+    group.addEventListener('click', (event) => {
+      const button = event.target.closest('button');
+      if (!button) return;
+      group.querySelectorAll('button').forEach((item) => item.classList.toggle('is-active', item === button));
+      const label = button.textContent.trim();
+      document.getElementById('crumb-env').textContent = label;
+      document.querySelectorAll('.env-word').forEach((word) => { word.textContent = label; });
+    });
+  });
+
+  /* 平台筛选：仅切换高亮 */
+  document.querySelectorAll('.segment').forEach((group) => {
+    group.addEventListener('click', (event) => {
+      const button = event.target.closest('button');
+      if (!button) return;
+      group.querySelectorAll('button').forEach((item) => item.classList.toggle('is-active', item === button));
+    });
+  });
+</script>
+</body>
+</html>

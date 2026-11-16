@@ -89,9 +89,10 @@ export function DownloadPage(): JSX.Element {
     return (
       <section className="page page-narrow">
         <Empty
-          text="包不存在"
+          title="包不存在"
+          description="链接可能已失效，或这个包已被移除。"
           action={
-            <Link className="button button-primary" to="/">
+            <Link className="button button-primary" to="/packages">
               返回包列表
             </Link>
           }
@@ -186,7 +187,7 @@ export function DownloadPage(): JSX.Element {
           <button className="button button-ghost" type="button" onClick={() => void copyText(build.downloadPageUrl)}>
             {copied ? '已复制' : '复制页面地址'}
           </button>
-          <Link className="button button-ghost" to="/">
+          <Link className="button button-ghost" to="/packages">
             返回包列表
           </Link>
         </div>

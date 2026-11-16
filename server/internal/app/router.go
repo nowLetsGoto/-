@@ -18,16 +18,18 @@ import (
 
 	"dandelion/server/internal/contract"
 	"dandelion/server/internal/handler"
+	loginhandler "dandelion/server/internal/handler/login"
 	"dandelion/server/internal/middleware"
+	loginmw "dandelion/server/internal/middleware/login"
 )
 
 // Deps 是装配层注入的全部依赖。
 type Deps struct {
 	Builds *handler.BuildHandler
-	Auth   *handler.AuthHandler
-	// Verify 是令牌校验函数，由 main.go 注入 service.AuthService.Verify；
-	// 传函数而不是具体类型，路由层因此不必依赖 service 包。
-	Verify   middleware.TokenVerifier
+	// Login 是登录接口；Verify 是它的令牌校验函数（同一业务服务导出）。
+	// 传函数而不是整个服务，路由层只需要「能不能校验」，不关心凭据从哪来。
+	Login    *loginhandler.Handler
+	Verify   loginmw.Verifier
 	Health   *handler.HealthHandler
 	StaticFS fs.FS
 }
@@ -71,7 +73,7 @@ func NewRouter(d Deps) http.Handler {
 	r := chi.NewRouter()
 
 	r.Route(contract.APIPrefix, func(api chi.Router) {
-		api.Post("/auth/login", middleware.Wrap(d.Auth.Login))
+		api.Post("/auth/login", middleware.Wrap(d.Login.Login))
 
 		// 下载链路必须公开：扫码的人没有账号，点开链接就要能看详情、能下载。
 		api.Get("/builds/{id}", middleware.Wrap(d.Builds.Get))
@@ -79,7 +81,7 @@ func NewRouter(d Deps) http.Handler {
 
 		// 管理动作（上传 / 发布 / 查列表）需要登录；分组只加中间件，不改路由前缀。
 		api.Group(func(private chi.Router) {
-			private.Use(middleware.RequireAuth(d.Verify))
+			private.Use(loginmw.RequireAuth(d.Verify))
 			private.Post("/builds/stage", middleware.Wrap(d.Builds.Stage))
 			private.Post("/builds", middleware.Wrap(d.Builds.Commit))
 			private.Get("/builds", middleware.Wrap(d.Builds.List))

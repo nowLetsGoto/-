@@ -12,6 +12,7 @@ import type { Build, CommitBuildRequest, Environment, Platform, StageResult } fr
 import { commitBuild, isShareableUrl, stageBuild } from '../api/builds';
 import { ApiError, errorMessage } from '../api/client';
 import { FileDropzone } from '../components/FileDropzone';
+import { useEnvironment } from '../hooks/useEnvironment';
 import { ENVIRONMENTS, PLATFORMS, platformFromFileName } from '../utils/format';
 
 type ParsedField = 'appName' | 'packageId' | 'version' | 'buildNumber';
@@ -28,19 +29,21 @@ interface FormState {
   changelog: string;
 }
 
-const EMPTY_FORM: FormState = {
-  environment: 'test',
+/** 表单初始值：环境跟随顶栏的全局环境，避免「看着生产、传到测试」的错位。 */
+const initialForm = (environment: Environment): FormState => ({
+  environment,
   platform: 'android',
   appName: '',
   packageId: '',
   version: '',
   buildNumber: '',
   changelog: '',
-};
+});
 
 export function UploadPage(): JSX.Element {
   const navigate = useNavigate();
-  const [form, setForm] = useState<FormState>(EMPTY_FORM);
+  const [globalEnvironment] = useEnvironment();
+  const [form, setForm] = useState<FormState>(() => initialForm(globalEnvironment));
   // touched 是前端局部状态，仅用于 stage 异步返回时不覆盖用户已输入字段；不进 API 契约、服务端不做合并。
   const touchedRef = useRef<Set<TextField>>(new Set());
   const [file, setFile] = useState<File | null>(null);
@@ -159,7 +162,7 @@ export function UploadPage(): JSX.Element {
   };
 
   const resetAll = (): void => {
-    setForm(EMPTY_FORM);
+    setForm(initialForm(globalEnvironment));
     touchedRef.current = new Set();
     handleRemove();
     setCopied(false);
@@ -185,7 +188,7 @@ export function UploadPage(): JSX.Element {
             <button className="button button-primary" type="button" onClick={() => navigate(created.downloadPagePath)}>
               去下载页
             </button>
-            <Link className="button button-ghost" to="/">
+            <Link className="button button-ghost" to="/packages">
               返回列表
             </Link>
             <button className="button button-ghost" type="button" onClick={resetAll}>
@@ -201,7 +204,7 @@ export function UploadPage(): JSX.Element {
     <section className="page page-narrow">
       <div className="page-head">
         <h1>上传 App 包</h1>
-        <Link className="button button-ghost" to="/">
+        <Link className="button button-ghost" to="/packages">
           包列表
         </Link>
       </div>

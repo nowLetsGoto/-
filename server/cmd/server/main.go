@@ -23,8 +23,10 @@ import (
 	"dandelion/server/internal/app"
 	"dandelion/server/internal/config"
 	"dandelion/server/internal/handler"
+	loginhandler "dandelion/server/internal/handler/login"
 	"dandelion/server/internal/repository"
 	"dandelion/server/internal/service"
+	loginsvc "dandelion/server/internal/service/login"
 	"dandelion/server/internal/storage"
 )
 
@@ -77,8 +79,8 @@ func run() error {
 		return err
 	}
 
-	authSvc := service.NewAuthService(cfg)
-	auth := handler.NewAuthHandler(authSvc)
+	loginService := loginsvc.NewService(cfg)
+	loginHandler := loginhandler.NewHandler(loginService)
 	builds := handler.NewBuildHandler(cfg, svc, paths)
 	health := handler.NewHealthHandler(repo, paths)
 	public, err := fs.Sub(staticfs.PublicFiles, "public")
@@ -87,8 +89,8 @@ func run() error {
 	}
 	router := app.NewRouter(app.Deps{
 		Builds:   builds,
-		Auth:     auth,
-		Verify:   authSvc.Verify,
+		Login:    loginHandler,
+		Verify:   loginService.Verify,
 		Health:   health,
 		StaticFS: public,
 	})

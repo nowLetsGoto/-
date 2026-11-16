@@ -33,19 +33,20 @@
 
 | 目录 / 文件 | 职责（一句话） | 现有文件 | **分类规则与禁止** |
 | --- | --- | --- | --- |
-| `api/` | HTTP 出入口与契约类型消费 | `client.ts`、`builds.ts`、`schema.d.ts`（生成物） | `client.ts` 是**唯一** `fetch` 封装（解包 `{code,data,message}`、抛 `ApiError`）；`builds.ts` 是**唯一**接口函数与 URL 消费处；`schema.d.ts` 由 `make gen:api` 生成，**禁止手改** |
-| `components/` | 无业务领域知识、可跨页面复用的 UI | `Layout.tsx`、`States.tsx`、`FileDropzone.tsx` | **不发起请求**、不 import `api/`、不持有页面级状态、不写死某业务字段；只接受 props 与回调 |
-| `pages/` | 路由级页面：自己取数、管加载/错误/空态、持有页面级状态 | `ListPage.tsx`、`UploadPage.tsx`、`DownloadPage.tsx` | **页面之间禁止互相 import**；页面**只能**通过 `api/` 取数，不直接 `fetch`；**不拼接口 URL 字符串**（用 `builds.ts`） |
+| `api/` | HTTP 出入口与契约类型消费 | `client.ts`、`builds.ts`、`auth.ts`、`session.ts`、`schema.d.ts`（生成物） | `client.ts` 是**唯一** `fetch` 封装（解包、附带 Bearer、401 统一回登录页）；`builds.ts` / `auth.ts` 是接口函数与 URL 的**唯一**消费处；`session.ts` 是 localStorage 的**唯一**读写处；`schema.d.ts` 由 `make gen:api` 生成，**禁止手改** |
+| `hooks/` | 跨页面复用的状态逻辑 | `useEnvironment.ts`（全局环境）、`useAllBuilds.ts`（四环境聚合） | 不渲染 UI、不写业务文案；只封装状态与副作用，页面只管展示 |
+| `components/` | 无业务领域知识、可跨页面复用的 UI | `Layout.tsx`、`Sidebar.tsx`、`Topbar.tsx`、`States.tsx`、`FileDropzone.tsx`、`icons.tsx`、`navigation.ts` | **不发起请求**、不 import `api/`、不持有页面级状态、不写死某业务字段；只接受 props 与回调（`navigation.ts` 是纯配置，不含渲染） |
+| `pages/` | 路由级页面：自己取数、管加载/错误/空态、持有页面级状态 | `OverviewPage.tsx`、`PackagesPage.tsx`、`AppsPage.tsx`、`UploadPage.tsx`、`DownloadPage.tsx`、`login/`（自持样式） | **页面之间禁止互相 import**；页面**只能**通过 `api/` 取数，不直接 `fetch`；**不拼接口 URL 字符串**（用 `builds.ts`） |
 | `utils/` | 纯函数工具 | `format.ts`（字节/时间/标签） | **无副作用、无 React 依赖、不 import 任何 `api/`/`pages/`/`components/`**；有状态或依赖浏览器 API 的逻辑不放这里 |
 | `App.tsx` | 路由表 + 全局 Layout 包裹 | — | 不放数据获取、不放业务判断 |
 | `main.tsx` | 挂载入口 + 全局样式引入 | — | 不放业务逻辑 |
 | `styles.css` | 唯一样式来源（CSS 变量 + 组件类 + 断点） | — | 不引入组件库/原子化框架 |
 
-**前端四条硬约束**：① 页面互不 import；② 组件内无 `fetch`；③ 页面不拼 URL；④ 页面级私有子组件留在该页面文件内，**不进** `components/`（进 `components/` 的前提是「至少两个页面会用」）。
+**前端五条硬约束**：① 页面互不 import；② 组件内无 `fetch`；③ 页面不拼 URL；④ 页面级私有子组件留在该页面文件内，**不进** `components/`（进 `components/` 的前提是「至少两个页面会用」）；⑤ 全局环境只能经 `useEnvironment` 读写 URL，页面不得自己再存一份。
 
 ---
 
-## 3. 后端目录（`server/`，16 个 Go 源文件）
+## 3. 后端目录（`server/`，20 个 Go 源文件）
 
 | 包 / 文件 | 职责 | 输入 | 输出 | **边界（不允许做什么）** |
 | --- | --- | --- | --- | --- |
@@ -61,6 +62,7 @@
 | `internal/contract/*.go` | DTO + 枚举常量 + 契约一致性测试 | `api/openapi.yaml`（测试读取） | 类型、常量、测试结论 | 不含业务逻辑、不访问 DB/文件（测试除外） |
 | `internal/config/config.go` | **唯一环境变量读取与校验** | `os.Getenv` | `Config` | 不被其他地方再读 `os.Getenv`；不做业务判断 |
 | `internal/middleware/error.go` | 统一错误格式化、panic 恢复、失败清理 tmp | handler 抛出的 `AppError` | 统一错误响应 | 不做业务判断、不写 SQL |
+| **`internal/{handler,service,middleware}/login/`** | 登录功能按层归位：`handler/login` 是 HTTP 入口、`service/login` 是凭据与令牌、`middleware/login` 是鉴权中间件 | config 的账号与密钥、请求 | `LoginResult`、401 判定 | 不跨层建聚合包（不设 `internal/auth`）；三层包名统一为 `login`，import 时按需起别名（`loginhandler` / `loginsvc` / `loginmw`）；登录不落库，因此**没有** `repository/login` |
 | `public/` | 前端构建产物（`npm run build` 输出） | — | — | **不手写**、不入库（保留兜底 `index.html`） |
 
 **后端四条硬约束**：① handler 无 SQL；② repository 不调 service；③ parser 不落盘/不写库/不碰 HTTP；④ service 不碰 `*http.Request`/`ResponseWriter`。
@@ -115,6 +117,7 @@ flowchart LR
 | service 碰 `*http.Request` / `ResponseWriter` | 业务层不感知传输协议，便于 CLI/CI 复用 |
 | `config` 被 handler/service 直接读 `os.Getenv` | 只由 `cmd/server` 读取并注入 |
 | `middleware` 被 handler 引用 | 只由 `app` 装配 |
+| 功能子目录反向依赖 | `handler/login` 可以复用父包 `handler` 的 `OK` / `WriteError` / `DecodeJSON`；**父包不得 import 子目录**，同层子目录之间也不得互相 import |
 | 任何循环依赖 | `go list -deps` 应无环；出现环说明分层被打破 |
 
 ---
@@ -135,6 +138,7 @@ flowchart LR
 | 10 | 加 pushy 热更新板块 | `internal/{handler,service,repository}/` 加 `update_*` + `web/src/pages/updates/` | 复用现有分层，不新建大目录 | 契约新增路径、`internal/repository/schema.sql` 加表、导航数组加项（§7） |
 | 11 | 加一个部署脚本 | `deploy/` | 部署资产集中 | `README.md` 说明；必要时 `Makefile` 加目标 |
 | 12 | 加一个测试 | **与被测包同目录**，`*_test.go` / `*.test.ts` | Go/TS 惯例，便于就近维护 | 无 |
+| 13 | 改登录 / 令牌 / 鉴权范围 | `handler/login/`（HTTP 语义）、`service/login/`（凭据与令牌）、`middleware/login/`（鉴权） | 按层归位，改哪层开哪层 | 契约若改字段，重生成 `schema.d.ts`；受保护接口在 `app/router.go` 的 `private` 分组里注册 |
 
 ---
 
@@ -144,6 +148,7 @@ flowchart LR
 | --- | --- |
 | 文件头注释 | **每个文件顶部中文注释**：职责 / 输入 / 输出 / 边界（Go 用包注释或文件头块注释，TS 用文件头块注释） |
 | 一包一职责 | 一个 Go package 只承担一个职责；包名小写单数、语义明确（`parser` 而非 `util`） |
+| 功能子目录 | 同一功能的跨层实现**按层归位**：`handler/login/`、`service/login/`、`middleware/login/`。子目录名全仓统一（都用 `login`），便于按功能检索；某层没有该功能的职责时**不建空壳**（登录不落库 ⇒ 没有 `repository/login`） |
 | 禁止大杂烩 | **禁止** `utils.go` / `common.go` / `helpers.go` / `misc.go`；函数按职责落到对应包（如路径处理进 `storage`） |
 | 文件行数 | 单文件建议 ≤ 400 行；超过说明职责不单一，应拆分 |
 | 生成物 | `web/src/api/schema.d.ts` 由 `make gen:api` 生成，**禁止手改**；改动一律改 `api/openapi.yaml` |

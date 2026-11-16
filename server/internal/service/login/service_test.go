@@ -1,8 +1,8 @@
-// auth_service_test.go · 鉴权服务的边界行为。
+// service_test.go · 登录业务层的边界行为。
 // 职责：验证凭据校验、令牌签发与校验、篡改 / 换密钥 / 过期一律拒绝。
 // 输入：手工构造的 config.Config；输出：断言结果。
 // 边界：不启动 HTTP、不连数据库、不读环境变量，纯内存验证。
-package service
+package login
 
 import (
 	"strconv"
@@ -14,9 +14,9 @@ import (
 	"dandelion/server/internal/contract"
 )
 
-func newTestAuth(t *testing.T) *AuthService {
+func newTestService(t *testing.T) *Service {
 	t.Helper()
-	return NewAuthService(config.Config{
+	return NewService(config.Config{
 		AdminUsername: "admin",
 		AdminPassword: "admin123456",
 		AuthSecret:    "test-secret",
@@ -24,7 +24,7 @@ func newTestAuth(t *testing.T) *AuthService {
 }
 
 func TestLoginRejectsWrongCredentials(t *testing.T) {
-	svc := newTestAuth(t)
+	svc := newTestService(t)
 	cases := []struct {
 		name     string
 		username string
@@ -42,7 +42,7 @@ func TestLoginRejectsWrongCredentials(t *testing.T) {
 }
 
 func TestLoginIssuesVerifiableToken(t *testing.T) {
-	svc := newTestAuth(t)
+	svc := newTestService(t)
 	result, err := svc.Login("admin", "admin123456")
 	if err != nil {
 		t.Fatalf("正确凭据应登录成功: %v", err)
@@ -58,7 +58,7 @@ func TestLoginIssuesVerifiableToken(t *testing.T) {
 }
 
 func TestVerifyRejectsTamperedToken(t *testing.T) {
-	svc := newTestAuth(t)
+	svc := newTestService(t)
 	result, err := svc.Login("admin", "admin123456")
 	if err != nil {
 		t.Fatalf("登录失败: %v", err)
@@ -82,7 +82,7 @@ func TestVerifyRejectsTamperedToken(t *testing.T) {
 }
 
 func TestVerifyRejectsMalformedExpiredAndForeignToken(t *testing.T) {
-	svc := newTestAuth(t)
+	svc := newTestService(t)
 
 	for _, token := range []string{"", ".", "abc", "abc.", ".abc", "abc.def"} {
 		if _, ok := svc.Verify(token); ok {
@@ -100,7 +100,7 @@ func TestVerifyRejectsMalformedExpiredAndForeignToken(t *testing.T) {
 	if err != nil {
 		t.Fatalf("登录失败: %v", err)
 	}
-	foreign := NewAuthService(config.Config{
+	foreign := NewService(config.Config{
 		AdminUsername: "admin",
 		AdminPassword: "admin123456",
 		AuthSecret:    "another-secret",
