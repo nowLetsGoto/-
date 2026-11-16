@@ -1,6 +1,6 @@
 // Package login · POST /auth/login 的 HTTP 语义。
 // 职责：解码登录请求、做必填与长度校验、调用业务层、返回令牌。
-// 输入：application/json {username, password}；输出：{token, username, expiresAt} 包在统一响应外壳里。
+// 输入：application/json {username, password, mode?}；输出：{token, username, expiresAt, mode} 包在统一响应外壳里。
 // 边界：不做密码比对（在 service/login）、不写会话表、不下发 Cookie；
 //
 //	本接口自身不校验令牌，未登录 / 过期统一由 middleware/login 处理。
@@ -28,7 +28,7 @@ func NewHandler(service *loginsvc.Service) *Handler {
 // Login 校验凭据并签发令牌；凭据错误返回 400，文案不区分「用户不存在」与「密码错误」。
 func (h *Handler) Login(w http.ResponseWriter, r *http.Request) error {
 	var in contract.LoginInput
-	if err := handler.DecodeJSON(w, r, &in, "username/password"); err != nil {
+	if err := handler.DecodeJSON(w, r, &in, "username/password/mode"); err != nil {
 		return err
 	}
 
@@ -43,7 +43,7 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) error {
 	// 只记录用户名用于排查，密码永不进日志。
 	handler.AttachLogFields(r, "username="+in.Username)
 
-	result, err := h.svc.Authenticate(r.Context(), in.Username, in.Password, handler.ClientIP(r))
+	result, err := h.svc.Authenticate(r.Context(), in.Username, in.Password, handler.ClientIP(r), in.Mode)
 	if err != nil {
 		return err
 	}

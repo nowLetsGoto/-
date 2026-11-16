@@ -7,9 +7,13 @@
 
 const STORAGE_KEY = 'dandelion.session';
 
+export type SessionMode = 'solo' | 'team';
+
 export interface Session {
   token: string;
   username: string;
+  /** 登录时选定、令牌也带着的视图模式；只用于菜单投影，权限仍由服务端判定。 */
+  mode: SessionMode;
 }
 
 /** readSession 读取会话；localStorage 被禁用、结构损坏或字段缺失一律当作未登录。 */
@@ -21,7 +25,9 @@ export function readSession(): Session | null {
     }
     const parsed = JSON.parse(raw) as Partial<Session>;
     if (typeof parsed.token === 'string' && parsed.token !== '' && typeof parsed.username === 'string') {
-      return { token: parsed.token, username: parsed.username };
+      // 老会话没有 mode：按"单人模式"这个更保守的默认处理，不会突然放开菜单。
+      const mode = parsed.mode === 'team' ? 'team' : 'solo';
+      return { token: parsed.token, username: parsed.username, mode };
     }
     return null;
   } catch {

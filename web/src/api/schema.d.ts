@@ -504,14 +504,21 @@ export interface components {
             statusCode: number;
             message: string;
         };
-        /** @description 管理员登录请求，application/json，恰好 2 个字段。 */
+        /** @description 管理员登录请求；mode 省略时按单人模式处理。 */
         LoginRequest: {
             username: string;
             password: string;
+            mode?: components["schemas"]["SessionMode"];
         };
-        /** @description 无状态令牌：载荷只有到期时间戳，签名由部署配置的 AUTH_SECRET 生成。 服务端不存会话，重启后令牌仍然有效；前端存 localStorage 并随请求发送。 */
+        /**
+         * @description 登录模式；solo 单人只看自己产生的数据，team 团队看全量平台数据
+         * @default solo
+         * @enum {string}
+         */
+        SessionMode: "solo" | "team";
+        /** @description 无状态令牌：载荷含账号、令牌版本、到期时间与登录模式，签名由 AUTH_SECRET 生成。 服务端不存会话，重启后令牌仍然有效；前端存 localStorage 并随请求发送。 */
         LoginResult: {
-            /** @description 形如「到期时间戳.HMAC-SHA256 签名」的 BASE64URL 串 */
+            /** @description 形如「账号|版本|到期时间戳|模式.HMAC-SHA256 签名」的 BASE64URL 串 */
             token: string;
             username: string;
             /**
@@ -519,6 +526,7 @@ export interface components {
              * @description ISO 8601 UTC，由 x-constants.authTokenTTLSeconds 推出
              */
             expiresAt: string;
+            mode: components["schemas"]["SessionMode"];
         };
         /**
          * @description 四环境枚举，全仓唯一定义处；DB 只 NOT NULL 不加 CHECK
@@ -570,6 +578,8 @@ export interface components {
             name: string;
             description: string;
             repoUrl: string;
+            roleKey: string;
+            roleName: string;
             /** Format: date-time */
             createdAt: string;
             persons: components["schemas"]["RelationRef"][];
@@ -817,6 +827,8 @@ export interface components {
              * @description ISO 8601 UTC
              */
             createdAt: string;
+            /** @description 上传者账号 id；system 表示外部 API 或历史数据 */
+            ownerUserId?: string;
         };
         ListBuildsResult: {
             items: components["schemas"]["Build"][];

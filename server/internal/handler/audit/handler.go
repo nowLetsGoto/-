@@ -7,6 +7,7 @@ package audit
 import (
 	"net/http"
 
+	"dandelion/server/internal/authctx"
 	"dandelion/server/internal/contract"
 	"dandelion/server/internal/handler"
 	auditsvc "dandelion/server/internal/service/audit"
@@ -27,6 +28,10 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) error {
 		Action:    r.URL.Query().Get("action"),
 		ActorName: r.URL.Query().Get("actor"),
 		Result:    r.URL.Query().Get("result"),
+	}
+	// 单人管理员只能追溯自己的操作；团队模式保留跨账号审计能力。
+	if authctx.From(r.Context()).Mode == contract.ModeSolo {
+		query.ActorName = authctx.From(r.Context()).Username
 	}
 	data, err := h.svc.List(r.Context(), handler.ReadPage(r), query)
 	if err != nil {

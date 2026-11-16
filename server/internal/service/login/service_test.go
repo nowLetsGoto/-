@@ -10,6 +10,8 @@ import (
 	"encoding/base64"
 	"strings"
 	"testing"
+
+	"dandelion/server/internal/contract"
 )
 
 func TestHashPasswordRoundTrip(t *testing.T) {
@@ -86,17 +88,17 @@ func TestIssueRejectsUnsafeUsername(t *testing.T) {
 	// 账号名会进令牌载荷（| 分段、. 分隔签名），必须挡住这些字符。
 	svc := &Service{secret: []byte("test-secret")}
 	for _, username := range []string{"a|b", "a.b", "admin|1|999"} {
-		if _, err := svc.issue(username, 1, 9999999999); err == nil {
+		if _, err := svc.issue(username, 1, 9999999999, contract.ModeSolo); err == nil {
 			t.Fatalf("账号名 %q 含分隔符，应被拒绝", username)
 		}
 	}
 
-	token, err := svc.issue("admin", 3, 9999999999)
+	token, err := svc.issue("admin", 3, 9999999999, contract.ModeTeam)
 	if err != nil {
 		t.Fatalf("合法账号名不应报错: %v", err)
 	}
 	payload, signature, found := strings.Cut(token, ".")
-	if !found || payload != "admin|3|9999999999" {
+	if !found || payload != "admin|3|9999999999|team" {
 		t.Fatalf("令牌载荷格式不符: %q", payload)
 	}
 	if signature != svc.mac(payload) {

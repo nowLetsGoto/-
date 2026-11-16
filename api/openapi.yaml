@@ -1178,7 +1178,7 @@ components:
 
     LoginRequest:
       type: object
-      description: 管理员登录请求，application/json，恰好 2 个字段。
+      description: 管理员登录请求；mode 省略时按单人模式处理。
       additionalProperties: false
       required: [username, password]
       properties:
@@ -1188,23 +1188,33 @@ components:
         password:
           type: string
           maxLength: 128
+        mode:
+          $ref: '#/components/schemas/SessionMode' 
+
+    SessionMode:
+      type: string
+      description: 登录模式；solo 单人只看自己产生的数据，team 团队看全量平台数据
+      enum: [solo, team]
+      default: solo
 
     LoginResult:
       type: object
       description: >
-        无状态令牌：载荷只有到期时间戳，签名由部署配置的 AUTH_SECRET 生成。
+        无状态令牌：载荷含账号、令牌版本、到期时间与登录模式，签名由 AUTH_SECRET 生成。
         服务端不存会话，重启后令牌仍然有效；前端存 localStorage 并随请求发送。
-      required: [token, username, expiresAt]
+      required: [token, username, expiresAt, mode]
       properties:
         token:
           type: string
-          description: 形如「到期时间戳.HMAC-SHA256 签名」的 BASE64URL 串
+          description: 形如「账号|版本|到期时间戳|模式.HMAC-SHA256 签名」的 BASE64URL 串
         username:
           type: string
         expiresAt:
           type: string
           format: date-time
           description: ISO 8601 UTC，由 x-constants.authTokenTTLSeconds 推出
+        mode:
+          $ref: '#/components/schemas/SessionMode' 
 
     Environment:
       type: string
@@ -1276,7 +1286,7 @@ components:
     ProjectDetail:
       type: object
       description: 项目详情 = 项目本身 + 关联的人员与团队（带名字）
-      required: [id, key, name, description, repoUrl, createdAt, persons, teams]
+      required: [id, key, name, description, repoUrl, roleKey, roleName, createdAt, persons, teams]
       properties:
         id:
           type: string
@@ -1288,6 +1298,10 @@ components:
         description:
           type: string
         repoUrl:
+          type: string
+        roleKey:
+          type: string
+        roleName:
           type: string
         createdAt:
           type: string
@@ -1810,6 +1824,9 @@ components:
           type: string
           format: date-time
           description: ISO 8601 UTC
+        ownerUserId:
+          type: string
+          description: 上传者账号 id；system 表示外部 API 或历史数据
 
     ListBuildsResult:
       type: object

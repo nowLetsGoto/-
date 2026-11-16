@@ -53,6 +53,10 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) error {
 	if err := handler.DecodeJSON(w, r, &in, "name/username/email/phone/title/teamIds/projectIds"); err != nil {
 		return err
 	}
+	// 授权字段独立于普通资料编辑：directory.write 不等于可分配角色。
+	if in.RoleKey != "" && !authctx.From(r.Context()).IsSuperAdmin {
+		return contract.ErrForbidden
+	}
 	item, err := h.svc.Create(r.Context(), in)
 	if err != nil {
 		return err
@@ -66,6 +70,16 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) error {
 	if err := handler.DecodeJSON(w, r, &in, "name/username/email/phone/title/teamIds/projectIds"); err != nil {
 		return err
 	}
+	if !authctx.From(r.Context()).IsSuperAdmin {
+		current, err := h.svc.Get(r.Context(), chi.URLParam(r, "id"))
+		if err != nil {
+			return err
+		}
+		// 登录名也参与账号绑定，非超管不得借更换登录名或角色接管权限。
+		if in.RoleKey != current.RoleKey || in.Username != current.Username {
+			return contract.ErrForbidden
+		}
+	}
 	item, err := h.svc.Update(r.Context(), chi.URLParam(r, "id"), in)
 	if err != nil {
 		return err
@@ -76,7 +90,12 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) error {
 // Me 返回当前登录人；登录名由鉴权中间件写入请求上下文。
 func (h *Handler) Me(w http.ResponseWriter, r *http.Request) error {
 	identity := authctx.From(r.Context())
-	data, err := h.svc.Me(r.Context(), identity.Username, identity.IsSuperAdmin)
+	// 档案与权限必须用同一个人：由 authz 统一按账号绑定解析。
+	personID, err := h.authz.PersonID(r.Context(), identity)
+	if err != nil {
+		return err
+	}
+	data, err := h.svc.Me(r.Context(), identity.Username, personID, identity.IsSuperAdmin)
 	if err != nil {
 		return err
 	}

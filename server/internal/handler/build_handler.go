@@ -72,12 +72,13 @@ func (h *BuildHandler) Commit(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 
-	build, err := h.svc.Create(r.Context(), in)
+	build, err := h.svc.Create(r.Context(), in, authctx.From(r.Context()).UserID)
 	if err != nil {
 		return err
 	}
 	// 发布是最值得追溯的动作：谁在什么时候往哪个环境发了哪个版本。
-	h.audit.Record(r.Context(), authctx.From(r.Context()), "build.created", "build", build.ID,
+	identity := authctx.From(r.Context())
+	h.audit.Record(r.Context(), identity, "build.created", "build", build.ID,
 		map[string]any{
 			"project": in.Project, "environment": build.Environment, "platform": build.Platform,
 			"appName": build.AppName, "version": build.Version, "buildNumber": build.BuildNumber,
@@ -87,6 +88,7 @@ func (h *BuildHandler) Commit(w http.ResponseWriter, r *http.Request) error {
 
 // List 按「项目 + 环境（+平台）」查询；空结果由 service 返回 items: []，不是 404。
 func (h *BuildHandler) List(w http.ResponseWriter, r *http.Request) error {
+	identity := authctx.From(r.Context())
 	environment := r.URL.Query().Get("environment")
 	if !contract.IsValidEnvironment(environment) {
 		return BadRequest("环境参数不合法")
@@ -98,11 +100,18 @@ func (h *BuildHandler) List(w http.ResponseWriter, r *http.Request) error {
 	if platform != "" && !contract.IsValidPlatform(platform) {
 		return BadRequest("平台参数不合法")
 	}
-	result, err := h.svc.List(r.Context(), contract.ListQuery{
+	query := contract.ListQuery{
 		Project:     r.URL.Query().Get("project"),
 		Environment: environment,
 		Platform:    platform,
-	})
+	}
+	// 单人模式只返回本人上传的包；团队模式不传 owner，保持全量视图。
+	if identity.Mode == contract.ModeSolo {
+		query.OwnerUserID = identity.UserID
+		// 外部 API 没有登录人，记为 system；平台管理员单人视图需要能看到这类包。
+		query.IncludeSystem = identity.IsSuperAdmin
+	}
+	result, err := h.svc.List(r.Context(), query)
 	if err != nil {
 		return err
 	}

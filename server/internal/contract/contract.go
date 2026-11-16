@@ -204,16 +204,46 @@ var PlatformInfos = map[string]PlatformInfo{
 }
 
 // LoginInput 是登录请求体，**恰好 2 个字段**；不接受任何额外字段。
+// SessionMode 是登录时选定的数据视图：
+//   - team：平台视图，能看到全部项目数据与管理菜单；
+//   - solo：个人视图，只能看到自己上传的包与自己产生的审计记录。
+//
+// 模式随令牌签发，客户端改 localStorage 不会改变服务端行为。
+type SessionMode string
+
+const (
+	ModeSolo SessionMode = "solo"
+	ModeTeam SessionMode = "team"
+)
+
+// IsValid 防止令牌载荷里出现未知模式。
+func (m SessionMode) IsValid() bool {
+	return m == ModeSolo || m == ModeTeam
+}
+
 type LoginInput struct {
-	Username string `json:"username"`
-	Password string `json:"password"`
+	Username string      `json:"username"`
+	Password string      `json:"password"`
+	Mode     SessionMode `json:"mode"`
+}
+
+// NormalizeMode 把空值按默认单人模式处理，非法值明确拒绝。
+func NormalizeMode(mode SessionMode) (SessionMode, error) {
+	if mode == "" {
+		return ModeSolo, nil
+	}
+	if !mode.IsValid() {
+		return "", &ValidationError{Message: "登录模式只能是单人模式或团队模式"}
+	}
+	return mode, nil
 }
 
 // LoginResult 是登录成功后的无状态令牌；服务端不存会话，只校验签名与到期时间。
 type LoginResult struct {
-	Token     string `json:"token"`
-	Username  string `json:"username"`
-	ExpiresAt string `json:"expiresAt"`
+	Token     string      `json:"token"`
+	Username  string      `json:"username"`
+	ExpiresAt string      `json:"expiresAt"`
+	Mode      SessionMode `json:"mode"`
 }
 
 // WebhookConfig 是 Webhook 的完整配置；字段集合见 WebhookFields。
@@ -462,6 +492,7 @@ type Identity struct {
 	UserID       string
 	Username     string
 	IsSuperAdmin bool
+	Mode         SessionMode
 }
 
 // User 是账号视图：**不含任何密码字段**。
@@ -579,6 +610,8 @@ type Build struct {
 	DownloadPageURL  string `json:"downloadPageUrl"`
 	DownloadFileURL  string `json:"downloadFileUrl"`
 	CreatedAt        string `json:"createdAt"`
+	// OwnerUserID 是上传者账号 id；system 表示由外部 API 或历史数据产生。
+	OwnerUserID string `json:"ownerUserId"`
 }
 
 // ParsedMeta 是自动解析的 4 个规范字段。
@@ -615,6 +648,9 @@ type ListQuery struct {
 	Project     string
 	Environment string
 	Platform    string
+	// OwnerUserID 非空时按单人模式过滤；IncludeSystem 允许超管同时看到外部 API 的 system 包。
+	OwnerUserID   string
+	IncludeSystem bool
 }
 
 // ListResult 是列表响应体；空结果 Items 为空数组而不是 nil，避免前端拿到 null。

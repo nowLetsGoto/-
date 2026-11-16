@@ -2,8 +2,9 @@
 // 职责：builds 表的建表、写入、按环境(+平台)查询、按 id 查询、下载成功后原子自增计数。
 // 输入：context 与 DTO / 查询条件；输出：contract.Build 或计数新值。
 // 边界：全部参数绑定，禁止字符串拼 SQL；不碰文件系统、不做业务校验、不生成三个 URL 字段
-//       （rowToBuild 把它们留空，由 service.buildURLs 统一填充，避免换域名要刷库）；
-//       pgx.ErrNoRows / sql.ErrNoRows 统一映射为 contract.ErrNotFound。
+//
+//	（rowToBuild 把它们留空，由 service.buildURLs 统一填充，避免换域名要刷库）；
+//	pgx.ErrNoRows / sql.ErrNoRows 统一映射为 contract.ErrNotFound。
 package repository
 
 import (
@@ -30,7 +31,7 @@ var schemaDDL string
 // buildColumns 是行映射的唯一列清单，顺序与 rowToBuild 的 Scan 参数严格对应。
 const buildColumns = `id, environment, platform, app_name, package_id, version, build_number,
 	changelog, original_file_name, file_size, file_ext, relative_path, meta_source,
-	download_count, created_at`
+	download_count, created_at, owner_user_id`
 
 // BuildRepository 持有 database/sql 连接池；pgx/v5/stdlib 注册了驱动名 "pgx"。
 type BuildRepository struct {
@@ -66,12 +67,13 @@ func (r *BuildRepository) NextID(ctx context.Context) (string, error) {
 
 // Insert 写入一行完整元数据，并回填数据库生成的 created_at 与 download_count。
 // projectID 由 service 先按项目 key 解析好再传入，仓储层不关心 key。
+// Insert 写入一行完整元数据；owner 为空时落为 system（外部 API / 历史数据）。
 func (r *BuildRepository) Insert(ctx context.Context, projectID string, b *contract.Build) error {
 	const query = `INSERT INTO builds (
 		id, project_id, environment, platform, app_name, package_id, version, build_number,
 		changelog, original_file_name, file_size, file_ext, relative_path,
-		meta_source, download_count, created_at
-	) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, now())
+		meta_source, download_count, created_at, owner_user_id
+	) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, now(), $16)
 	RETURNING created_at, download_count`
 
 	var createdAt time.Time
@@ -79,7 +81,7 @@ func (r *BuildRepository) Insert(ctx context.Context, projectID string, b *contr
 	err := r.db.QueryRowContext(ctx, query,
 		b.ID, projectID, b.Environment, b.Platform, b.AppName, b.PackageID, b.Version, b.BuildNumber,
 		b.Changelog, b.OriginalFileName, b.FileSize, b.FileExt, b.RelativePath,
-		b.MetaSource, 0,
+		b.MetaSource, 0, ownerUserID(b.OwnerUserID),
 	).Scan(&createdAt, &count)
 	if err != nil {
 		return fmt.Errorf("写入包元数据失败: %w", err)
@@ -98,6 +100,16 @@ func (r *BuildRepository) List(ctx context.Context, projectID string, q contract
 	if q.Platform != "" {
 		query.WriteString(` AND platform = $3`)
 		args = append(args, q.Platform)
+	}
+	if q.OwnerUserID != "" {
+		// 占位符按已追加的参数数量计算，避免与可选 platform 冲突。
+		next := len(args) + 1
+		if q.IncludeSystem {
+			query.WriteString(fmt.Sprintf(` AND (owner_user_id = $%d OR owner_user_id = 'system')`, next))
+		} else {
+			query.WriteString(fmt.Sprintf(` AND owner_user_id = $%d`, next))
+		}
+		args = append(args, q.OwnerUserID)
 	}
 	query.WriteString(` ORDER BY created_at DESC`)
 
@@ -159,11 +171,19 @@ func rowToBuild(row rowScanner) (contract.Build, error) {
 		&b.ID, &b.Environment, &b.Platform, &b.AppName, &b.PackageID,
 		&b.Version, &b.BuildNumber, &b.Changelog, &b.OriginalFileName,
 		&b.FileSize, &b.FileExt, &b.RelativePath, &b.MetaSource,
-		&b.DownloadCount, &createdAt,
+		&b.DownloadCount, &createdAt, &b.OwnerUserID,
 	)
 	if err != nil {
 		return contract.Build{}, err
 	}
 	b.CreatedAt = createdAt.UTC().Format(time.RFC3339Nano)
 	return b, nil
+}
+
+// ownerUserID 保证 owner 永远有值：system 代表不是某个登录人手动上传的（外部 API / 历史数据）。
+func ownerUserID(owner string) string {
+	if owner == "" {
+		return "system"
+	}
+	return owner
 }

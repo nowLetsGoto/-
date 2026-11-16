@@ -7,7 +7,7 @@
  */
 import { NavLink, useNavigate } from 'react-router-dom';
 import { clearSession, readSession } from '../api/session';
-import { useMe } from '../hooks/useMe';
+import { clearMe, useMe } from '../hooks/useMe';
 import { useProjectKey } from '../hooks/useProjects';
 import { Icon } from './icons';
 import { NAV_SECTIONS, navHref } from './navigation';
@@ -15,20 +15,44 @@ import { NAV_SECTIONS, navHref } from './navigation';
 export function Sidebar(): JSX.Element {
   const navigate = useNavigate();
   const session = readSession();
+  // 模式来自签名令牌签发时写入的会话，仅用于菜单投影；服务端另有强制边界。
+  const mode = session?.mode ?? 'solo';
   // 只读 URL / localStorage：侧栏不为拼链接去拉项目列表（平台级页面因此零额外请求）。
   const projectKey = useProjectKey();
-  // /me 有模块级缓存，整页只取一次；它的 isSuperAdmin 决定「超级管理员」整组是否渲染。
+  // /me 有模块级缓存，整页只取一次；它的 isSuperAdmin 决定超管专属菜单是否渲染。
   const { me } = useMe();
-  // 两层过滤：整组是否仅超管可见 + 单项所需权限点。
-  // me 未加载完时视为"无权限"，宁可晚 50ms 出现菜单，也不要给出点进去就 403 的假入口。
-  const canSee = (permission?: string): boolean => !permission || me?.permissions.includes(permission) === true;
+  const isAdmin = me?.isSuperAdmin === true;
+
+  // 单人模式：只有概览 / 应用包 / 应用；管理员额外保留审计日志与平台集成。
+  // 团队模式：沿用完整的角色权限投影。
+  const soloAllowed = new Set(['/overview', '/packages', '/apps']);
+  if (mode === 'solo' && isAdmin) {
+    soloAllowed.add('/admin/accounts');
+    soloAllowed.add('/admin/audit-logs');
+    soloAllowed.add('/settings');
+  }
+  const canSee = (item: (typeof NAV_SECTIONS)[number]['items'][number]): boolean => {
+    if (mode === 'solo') {
+      return soloAllowed.has(item.path);
+    }
+    return !item.permission || me?.permissions.includes(item.permission) === true;
+  };
+
   const sections = NAV_SECTIONS.map((section) => ({
     ...section,
-    items: section.items.filter((item) => canSee(item.permission)),
-  })).filter((section) => (!section.requireSuperAdmin || me?.isSuperAdmin === true) && section.items.length > 0);
+    items: section.items.filter(canSee),
+  }))
+    .filter((section) => (!section.requireSuperAdmin || isAdmin) && section.items.length > 0)
+    .map((section) =>
+      mode === 'solo' && isAdmin && section.requireSuperAdmin
+        ? { ...section, title: '管理员工具' }
+        : section,
+    );
 
   /** 退出即清空本地会话并回登录页；令牌是无状态的，服务端没有需要调用的登出接口。 */
   const handleLogout = (): void => {
+    // 权限菜单随会话走：不清缓存会把上一个账号的菜单带到下一个账号
+    clearMe();
     clearSession();
     navigate('/login', { replace: true });
   };

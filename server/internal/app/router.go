@@ -137,24 +137,28 @@ func NewRouter(d Deps) http.Handler {
 			// 发布/暂存：提交时项目在请求体里，由 handler 内部判定 build.write
 			private.Post("/builds/stage", middleware.Wrap(d.Builds.Stage))
 			private.Post("/builds", middleware.Wrap(d.Builds.Commit))
-			private.With(authzmw.RequirePermission(d.Authz, "build.read")).Get("/builds", middleware.Wrap(d.Builds.List))
+			private.With(authzmw.RequireProjectPermission(d.Authz, "build.read")).Get("/builds", middleware.Wrap(d.Builds.List))
 
 			private.Get("/me", middleware.Wrap(d.People.Me))
+			// 项目读取是单人模式的基础设施：没有项目列表就无法进入自己的应用包页。
 			private.With(authzmw.RequirePermission(d.Authz, "project.read")).Get("/projects", middleware.Wrap(d.Projects.List))
-			private.With(authzmw.RequirePermission(d.Authz, "project.write")).Post("/projects", middleware.Wrap(d.Projects.Create))
 			private.With(authzmw.RequirePermission(d.Authz, "project.read")).Get("/projects/{key}", middleware.Wrap(d.Projects.Get))
-			private.With(authzmw.RequirePermission(d.Authz, "project.write")).Put("/projects/{key}", middleware.Wrap(d.Projects.Update))
-			private.With(authzmw.RequirePermission(d.Authz, "directory.read")).Get("/people", middleware.Wrap(d.People.List))
-			private.With(authzmw.RequirePermission(d.Authz, "directory.write")).Post("/people", middleware.Wrap(d.People.Create))
-			private.With(authzmw.RequirePermission(d.Authz, "directory.read")).Get("/people/{id}", middleware.Wrap(d.People.Get))
-			private.With(authzmw.RequirePermission(d.Authz, "directory.write")).Put("/people/{id}", middleware.Wrap(d.People.Update))
-			private.With(authzmw.RequirePermission(d.Authz, "directory.read")).Get("/teams", middleware.Wrap(d.Teams.List))
-			private.With(authzmw.RequirePermission(d.Authz, "directory.write")).Post("/teams", middleware.Wrap(d.Teams.Create))
-			private.With(authzmw.RequirePermission(d.Authz, "directory.read")).Get("/teams/{id}", middleware.Wrap(d.Teams.Get))
-			private.With(authzmw.RequirePermission(d.Authz, "directory.write")).Put("/teams/{id}", middleware.Wrap(d.Teams.Update))
-			private.Get("/permissions", middleware.Wrap(d.Roles.Permissions))
-			private.With(authzmw.RequirePermission(d.Authz, "role.read")).Get("/roles", middleware.Wrap(d.Roles.List))
-			private.With(authzmw.RequirePermission(d.Authz, "role.read")).Get("/roles/{key}", middleware.Wrap(d.Roles.Get))
+			private.Group(func(team chi.Router) {
+				team.Use(authzmw.RequireTeamMode)
+				team.With(authzmw.RequirePermission(d.Authz, "project.write")).Post("/projects", middleware.Wrap(d.Projects.Create))
+				team.With(authzmw.RequirePermission(d.Authz, "project.write")).Put("/projects/{key}", middleware.Wrap(d.Projects.Update))
+				team.With(authzmw.RequirePermission(d.Authz, "directory.read")).Get("/people", middleware.Wrap(d.People.List))
+				team.With(authzmw.RequirePermission(d.Authz, "directory.write")).Post("/people", middleware.Wrap(d.People.Create))
+				team.With(authzmw.RequirePermission(d.Authz, "directory.read")).Get("/people/{id}", middleware.Wrap(d.People.Get))
+				team.With(authzmw.RequirePermission(d.Authz, "directory.write")).Put("/people/{id}", middleware.Wrap(d.People.Update))
+				team.With(authzmw.RequirePermission(d.Authz, "directory.read")).Get("/teams", middleware.Wrap(d.Teams.List))
+				team.With(authzmw.RequirePermission(d.Authz, "directory.write")).Post("/teams", middleware.Wrap(d.Teams.Create))
+				team.With(authzmw.RequirePermission(d.Authz, "directory.read")).Get("/teams/{id}", middleware.Wrap(d.Teams.Get))
+				team.With(authzmw.RequirePermission(d.Authz, "directory.write")).Put("/teams/{id}", middleware.Wrap(d.Teams.Update))
+				team.Get("/permissions", middleware.Wrap(d.Roles.Permissions))
+				team.With(authzmw.RequirePermission(d.Authz, "role.read")).Get("/roles", middleware.Wrap(d.Roles.List))
+				team.With(authzmw.RequirePermission(d.Authz, "role.read")).Get("/roles/{key}", middleware.Wrap(d.Roles.Get))
+			})
 		})
 
 		// 超级管理员专区：RequireAuth 之后再叠一层 RequireSuperAdmin，
@@ -162,6 +166,7 @@ func NewRouter(d Deps) http.Handler {
 		api.Group(func(admin chi.Router) {
 			admin.Use(loginmw.RequireAuth(d.Verify))
 			admin.Use(loginmw.RequireSuperAdmin)
+			// 账号管理对超管全模式开放：单人管理员也需要管理自己的账号与成员入口。
 			admin.Get("/admin/users", middleware.Wrap(d.Users.List))
 			admin.Post("/admin/users", middleware.Wrap(d.Users.Create))
 			admin.Put("/admin/users/{id}", middleware.Wrap(d.Users.Update))
@@ -169,8 +174,11 @@ func NewRouter(d Deps) http.Handler {
 			admin.Post("/admin/users/{id}/status", middleware.Wrap(d.Users.SetStatus))
 			admin.Get("/admin/audit-logs", middleware.Wrap(d.Audit.List))
 			// 角色的写操作属于"改权限"，只对超管开放
-			admin.Post("/roles", middleware.Wrap(d.Roles.Create))
-			admin.Put("/roles/{key}", middleware.Wrap(d.Roles.Update))
+			admin.Group(func(team chi.Router) {
+				team.Use(authzmw.RequireTeamMode)
+				team.Post("/roles", middleware.Wrap(d.Roles.Create))
+				team.Put("/roles/{key}", middleware.Wrap(d.Roles.Update))
+			})
 
 			// 平台设置与密钥：路径仍是 /settings，但只对超管开放。
 			admin.Get("/settings", middleware.Wrap(d.Settings.Get))

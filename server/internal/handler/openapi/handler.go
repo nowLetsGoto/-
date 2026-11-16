@@ -2,7 +2,8 @@
 // 职责：一次 multipart 请求完成「写 tmp → 解析 → 落盘写库 → 生成地址」，返回完整 Build。
 // 输入：multipart 文件 + 环境 / 平台 + 可选文本字段；输出：201 + Build。
 // 边界：不重复实现暂存与发布逻辑（复用 handler.ReadUpload 与 service 的 Stage/Create），
-//       不做鉴权（在 middleware/apikey），不提供查询 / 删除能力。
+//
+//	不做鉴权（在 middleware/apikey），不提供查询 / 删除能力。
 package openapi
 
 import (
@@ -54,7 +55,7 @@ func (h *Handler) Upload(w http.ResponseWriter, r *http.Request) error {
 	}
 	handler.AttachLogFields(r, "source=openapi project="+in.Project+" environment="+in.Environment+" platform="+in.Platform)
 
-	build, err := h.svc.Create(r.Context(), in)
+	build, err := h.svc.Create(r.Context(), in, "")
 	if err != nil {
 		return err
 	}

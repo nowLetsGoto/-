@@ -1,10 +1,13 @@
 // Package service 是业务编排层，也是全仓唯一的 URL 生成处与唯一的「上传完成」时点。
 // 职责：stage 暂存解析、Create 提交发布（token 校验 → rename → 写库 → 失败补偿 → 生成绝对地址）、
-//       List/Get 填充地址、ResolveFile 安全定位、下载成功后的计数旁路、tmp 治理。
+//
+//	List/Get 填充地址、ResolveFile 安全定位、下载成功后的计数旁路、tmp 治理。
+//
 // 输入：contract DTO、StagedFile、config 配置、storage 路径对象、repository 仓储对象。
 // 输出：完整 Build / 列表 / 文件引用 / StageResult。
 // 边界：不写 SQL（交 repository）、不解析 multipart（交 handler）、不拼存储路径（交 storage）；
-//       提交时绝不调用 parser、绝不用解析值覆盖用户值，表单即最终真值，仅对空字段兜底。
+//
+//	提交时绝不调用 parser、绝不用解析值覆盖用户值，表单即最终真值，仅对空字段兜底。
 package service
 
 import (
@@ -229,7 +232,8 @@ func (s *BuildService) validateStageToken(token string) (stagedLookup, error) {
 }
 
 // Create 是提交的唯一编排：表单即最终真值，提交时不再解析、不再覆盖用户值。
-func (s *BuildService) Create(ctx context.Context, in contract.CommitInput) (contract.Build, error) {
+// Create 发布一个包；ownerUserID 是操作者账号 id，外部 API 传空串。
+func (s *BuildService) Create(ctx context.Context, in contract.CommitInput, ownerUserID string) (contract.Build, error) {
 	project, err := s.resolveProject(ctx, in.Project)
 	if err != nil {
 		return contract.Build{}, err
@@ -302,6 +306,7 @@ func (s *BuildService) Create(ctx context.Context, in contract.CommitInput) (con
 		RelativePath:     s.paths.RelativePath(in.Environment, in.Platform, id, ext),
 		MetaSource:       metaSource,
 		DownloadCount:    0,
+		OwnerUserID:      ownerUserID,
 	}
 
 	if err := s.repo.Insert(ctx, project.ID, &build); err != nil {

@@ -73,10 +73,13 @@ func (s *Service) Update(ctx context.Context, id string, in contract.PersonInput
 }
 
 // Me 返回当前登录人的档案投影。
-// 登录账号还没有对应人员时不算错误：返回空档案，前端据此回退到「第一个项目」。
-// isSuperAdmin 由鉴权中间件判定的身份传入，前端只认这一个布尔值。
-func (s *Service) Me(ctx context.Context, username string, isSuperAdmin bool) (contract.Me, error) {
-	person, err := s.repo.FindByUsername(ctx, username)
+// personID 由 authz 服务按"账号绑定优先"解析，和权限判定共用同一人；
+// 没有对应人员不算错误：返回空档案，前端据此回退到第一个项目。
+func (s *Service) Me(ctx context.Context, username, personID string, isSuperAdmin bool) (contract.Me, error) {
+	if personID == "" {
+		return contract.Me{Username: username, ProjectKeys: []string{}, IsSuperAdmin: isSuperAdmin}, nil
+	}
+	person, err := s.repo.FindByID(ctx, personID)
 	if errors.Is(err, contract.ErrNotFound) {
 		return contract.Me{Username: username, ProjectKeys: []string{}, IsSuperAdmin: isSuperAdmin}, nil
 	}

@@ -9,6 +9,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"dandelion/server/internal/authctx"
 	"dandelion/server/internal/contract"
 	"dandelion/server/internal/handler"
 	projectsvc "dandelion/server/internal/service/project"
@@ -42,11 +43,15 @@ func (h *Handler) Get(w http.ResponseWriter, r *http.Request) error {
 	return handler.OK(w, data)
 }
 
-// Create 新建项目；请求体恰好 4 个字段（key / name / description / repoUrl）。
+// Create 新建项目；请求体恰好 5 个字段（key / name / description / repoUrl / roleKey）。
 func (h *Handler) Create(w http.ResponseWriter, r *http.Request) error {
 	var in contract.ProjectInput
-	if err := handler.DecodeJSON(w, r, &in, "key/name/description/repoUrl"); err != nil {
+	if err := handler.DecodeJSON(w, r, &in, "key/name/description/repoUrl/roleKey"); err != nil {
 		return err
+	}
+	// 项目角色决定所有成员的权限；不能随普通项目创建一起授予。
+	if in.RoleKey != "" && !authctx.From(r.Context()).IsSuperAdmin {
+		return contract.ErrForbidden
 	}
 	item, err := h.svc.Create(r.Context(), in)
 	if err != nil {
@@ -58,10 +63,20 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) error {
 // Update 按 key 编辑项目；key 本身不可改，因此请求体里即使带上也会被忽略。
 func (h *Handler) Update(w http.ResponseWriter, r *http.Request) error {
 	var in contract.ProjectInput
-	if err := handler.DecodeJSON(w, r, &in, "key/name/description/repoUrl"); err != nil {
+	if err := handler.DecodeJSON(w, r, &in, "key/name/description/repoUrl/roleKey"); err != nil {
 		return err
 	}
 	key := chi.URLParam(r, "key")
+	if !authctx.From(r.Context()).IsSuperAdmin {
+		current, err := h.svc.Detail(r.Context(), key)
+		if err != nil {
+			return err
+		}
+		// 只有超管能改项目角色；普通项目编辑者不能借此给自己提权。
+		if in.RoleKey != current.RoleKey {
+			return contract.ErrForbidden
+		}
+	}
 	item, err := h.svc.Update(r.Context(), key, in)
 	if err != nil {
 		return err

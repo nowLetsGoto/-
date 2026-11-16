@@ -10,6 +10,7 @@ import type { FormEvent } from 'react';
 import { Navigate, useLocation, useNavigate } from 'react-router-dom';
 import { login } from '../../api/auth';
 import { errorMessage } from '../../api/client';
+import type { SessionMode } from '../../api/session';
 import { readSession, saveSession } from '../../api/session';
 import { ENVIRONMENTS } from '../../utils/format';
 import './login.css';
@@ -24,6 +25,8 @@ export function LoginPage(): JSX.Element {
   const location = useLocation();
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
+  // 默认单人模式：用户明确要求；团队模式是主动选择后的全量视图。
+  const [mode, setMode] = useState<SessionMode>('solo');
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState('');
   const [submitting, setSubmitting] = useState(false);
@@ -49,8 +52,8 @@ export function LoginPage(): JSX.Element {
     setSubmitting(true);
     setError('');
     try {
-      const result = await login({ username: trimmedUsername, password });
-      saveSession({ token: result.token, username: result.username });
+      const result = await login({ username: trimmedUsername, password, mode });
+      saveSession({ token: result.token, username: result.username, mode: result.mode });
       // replace：登录页不留历史，浏览器返回不会退回表单。
       navigate(from, { replace: true });
     } catch (err) {
@@ -104,6 +107,34 @@ export function LoginPage(): JSX.Element {
           </header>
 
           <form onSubmit={handleSubmit} noValidate>
+            <fieldset className="login-mode">
+              <legend className="login-label">使用模式</legend>
+              <div className="login-mode-options">
+                <label className={mode === 'solo' ? 'login-mode-option login-mode-active' : 'login-mode-option'}>
+                  <input
+                    type="radio"
+                    name="mode"
+                    value="solo"
+                    checked={mode === 'solo'}
+                    onChange={() => setMode('solo')}
+                  />
+                  <span className="login-mode-title">单人模式</span>
+                  <span className="login-mode-desc">只看自己上传的应用包</span>
+                </label>
+                <label className={mode === 'team' ? 'login-mode-option login-mode-active' : 'login-mode-option'}>
+                  <input
+                    type="radio"
+                    name="mode"
+                    value="team"
+                    checked={mode === 'team'}
+                    onChange={() => setMode('team')}
+                  />
+                  <span className="login-mode-title">团队模式</span>
+                  <span className="login-mode-desc">查看团队全部数据与管理功能</span>
+                </label>
+              </div>
+            </fieldset>
+
             <label className="login-field">
               <span className="login-label">用户名</span>
               <span className="login-control">

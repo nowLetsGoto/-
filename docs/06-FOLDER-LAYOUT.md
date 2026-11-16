@@ -68,6 +68,7 @@
 | `internal/service/webhook/` | Webhook 投递：按配置挑字段、HMAC 签名、POST；另提供同步测试投递 | 配置、`contract.Build` | 投递结果 / 日志 | 不写库、不重试、不在失败时影响发布主流程 |
 | **`internal/{handler,service,repository}/project/`** | 项目：`handler` 是 `/projects` 与 `/projects/{key}`、`service` 是 key 规范化 / 库地址校验 / 详情组装、`repository` 是 projects 表与项目侧的两张关联表 | 请求、DB | `contract.Project` / `ProjectDetail` | 不改 `builds` 表结构；包的归属解析（key → project_id）在 `service/build_service.resolveProject`；**不含任何权限判断**（P2 才做） |
 | **`internal/{handler,service,repository}/audit/`** | 审计：`handler` 是 `/admin/audit-logs`（只读）、`service` 负责组装与容错、`repository` 只提供 INSERT 与分页查询 | 请求、DB | `contract.AuditLog` | **不提供 UPDATE / DELETE**；写失败只记日志、不回滚业务 |
+| `internal/middleware/authz/`（模式限制：团队专用 / 管理员单人可用）
 | `internal/authctx/` | 调用者身份在 context 里的存取 | ctx、`contract.Identity` | 写入/读取 | 单独成包是为**打断 import 环**（中间件用 `handler.WriteError`，handler 又要读身份）；不含任何判定逻辑 |
 | **`internal/{handler,service,repository}/role/`** | 角色与权限：`handler` 是 `/roles`（读全员、写超管）与 `/permissions` 目录、`service` 负责校验与内置角色播种、`repository` 是 roles + role_permissions | 请求、DB | `contract.Role` / `Permission` | 权限目录只写在 `contract.Permissions`，库里不重复定义；`super-admin` 权限不可改 |
 | **`internal/{handler,service,repository}/people/`** | 人员：`handler` 是 `/people` 与 `/me`、`service` 是字段校验与「当前登录人」投影、`repository` 是 people 表 + 人员侧的两张关联表 + 角色外键（`LEFT JOIN roles` 取角色名） | 请求、DB | `contract.Person` / `Me` | 只管人员这一侧；团队侧对 `team_members` 的写入在 `repository/teams`，两侧各自维护自己那一半 |

@@ -80,7 +80,7 @@ func (s *Service) EnsureAdmin(ctx context.Context) error {
 
 // Authenticate 校验凭据并签发令牌。
 // 账号不存在与密码错误返回同一个错误，避免被用来枚举账号。
-func (s *Service) Authenticate(ctx context.Context, username, password, ip string) (contract.LoginResult, error) {
+func (s *Service) Authenticate(ctx context.Context, username, password, ip string, mode contract.SessionMode) (contract.LoginResult, error) {
 	record, err := s.users.FindByUsername(ctx, strings.TrimSpace(username))
 	if err != nil {
 		if errors.Is(err, contract.ErrNotFound) {
@@ -95,8 +95,12 @@ func (s *Service) Authenticate(ctx context.Context, username, password, ip strin
 		return contract.LoginResult{}, contract.ErrInvalidCredentials
 	}
 
+	mode, err = contract.NormalizeMode(mode)
+	if err != nil {
+		return contract.LoginResult{}, err
+	}
 	expiresAt := time.Now().Add(s.ttl)
-	token, err := s.issue(record.User.Username, record.TokenVersion, expiresAt.Unix())
+	token, err := s.issue(record.User.Username, record.TokenVersion, expiresAt.Unix(), mode)
 	if err != nil {
 		return contract.LoginResult{}, err
 	}
@@ -108,6 +112,7 @@ func (s *Service) Authenticate(ctx context.Context, username, password, ip strin
 		Token:     token,
 		Username:  record.User.Username,
 		ExpiresAt: expiresAt.UTC().Format(time.RFC3339),
+		Mode:      mode,
 	}, nil
 }
 
@@ -124,7 +129,7 @@ func (s *Service) Verify(ctx context.Context, token string) (contract.Identity, 
 	}
 
 	parts := strings.Split(payload, "|")
-	if len(parts) != 3 {
+	if len(parts) != 4 {
 		return contract.Identity{}, false
 	}
 	version, err := strconv.Atoi(parts[1])
@@ -136,6 +141,11 @@ func (s *Service) Verify(ctx context.Context, token string) (contract.Identity, 
 		return contract.Identity{}, false
 	}
 
+	mode := contract.SessionMode(parts[3])
+	if !mode.IsValid() {
+		return contract.Identity{}, false
+	}
+
 	record, err := s.users.FindByUsername(ctx, parts[0])
 	if err != nil || record.User.Status != statusActive || record.TokenVersion != version {
 		return contract.Identity{}, false
@@ -144,18 +154,19 @@ func (s *Service) Verify(ctx context.Context, token string) (contract.Identity, 
 		UserID:       record.User.ID,
 		Username:     record.User.Username,
 		IsSuperAdmin: record.User.IsSuperAdmin,
+		Mode:         mode,
 	}, true
 }
 
 const statusActive = "active"
 
-// issue 生成「账号|版本|到期时间戳.签名」。
-// 载荷里带版本号，是为了让「禁用/改密/强制下线」无需会话表就能让旧令牌失效。
-func (s *Service) issue(username string, version int, expiresAt int64) (string, error) {
+// issue 生成「账号|版本|到期时间戳|模式.签名」。
+// 版本让"禁用/改密"立即使旧令牌失效；模式决定服务端数据视图，必须进签名防止篡改。
+func (s *Service) issue(username string, version int, expiresAt int64, mode contract.SessionMode) (string, error) {
 	if strings.ContainsAny(username, "|.") {
 		return "", fmt.Errorf("账号名不能包含 | 或 .")
 	}
-	payload := fmt.Sprintf("%s|%d|%d", username, version, expiresAt)
+	payload := fmt.Sprintf("%s|%d|%d|%s", username, version, expiresAt, mode)
 	return payload + "." + s.mac(payload), nil
 }
 

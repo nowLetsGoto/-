@@ -231,3 +231,7 @@ BEGIN
       FOREIGN KEY (role_key) REFERENCES roles(key) ON DELETE SET NULL;
   END IF;
 END $$;
+
+-- builds 的操作者：单人模式只显示自己上传的包；外部 API 上传固定记为 system。
+ALTER TABLE builds ADD COLUMN IF NOT EXISTS owner_user_id TEXT NOT NULL DEFAULT 'system';
+CREATE INDEX IF NOT EXISTS idx_builds_owner ON builds (owner_user_id, created_at DESC);

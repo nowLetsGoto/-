@@ -10,7 +10,10 @@
 //  1. 超级管理员 → 全量权限（否则会出现"没人能改配置"的死锁）
 //  2. 项目角色：请求带了项目且该项目配置了角色 → 用它的权限
 //  3. 人员角色：项目没配角色时，回落到人员自身的角色
-//  4. 都没有 → 空集（无权限）
+//  4. 没有角色 → 只有默认的业务读取权限；不会默认获得任何写权限。
+//
+// 默认能力是独立基线：概览、应用包、应用始终可读，项目列表可供筛选；
+// 项目角色与人员角色仍按覆盖而非取并集计算其余权限。
 package authz
 
 import (
@@ -54,19 +57,19 @@ func (s *Service) Permissions(ctx context.Context, identity contract.Identity, p
 	if err != nil {
 		return nil, err
 	}
+	permissions := defaultPermissions()
 	if roleKey == "" {
-		return map[string]struct{}{}, nil
+		return permissions, nil
 	}
 
 	role, err := s.roles.FindByKey(ctx, roleKey)
 	if err != nil {
-		// 角色被删但有悬空引用时不该 500：按"无权限"处理，由页面提示重新分配。
+		// 角色已删除时只保留默认读取能力，绝不回退到另一个可能更高权限的角色。
 		if errors.Is(err, contract.ErrNotFound) {
-			return map[string]struct{}{}, nil
+			return permissions, nil
 		}
 		return nil, err
 	}
-	permissions := make(map[string]struct{}, len(role.Permissions))
 	for _, permission := range role.Permissions {
 		permissions[permission] = struct{}{}
 	}
@@ -86,6 +89,33 @@ func (s *Service) Check(ctx context.Context, identity contract.Identity, project
 	return nil
 }
 
+// PersonID 返回账号对应的人员档案：显式绑定优先，兼容此前按登录名关联的存量数据。
+// /me 与权限判定共用它，保证"页面显示的人"和"算权限用的人"永远是同一个。
+func (s *Service) PersonID(ctx context.Context, identity contract.Identity) (string, error) {
+	if identity.UserID == "" {
+		return "", nil
+	}
+	record, err := s.users.FindByID(ctx, identity.UserID)
+	if err != nil {
+		if errors.Is(err, contract.ErrNotFound) {
+			return "", nil
+		}
+		return "", err
+	}
+	if record.User.PersonID != "" {
+		return record.User.PersonID, nil
+	}
+	// 兼容存量：账号尚未绑定人员时，按登录名找一个同名档案。
+	person, err := s.people.FindByUsername(ctx, identity.Username)
+	if err != nil {
+		if errors.Is(err, contract.ErrNotFound) {
+			return "", nil
+		}
+		return "", err
+	}
+	return person.ID, nil
+}
+
 // resolveRoleKey 按「项目角色 → 人员角色」的顺序找出该用的角色。
 func (s *Service) resolveRoleKey(ctx context.Context, identity contract.Identity, projectKey string) (string, error) {
 	// 2) 项目角色优先
@@ -99,21 +129,12 @@ func (s *Service) resolveRoleKey(ctx context.Context, identity contract.Identity
 		}
 	}
 
-	// 3) 人员角色兜底：账号 → 人员档案 → 角色
-	if identity.UserID == "" {
-		return "", nil
-	}
-	record, err := s.users.FindByID(ctx, identity.UserID)
-	if err != nil {
-		if errors.Is(err, contract.ErrNotFound) {
-			return "", nil
-		}
+	// 3) 人员角色兜底：与 /me 共用同一个人员解析入口。
+	personID, err := s.PersonID(ctx, identity)
+	if err != nil || personID == "" {
 		return "", err
 	}
-	if record.User.PersonID == "" {
-		return "", nil
-	}
-	person, err := s.people.FindByID(ctx, record.User.PersonID)
+	person, err := s.people.FindByID(ctx, personID)
 	if err != nil {
 		if errors.Is(err, contract.ErrNotFound) {
 			return "", nil
@@ -131,6 +152,13 @@ func Sorted(set map[string]struct{}) []string {
 	}
 	sort.Strings(keys)
 	return keys
+}
+
+// defaultPermissions 是已登录账号的最小读取基线。
+// build.read 支撑概览/应用包/应用；project.read 只为页面选择项目提供数据，
+// 不授予人员、团队、角色、系统设置的查看或任何写入权限。每次返回独立集合，防止调用方污染基线。
+func defaultPermissions() map[string]struct{} {
+	return map[string]struct{}{"build.read": {}, "project.read": {}}
 }
 
 // allPermissions 返回权限目录的全集。
