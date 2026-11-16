@@ -25,7 +25,11 @@ func NewRepository(db *sql.DB) *Repository {
 	return &Repository{db: db}
 }
 
-const columns = `id::text, key, name, description, repo_url, created_at`
+// selectColumns 带 LEFT JOIN 取角色名：列表要显示"项目角色"，一次查完不做 N+1。
+const selectColumns = `p.id::text, p.key, p.name, p.description, p.repo_url,
+coalesce(p.role_key, ''), coalesce(r.name, ''), p.created_at`
+
+const fromClause = ` FROM projects p LEFT JOIN roles r ON r.key = p.role_key`
 
 // List 返回指定页的项目与总数；PageSize=0 表示全量（下拉选项、守卫回退用）。
 func (r *Repository) List(ctx context.Context, page contract.PageQuery) ([]contract.Project, int, error) {
@@ -35,7 +39,7 @@ func (r *Repository) List(ctx context.Context, page contract.PageQuery) ([]contr
 	}
 
 	rows, err := r.db.QueryContext(ctx,
-		`SELECT `+columns+` FROM projects ORDER BY created_at ASC LIMIT $1 OFFSET $2`,
+		`SELECT `+selectColumns+fromClause+` ORDER BY p.created_at ASC LIMIT $1 OFFSET $2`,
 		page.Limit(), page.Offset())
 	if err != nil {
 		return nil, 0, fmt.Errorf("查询项目列表失败: %w", err)
@@ -58,7 +62,7 @@ func (r *Repository) List(ctx context.Context, page contract.PageQuery) ([]contr
 
 // FindByKey 按 key 查询；无记录统一转 contract.ErrProjectInvalid，供错误中间件转 400。
 func (r *Repository) FindByKey(ctx context.Context, key string) (contract.Project, error) {
-	row := r.db.QueryRowContext(ctx, `SELECT `+columns+` FROM projects WHERE key = $1`, key)
+	row := r.db.QueryRowContext(ctx, `SELECT `+selectColumns+fromClause+` WHERE p.key = $1`, key)
 	item, err := scan(row)
 	if err != nil {
 		return contract.Project{}, translate(err)
@@ -68,30 +72,29 @@ func (r *Repository) FindByKey(ctx context.Context, key string) (contract.Projec
 
 // Create 插入并回填创建时间；key 冲突由唯一索引拒绝，service 负责给出中文提示。
 func (r *Repository) Create(ctx context.Context, in contract.ProjectInput) (contract.Project, error) {
-	const query = `INSERT INTO projects (key, name, description, repo_url)
-	VALUES ($1, $2, $3, $4)
-	RETURNING ` + columns
+	const query = `INSERT INTO projects (key, name, description, repo_url, role_key)
+	VALUES ($1, $2, $3, $4, NULLIF($5, ''))
+	RETURNING key`
 
-	row := r.db.QueryRowContext(ctx, query, in.Key, in.Name, in.Description, in.RepoURL)
-	item, err := scan(row)
-	if err != nil {
+	var created string
+	if err := r.db.QueryRowContext(ctx, query, in.Key, in.Name, in.Description, in.RepoURL, in.RoleKey).Scan(&created); err != nil {
 		return contract.Project{}, err
 	}
-	return item, nil
+	return r.FindByKey(ctx, created)
 }
 
 // Update 按 key 改名称 / 描述 / 库地址；key 是 URL 段，不允许改。
 func (r *Repository) Update(ctx context.Context, key string, in contract.ProjectInput) (contract.Project, error) {
-	const query = `UPDATE projects SET name = $2, description = $3, repo_url = $4
+	const query = `UPDATE projects
+	SET name = $2, description = $3, repo_url = $4, role_key = NULLIF($5, '')
 	WHERE key = $1
-	RETURNING ` + columns
+	RETURNING key`
 
-	row := r.db.QueryRowContext(ctx, query, key, in.Name, in.Description, in.RepoURL)
-	item, err := scan(row)
-	if err != nil {
+	var updated string
+	if err := r.db.QueryRowContext(ctx, query, key, in.Name, in.Description, in.RepoURL, in.RoleKey).Scan(&updated); err != nil {
 		return contract.Project{}, translate(err)
 	}
-	return item, nil
+	return r.FindByKey(ctx, updated)
 }
 
 // ListPersons 返回该项目关联的人员（带名字），详情页直接渲染，不必再拉一次人员列表。
@@ -152,7 +155,8 @@ type scanner interface {
 func scan(row scanner) (contract.Project, error) {
 	var item contract.Project
 	var createdAt time.Time
-	if err := row.Scan(&item.ID, &item.Key, &item.Name, &item.Description, &item.RepoURL, &createdAt); err != nil {
+	if err := row.Scan(&item.ID, &item.Key, &item.Name, &item.Description, &item.RepoURL,
+		&item.RoleKey, &item.RoleName, &createdAt); err != nil {
 		return contract.Project{}, err
 	}
 	item.CreatedAt = createdAt.UTC().Format(time.RFC3339)

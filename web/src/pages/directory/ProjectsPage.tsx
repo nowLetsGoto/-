@@ -50,6 +50,17 @@ export function ProjectsPage(): JSX.Element {
         ),
     },
     {
+      title: '项目角色',
+      key: 'role',
+      width: 130,
+      render: (_, project) =>
+        project.roleName ? (
+          <span className="badge badge-role">{project.roleName}</span>
+        ) : (
+          <span className="cell-sub">沿用人员角色</span>
+        ),
+    },
+    {
       title: '描述',
       key: 'description',
       render: (_, project) => <span className="cell-sub">{project.description || '—'}</span>,

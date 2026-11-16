@@ -1735,6 +1735,16 @@ code {
   color: var(--color-muted);
 }
 
+.badge-role {
+  background: var(--color-primary-soft);
+  border: 1px solid transparent;
+  color: var(--color-primary-strong);
+}
+
+.select-block {
+  width: 100%;
+}
+
 /* ================= 超级管理员专区 ================= */
 
 /* 分组标题：顶部加分隔线，与日常菜单刻意分开 */

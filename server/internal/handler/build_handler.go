@@ -23,6 +23,7 @@ import (
 	"dandelion/server/internal/contract"
 	"dandelion/server/internal/service"
 	auditsvc "dandelion/server/internal/service/audit"
+	authzsvc "dandelion/server/internal/service/authz"
 	"dandelion/server/internal/storage"
 )
 
@@ -32,10 +33,12 @@ type BuildHandler struct {
 	svc   *service.BuildService
 	paths *storage.Paths
 	audit *auditsvc.Service
+	// authz 用于"项目在请求体里"的场景：中间件拿不到项目，只能在解码后判定。
+	authz *authzsvc.Service
 }
 
-func NewBuildHandler(cfg config.Config, svc *service.BuildService, paths *storage.Paths, audit *auditsvc.Service) *BuildHandler {
-	return &BuildHandler{cfg: cfg, svc: svc, paths: paths, audit: audit}
+func NewBuildHandler(cfg config.Config, svc *service.BuildService, paths *storage.Paths, audit *auditsvc.Service, authz *authzsvc.Service) *BuildHandler {
+	return &BuildHandler{cfg: cfg, svc: svc, paths: paths, audit: audit, authz: authz}
 }
 
 // Stage 接收唯一一次文件上传：流式写 storage/tmp/{token}.{ext}，再同步解析。
@@ -63,6 +66,11 @@ func (h *BuildHandler) Commit(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	AttachLogFields(r, fmt.Sprintf("environment=%s platform=%s stageToken=%s", in.Environment, in.Platform, in.StageToken))
+
+	// 项目在请求体里，中间件判定不了；这里按「项目角色 → 人员角色」判定发布权限。
+	if err := h.authz.Check(r.Context(), authctx.From(r.Context()), in.Project, "build.write"); err != nil {
+		return err
+	}
 
 	build, err := h.svc.Create(r.Context(), in)
 	if err != nil {

@@ -113,6 +113,7 @@ func normalize(in contract.PersonInput) (contract.PersonInput, error) {
 		Email:      strings.TrimSpace(in.Email),
 		Phone:      strings.TrimSpace(in.Phone),
 		Title:      strings.TrimSpace(in.Title),
+		RoleKey:    strings.TrimSpace(in.RoleKey),
 		TeamIDs:    dedupe(in.TeamIDs),
 		ProjectIDs: dedupe(in.ProjectIDs),
 	}

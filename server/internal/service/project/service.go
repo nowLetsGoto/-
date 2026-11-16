@@ -64,6 +64,9 @@ func (s *Service) Create(ctx context.Context, in contract.ProjectInput) (contrac
 		if repository.IsUniqueViolation(err) {
 			return contract.Project{}, &contract.ValidationError{Message: "项目标识已被占用，换一个试试"}
 		}
+		if repository.IsForeignKeyViolation(err) {
+			return contract.Project{}, &contract.ValidationError{Message: "项目角色不存在，请刷新后重试"}
+		}
 		return contract.Project{}, err
 	}
 	return item, nil
@@ -75,7 +78,14 @@ func (s *Service) Update(ctx context.Context, key string, in contract.ProjectInp
 	if err != nil {
 		return contract.Project{}, err
 	}
-	return s.repo.Update(ctx, key, normalized)
+	item, updateErr := s.repo.Update(ctx, key, normalized)
+	if updateErr != nil {
+		if repository.IsForeignKeyViolation(updateErr) {
+			return contract.Project{}, &contract.ValidationError{Message: "项目角色不存在，请刷新后重试"}
+		}
+		return contract.Project{}, updateErr
+	}
+	return item, nil
 }
 
 // normalize 收敛字段并校验；withKey 为 false 时忽略 key（编辑场景）。
@@ -84,6 +94,7 @@ func normalize(in contract.ProjectInput, withKey bool) (contract.ProjectInput, e
 		Key:         strings.ToLower(strings.TrimSpace(in.Key)),
 		Name:        strings.TrimSpace(in.Name),
 		Description: strings.TrimSpace(in.Description),
+		RoleKey:     strings.TrimSpace(in.RoleKey),
 	}
 
 	if withKey && !contract.IsValidProjectKey(out.Key) {

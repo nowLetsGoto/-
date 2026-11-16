@@ -70,7 +70,7 @@
 | **`internal/{handler,service,repository}/audit/`** | 审计：`handler` 是 `/admin/audit-logs`（只读）、`service` 负责组装与容错、`repository` 只提供 INSERT 与分页查询 | 请求、DB | `contract.AuditLog` | **不提供 UPDATE / DELETE**；写失败只记日志、不回滚业务 |
 | `internal/authctx/` | 调用者身份在 context 里的存取 | ctx、`contract.Identity` | 写入/读取 | 单独成包是为**打断 import 环**（中间件用 `handler.WriteError`，handler 又要读身份）；不含任何判定逻辑 |
 | **`internal/{handler,service,repository}/role/`** | 角色与权限：`handler` 是 `/roles`（读全员、写超管）与 `/permissions` 目录、`service` 负责校验与内置角色播种、`repository` 是 roles + role_permissions | 请求、DB | `contract.Role` / `Permission` | 权限目录只写在 `contract.Permissions`，库里不重复定义；`super-admin` 权限不可改 |
-| **`internal/{handler,service,repository}/people/`** | 人员：`handler` 是 `/people` 与 `/me`、`service` 是字段校验与「当前登录人」投影、`repository` 是 people 表 + 人员侧的两张关联表 | 请求、DB | `contract.Person` / `Me` | 只管人员这一侧；团队侧对 `team_members` 的写入在 `repository/teams`，两侧各自维护自己那一半 |
+| **`internal/{handler,service,repository}/people/`** | 人员：`handler` 是 `/people` 与 `/me`、`service` 是字段校验与「当前登录人」投影、`repository` 是 people 表 + 人员侧的两张关联表 + 角色外键（`LEFT JOIN roles` 取角色名） | 请求、DB | `contract.Person` / `Me` | 只管人员这一侧；团队侧对 `team_members` 的写入在 `repository/teams`，两侧各自维护自己那一半 |
 | **`internal/{handler,service,repository}/teams/`** | 团队：`handler` 是 `/teams`、`service` 是字段校验、`repository` 是 teams 表 + 团队侧的关联表 | 请求、DB | `contract.Team` | 同上；不含任何权限判断 |
 | `internal/handler/openapi/` | 外部上传接口（stage + create 合成一次请求） | multipart | 201 + `Build` | 不复刻解析与落盘：复用 `handler.ReadUpload` 与 `service` 的 Stage/Create |
 | `internal/middleware/apikey/` | `X-API-Key` 校验 | `KeyProvider` | 401 / 放行 | 不生成或轮换 Key、不区分调用方身份 |

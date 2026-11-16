@@ -31,9 +31,6 @@ func NewRepository(db *sql.DB) *Repository {
 const selectColumns = `p.id::text, p.name, coalesce(p.username, ''), p.email, p.phone, p.title,
 coalesce(p.role_key, ''), coalesce(r.name, ''), p.created_at`
 
-// tableColumns 是 people 表自身的列（INSERT/UPDATE 的 RETURNING 用，不能带 JOIN）。
-const tableColumns = `id::text, name, coalesce(username, ''), email, phone, title, coalesce(role_key, ''), created_at`
-
 const fromClause = ` FROM people p LEFT JOIN roles r ON r.key = p.role_key`
 
 // 关联查询统一从"人员侧"出发，JOIN 出名字；两张表结构对称，抽成常量避免抄错列顺序。
@@ -182,7 +179,7 @@ func (r *Repository) save(ctx context.Context, id string, in contract.PersonInpu
 		row = tx.QueryRowContext(ctx,
 			`INSERT INTO people (name, username, email, phone, title, role_key)
 			 VALUES ($1, NULLIF($2, ''), $3, $4, $5, NULLIF($6, ''))
-			 RETURNING `+tableColumns,
+			 RETURNING id::text`,
 			in.Name, in.Username, in.Email, in.Phone, in.Title, in.RoleKey)
 	} else {
 		row = tx.QueryRowContext(ctx,
@@ -190,26 +187,26 @@ func (r *Repository) save(ctx context.Context, id string, in contract.PersonInpu
 			 SET name = $2, username = NULLIF($3, ''), email = $4, phone = $5, title = $6,
 			     role_key = NULLIF($7, '')
 			 WHERE id = $1
-			 RETURNING `+tableColumns,
+			 RETURNING id::text`,
 			id, in.Name, in.Username, in.Email, in.Phone, in.Title, in.RoleKey)
 	}
 
-	person, err := scan(row)
-	if err != nil {
+	var personID string
+	if err := row.Scan(&personID); err != nil {
 		if errors.Is(err, sql.ErrNoRows) || errors.Is(err, pgx.ErrNoRows) {
 			return contract.Person{}, contract.ErrNotFound
 		}
 		return contract.Person{}, err
 	}
-	if err := replaceLinks(ctx, tx, person.ID, in.TeamIDs, in.ProjectIDs); err != nil {
+	if err := replaceLinks(ctx, tx, personID, in.TeamIDs, in.ProjectIDs); err != nil {
 		return contract.Person{}, err
 	}
 	if err := tx.Commit(); err != nil {
 		return contract.Person{}, fmt.Errorf("提交人员变更失败: %w", err)
 	}
 
-	// 关联要带名字返回，所以提交后按 id 重查一次（只在写路径发生）。
-	return r.FindByID(ctx, person.ID)
+	// 关联与角色名都要带出来，提交后按 id 重查一次（只在写路径发生）。
+	return r.FindByID(ctx, personID)
 }
 
 // replaceLinks 先清后写，语义是「以本次提交为准」。

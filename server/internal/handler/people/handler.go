@@ -14,16 +14,19 @@ import (
 	"dandelion/server/internal/authctx"
 	"dandelion/server/internal/contract"
 	"dandelion/server/internal/handler"
+	authzsvc "dandelion/server/internal/service/authz"
 	peoplesvc "dandelion/server/internal/service/people"
 )
 
 // Handler 只依赖人员业务层。
 type Handler struct {
 	svc *peoplesvc.Service
+	// authz 只用于 /me：把"全局权限集合"一并返回，前端据此裁剪菜单与按钮。
+	authz *authzsvc.Service
 }
 
-func NewHandler(svc *peoplesvc.Service) *Handler {
-	return &Handler{svc: svc}
+func NewHandler(svc *peoplesvc.Service, authz *authzsvc.Service) *Handler {
+	return &Handler{svc: svc, authz: authz}
 }
 
 // List 返回全部人员，已带关联的团队与项目。
@@ -77,5 +80,11 @@ func (h *Handler) Me(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
+	// 平台级权限（不含项目）：项目内的权限可能被项目角色覆盖，那部分由各接口自己判定。
+	permissions, err := h.authz.Permissions(r.Context(), identity, "")
+	if err != nil {
+		return err
+	}
+	data.Permissions = authzsvc.Sorted(permissions)
 	return handler.OK(w, data)
 }

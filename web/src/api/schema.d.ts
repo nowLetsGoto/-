@@ -545,6 +545,9 @@ export interface components {
             description: string;
             /** @description 项目库地址（GitLab / GitHub 等），空串表示未填；详情页渲染为可点击链接 */
             repoUrl: string;
+            /** @description 项目角色标识；为空表示沿用人员自身角色 */
+            roleKey: string;
+            roleName: string;
             /** Format: date-time */
             createdAt: string;
         };
@@ -556,6 +559,8 @@ export interface components {
             description?: string;
             /** @description http(s) 绝对地址；留空表示未填 */
             repoUrl?: string;
+            /** @description 项目角色标识；留空表示沿用人员自身角色 */
+            roleKey?: string;
         };
         /** @description 项目详情 = 项目本身 + 关联的人员与团队（带名字） */
         ProjectDetail: {
@@ -632,6 +637,8 @@ export interface components {
             projectKeys: string[];
             /** @description 是否超级管理员；前端据此决定是否渲染「超级管理员」菜单（真正的边界在服务端 403） */
             isSuperAdmin: boolean;
+            /** @description 平台级权限点（不含项目）；项目内权限可能被项目角色覆盖，由各接口判定 */
+            permissions: string[];
         };
         /** @description 账号视图（不含任何密码字段） */
         User: {

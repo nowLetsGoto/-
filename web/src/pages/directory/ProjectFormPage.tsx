@@ -9,12 +9,14 @@ import { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import type { ProjectInput } from '../../api/projects';
 import { createProject, getProject, updateProject } from '../../api/projects';
+import type { Role } from '../../api/roles';
+import { listRoles } from '../../api/roles';
 import { errorMessage } from '../../api/client';
 import { FormPage } from '../../components/FormPage';
 import { ErrorState, Loading } from '../../components/States';
 import { invalidateProjects } from '../../hooks/useProjects';
 
-const EMPTY_FORM: ProjectInput = { key: '', name: '', description: '', repoUrl: '' };
+const EMPTY_FORM: ProjectInput = { key: '', name: '', description: '', repoUrl: '', roleKey: '' };
 
 const LIST_PATH = '/directory/projects';
 
@@ -24,10 +26,30 @@ export function ProjectFormPage(): JSX.Element {
   const navigate = useNavigate();
 
   const [form, setForm] = useState<ProjectInput>(EMPTY_FORM);
+  const [roles, setRoles] = useState<Role[]>([]);
   const [loading, setLoading] = useState(editing);
   const [loadError, setLoadError] = useState('');
   const [saving, setSaving] = useState(false);
   const [notice, setNotice] = useState('');
+
+  useEffect(() => {
+    let cancelled = false;
+    listRoles()
+      .then((result) => {
+        if (!cancelled) {
+          setRoles(result.items);
+        }
+      })
+      .catch(() => {
+        // 角色取不到不该挡住编辑；服务端仍会校验 roleKey
+        if (!cancelled) {
+          setRoles([]);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     if (!key) {
@@ -47,6 +69,7 @@ export function ProjectFormPage(): JSX.Element {
           name: project.name,
           description: project.description,
           repoUrl: project.repoUrl,
+          roleKey: project.roleKey ?? '',
         });
         setLoading(false);
       })
@@ -141,6 +164,21 @@ export function ProjectFormPage(): JSX.Element {
           />
         </label>
         <label className="field">
+          <span>项目角色</span>
+          <select
+            className="select-input select-block"
+            value={form.roleKey}
+            onChange={(event) => setForm({ ...form, roleKey: event.target.value })}
+          >
+            <option value="">沿用人员角色</option>
+            {roles.map((role) => (
+              <option key={role.key} value={role.key}>
+                {role.name}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="field">
           <span>描述</span>
           <input
             className="text-input"
@@ -150,6 +188,10 @@ export function ProjectFormPage(): JSX.Element {
           />
         </label>
       </div>
+
+      <p className="settings-hint">
+        项目角色优先级高于人员角色：设置后，所有人访问本项目都按此角色的权限判定（超级管理员除外）。
+      </p>
     </FormPage>
   );
 }

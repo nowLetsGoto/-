@@ -258,6 +258,8 @@ type Project struct {
 	Name        string `json:"name"`
 	Description string `json:"description"`
 	RepoURL     string `json:"repoUrl"`
+	RoleKey     string `json:"roleKey"`
+	RoleName    string `json:"roleName"`
 	CreatedAt   string `json:"createdAt"`
 }
 
@@ -267,6 +269,7 @@ type ProjectInput struct {
 	Name        string `json:"name"`
 	Description string `json:"description"`
 	RepoURL     string `json:"repoUrl"`
+	RoleKey     string `json:"roleKey"`
 }
 
 // ProjectList 是项目列表响应体：items 与分页元信息平铺；空结果为 items: [] 而不是 nil。
@@ -390,6 +393,9 @@ type Me struct {
 	Name         string   `json:"name"`
 	ProjectKeys  []string `json:"projectKeys"`
 	IsSuperAdmin bool     `json:"isSuperAdmin"`
+	// Permissions 是"全局视角"（不含项目）的权限集合，供前端裁剪菜单与按钮。
+	// 项目内的权限可能被项目角色覆盖，那部分由各接口自己判定。
+	Permissions []string `json:"permissions"`
 }
 
 // Permission 是一个权限点。目录定义在代码里（Permissions），数据库只存"角色拥有哪些"，

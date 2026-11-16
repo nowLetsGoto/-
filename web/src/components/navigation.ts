@@ -19,6 +19,8 @@ export interface NavItem {
   envScoped?: boolean;
   /** 该板块是否在顶栏暴露「上传包」主行动；只有应用包需要。缺省视为 false。 */
   canUpload?: boolean;
+  /** 进入该页面需要的权限点；缺省表示不限（只要求登录）。前端仅做隐藏，服务端另有判定。 */
+  permission?: string;
 }
 
 export interface NavSection {
@@ -32,22 +34,22 @@ export interface NavSection {
 export const NAV_SECTIONS: ReadonlyArray<NavSection> = [
   {
     title: '总览',
-    items: [{ label: '概览', path: '/overview', icon: 'overview', scope: 'project' }],
+    items: [{ label: '概览', path: '/overview', permission: 'build.read', icon: 'overview', scope: 'project' }],
   },
   {
     title: '分发',
     items: [
-      { label: '应用包', path: '/packages', icon: 'packages', scope: 'project', canUpload: true },
-      { label: '应用', path: '/apps', icon: 'apps', scope: 'project' },
+      { label: '应用包', path: '/packages', permission: 'build.read', icon: 'packages', scope: 'project', canUpload: true },
+      { label: '应用', path: '/apps', permission: 'build.read', icon: 'apps', scope: 'project' },
     ],
   },
   {
     title: '基础资料',
     items: [
-      { label: '人员管理', path: '/directory/people', icon: 'people', scope: 'platform', envScoped: false },
-      { label: '团队管理', path: '/directory/teams', icon: 'team', scope: 'platform', envScoped: false },
-      { label: '项目管理', path: '/directory/projects', icon: 'project', scope: 'platform', envScoped: false },
-      { label: '角色管理', path: '/directory/roles', icon: 'shield', scope: 'platform', envScoped: false },
+      { label: '人员管理', path: '/directory/people', permission: 'directory.read', icon: 'people', scope: 'platform', envScoped: false },
+      { label: '团队管理', path: '/directory/teams', permission: 'directory.read', icon: 'team', scope: 'platform', envScoped: false },
+      { label: '项目管理', path: '/directory/projects', permission: 'project.read', icon: 'project', scope: 'platform', envScoped: false },
+      { label: '角色管理', path: '/directory/roles', permission: 'role.read', icon: 'shield', scope: 'platform', envScoped: false },
     ],
   },
   {

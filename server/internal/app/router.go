@@ -32,7 +32,9 @@ import (
 	userhandler "dandelion/server/internal/handler/user"
 	"dandelion/server/internal/middleware"
 	"dandelion/server/internal/middleware/apikey"
+	authzmw "dandelion/server/internal/middleware/authz"
 	loginmw "dandelion/server/internal/middleware/login"
+	authzsvc "dandelion/server/internal/service/authz"
 )
 
 // Deps 是装配层注入的全部依赖。
@@ -46,6 +48,8 @@ type Deps struct {
 	Users    *userhandler.Handler
 	Audit    *audithandler.Handler
 	Roles    *rolehandler.Handler
+	// Authz 提供权限判定，路由层用它给每个接口挂上所需权限点
+	Authz    *authzsvc.Service
 	Teams    *teamshandler.Handler
 	Settings *settingshandler.Handler
 	Verify   loginmw.Verifier
@@ -130,26 +134,27 @@ func NewRouter(d Deps) http.Handler {
 		// 管理动作（上传 / 发布 / 列表 / 系统设置）需要登录；分组只加中间件，不改路由前缀。
 		api.Group(func(private chi.Router) {
 			private.Use(loginmw.RequireAuth(d.Verify))
+			// 发布/暂存：提交时项目在请求体里，由 handler 内部判定 build.write
 			private.Post("/builds/stage", middleware.Wrap(d.Builds.Stage))
 			private.Post("/builds", middleware.Wrap(d.Builds.Commit))
-			private.Get("/builds", middleware.Wrap(d.Builds.List))
+			private.With(authzmw.RequirePermission(d.Authz, "build.read")).Get("/builds", middleware.Wrap(d.Builds.List))
 
 			private.Get("/me", middleware.Wrap(d.People.Me))
-			private.Get("/projects", middleware.Wrap(d.Projects.List))
-			private.Post("/projects", middleware.Wrap(d.Projects.Create))
-			private.Get("/projects/{key}", middleware.Wrap(d.Projects.Get))
-			private.Put("/projects/{key}", middleware.Wrap(d.Projects.Update))
-			private.Get("/people", middleware.Wrap(d.People.List))
-			private.Post("/people", middleware.Wrap(d.People.Create))
-			private.Get("/people/{id}", middleware.Wrap(d.People.Get))
-			private.Put("/people/{id}", middleware.Wrap(d.People.Update))
-			private.Get("/teams", middleware.Wrap(d.Teams.List))
-			private.Post("/teams", middleware.Wrap(d.Teams.Create))
-			private.Get("/teams/{id}", middleware.Wrap(d.Teams.Get))
-			private.Put("/teams/{id}", middleware.Wrap(d.Teams.Update))
+			private.With(authzmw.RequirePermission(d.Authz, "project.read")).Get("/projects", middleware.Wrap(d.Projects.List))
+			private.With(authzmw.RequirePermission(d.Authz, "project.write")).Post("/projects", middleware.Wrap(d.Projects.Create))
+			private.With(authzmw.RequirePermission(d.Authz, "project.read")).Get("/projects/{key}", middleware.Wrap(d.Projects.Get))
+			private.With(authzmw.RequirePermission(d.Authz, "project.write")).Put("/projects/{key}", middleware.Wrap(d.Projects.Update))
+			private.With(authzmw.RequirePermission(d.Authz, "directory.read")).Get("/people", middleware.Wrap(d.People.List))
+			private.With(authzmw.RequirePermission(d.Authz, "directory.write")).Post("/people", middleware.Wrap(d.People.Create))
+			private.With(authzmw.RequirePermission(d.Authz, "directory.read")).Get("/people/{id}", middleware.Wrap(d.People.Get))
+			private.With(authzmw.RequirePermission(d.Authz, "directory.write")).Put("/people/{id}", middleware.Wrap(d.People.Update))
+			private.With(authzmw.RequirePermission(d.Authz, "directory.read")).Get("/teams", middleware.Wrap(d.Teams.List))
+			private.With(authzmw.RequirePermission(d.Authz, "directory.write")).Post("/teams", middleware.Wrap(d.Teams.Create))
+			private.With(authzmw.RequirePermission(d.Authz, "directory.read")).Get("/teams/{id}", middleware.Wrap(d.Teams.Get))
+			private.With(authzmw.RequirePermission(d.Authz, "directory.write")).Put("/teams/{id}", middleware.Wrap(d.Teams.Update))
 			private.Get("/permissions", middleware.Wrap(d.Roles.Permissions))
-			private.Get("/roles", middleware.Wrap(d.Roles.List))
-			private.Get("/roles/{key}", middleware.Wrap(d.Roles.Get))
+			private.With(authzmw.RequirePermission(d.Authz, "role.read")).Get("/roles", middleware.Wrap(d.Roles.List))
+			private.With(authzmw.RequirePermission(d.Authz, "role.read")).Get("/roles/{key}", middleware.Wrap(d.Roles.Get))
 		})
 
 		// 超级管理员专区：RequireAuth 之后再叠一层 RequireSuperAdmin，

@@ -34,6 +34,13 @@ export function PeoplePage(): JSX.Element {
       render: (_, person) => person.title || '—',
     },
     {
+      title: '角色',
+      key: 'role',
+      width: 130,
+      render: (_, person) =>
+        person.roleName ? <span className="badge badge-role">{person.roleName}</span> : <span className="cell-sub">未分配</span>,
+    },
+    {
       title: '联系方式',
       key: 'contact',
       render: (_, person) => (

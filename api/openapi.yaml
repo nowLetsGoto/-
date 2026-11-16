@@ -1224,7 +1224,7 @@ components:
     Project:
       type: object
       description: 项目是业务数据的一级归属：应用包、应用、热更新都挂在项目下
-      required: [id, key, name, description, repoUrl, createdAt]
+      required: [id, key, name, description, repoUrl, roleKey, roleName, createdAt]
       properties:
         id:
           type: string
@@ -1239,6 +1239,11 @@ components:
         repoUrl:
           type: string
           description: 项目库地址（GitLab / GitHub 等），空串表示未填；详情页渲染为可点击链接
+        roleKey:
+          type: string
+          description: 项目角色标识；为空表示沿用人员自身角色
+        roleName:
+          type: string
         createdAt:
           type: string
           format: date-time
@@ -1264,6 +1269,9 @@ components:
           type: string
           maxLength: 300
           description: http(s) 绝对地址；留空表示未填
+        roleKey:
+          type: string
+          description: 项目角色标识；留空表示沿用人员自身角色
 
     ProjectDetail:
       type: object
@@ -1420,7 +1428,7 @@ components:
     Me:
       type: object
       description: 当前登录人；没有对应人员记录时 personId 为空、projectKeys 为空
-      required: [username, personId, name, projectKeys, isSuperAdmin]
+      required: [username, personId, name, projectKeys, isSuperAdmin, permissions]
       properties:
         username:
           type: string
@@ -1436,6 +1444,11 @@ components:
         isSuperAdmin:
           type: boolean
           description: 是否超级管理员；前端据此决定是否渲染「超级管理员」菜单（真正的边界在服务端 403）
+        permissions:
+          type: array
+          description: 平台级权限点（不含项目）；项目内权限可能被项目角色覆盖，由各接口判定
+          items:
+            type: string
 
     User:
       type: object

@@ -19,7 +19,13 @@ export function Sidebar(): JSX.Element {
   const projectKey = useProjectKey();
   // /me 有模块级缓存，整页只取一次；它的 isSuperAdmin 决定「超级管理员」整组是否渲染。
   const { me } = useMe();
-  const sections = NAV_SECTIONS.filter((section) => !section.requireSuperAdmin || me?.isSuperAdmin === true);
+  // 两层过滤：整组是否仅超管可见 + 单项所需权限点。
+  // me 未加载完时视为"无权限"，宁可晚 50ms 出现菜单，也不要给出点进去就 403 的假入口。
+  const canSee = (permission?: string): boolean => !permission || me?.permissions.includes(permission) === true;
+  const sections = NAV_SECTIONS.map((section) => ({
+    ...section,
+    items: section.items.filter((item) => canSee(item.permission)),
+  })).filter((section) => (!section.requireSuperAdmin || me?.isSuperAdmin === true) && section.items.length > 0);
 
   /** 退出即清空本地会话并回登录页；令牌是无状态的，服务端没有需要调用的登出接口。 */
   const handleLogout = (): void => {

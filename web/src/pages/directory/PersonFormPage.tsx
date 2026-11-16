@@ -9,6 +9,8 @@ import { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import type { PersonInput } from '../../api/people';
 import { createPerson, getPerson, updatePerson } from '../../api/people';
+import type { Role } from '../../api/roles';
+import { listRoles } from '../../api/roles';
 import { errorMessage } from '../../api/client';
 import { FormPage } from '../../components/FormPage';
 import { MultiSelect } from '../../components/MultiSelect';
@@ -22,6 +24,7 @@ const EMPTY_FORM: PersonInput = {
   email: '',
   phone: '',
   title: '',
+  roleKey: '',
   teamIds: [],
   projectIds: [],
 };
@@ -37,10 +40,30 @@ export function PersonFormPage(): JSX.Element {
   const { projects } = useProjects();
 
   const [form, setForm] = useState<PersonInput>(EMPTY_FORM);
+  const [roles, setRoles] = useState<Role[]>([]);
   const [loading, setLoading] = useState(editing);
   const [loadError, setLoadError] = useState('');
   const [saving, setSaving] = useState(false);
   const [notice, setNotice] = useState('');
+
+  useEffect(() => {
+    let cancelled = false;
+    listRoles()
+      .then((result) => {
+        if (!cancelled) {
+          setRoles(result.items);
+        }
+      })
+      .catch(() => {
+        // 角色取不到不该挡住编辑：下拉留空，保存时服务端仍会校验 roleKey
+        if (!cancelled) {
+          setRoles([]);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     if (!id) {
@@ -61,6 +84,7 @@ export function PersonFormPage(): JSX.Element {
           email: person.email,
           phone: person.phone,
           title: person.title,
+          roleKey: person.roleKey ?? '',
           teamIds: person.teams.map((team) => team.id),
           projectIds: person.projects.map((project) => project.id),
         });
@@ -179,6 +203,21 @@ export function PersonFormPage(): JSX.Element {
             value={form.title}
             onChange={(event) => setForm({ ...form, title: event.target.value })}
           />
+        </label>
+        <label className="field">
+          <span>角色</span>
+          <select
+            className="select-input select-block"
+            value={form.roleKey}
+            onChange={(event) => setForm({ ...form, roleKey: event.target.value })}
+          >
+            <option value="">未分配</option>
+            {roles.map((role) => (
+              <option key={role.key} value={role.key}>
+                {role.name}
+              </option>
+            ))}
+          </select>
         </label>
       </div>
 

@@ -216,3 +216,18 @@ BEGIN
       FOREIGN KEY (role_key) REFERENCES roles(key) ON DELETE SET NULL;
   END IF;
 END $$;
+
+-- ---------------------------------------------------------------------------
+-- 项目的角色：进入该项目时的"项目角色"，优先级高于人员自身的角色。
+-- 判定顺序：超管 → 本项目角色 → 人员角色 → 空集（无权限）。
+-- 允许为空：为空表示"沿用人员角色"，这是默认状态。
+-- ---------------------------------------------------------------------------
+ALTER TABLE projects ADD COLUMN IF NOT EXISTS role_key TEXT;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'projects_role_fk') THEN
+    ALTER TABLE projects ADD CONSTRAINT projects_role_fk
+      FOREIGN KEY (role_key) REFERENCES roles(key) ON DELETE SET NULL;
+  END IF;
+END $$;

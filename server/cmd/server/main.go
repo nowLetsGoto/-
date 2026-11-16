@@ -43,6 +43,7 @@ import (
 	userRepo "dandelion/server/internal/repository/user"
 	"dandelion/server/internal/service"
 	auditsvc "dandelion/server/internal/service/audit"
+	authzsvc "dandelion/server/internal/service/authz"
 	loginsvc "dandelion/server/internal/service/login"
 	peoplesvc "dandelion/server/internal/service/people"
 	projectsvc "dandelion/server/internal/service/project"
@@ -133,15 +134,18 @@ func run() error {
 
 	usersRepository := userRepo.NewRepository(db)
 	userService := usersvc.NewService(usersRepository)
+
+	// 权限判定：超管全量 → 项目角色 → 人员角色 → 空集
+	authzService := authzsvc.NewService(usersRepository, peopleRepository, projectRepo, roleRepository)
 	loginService := loginsvc.NewService(cfg, usersRepository)
 	if err := loginService.EnsureAdmin(context.Background()); err != nil {
 		return err
 	}
 	loginHandler := login.NewHandler(loginService)
-	builds := handler.NewBuildHandler(cfg, svc, paths, auditService)
+	builds := handler.NewBuildHandler(cfg, svc, paths, auditService, authzService)
 	openAPI := openapi.NewHandler(cfg, svc, paths)
 	projectHandler := projecthandler.NewHandler(projectService)
-	peopleHandler := peoplehandler.NewHandler(peopleService)
+	peopleHandler := peoplehandler.NewHandler(peopleService, authzService)
 	teamsHandler := teamshandler.NewHandler(teamsService)
 	userHandler := userhandler.NewHandler(userService, auditService)
 	auditHandler := audithandler.NewHandler(auditService)
@@ -162,6 +166,7 @@ func run() error {
 		Users:    userHandler,
 		Audit:    auditHandler,
 		Roles:    roleHandler,
+		Authz:    authzService,
 		Settings: settingsHandler,
 		Verify:   loginService.Verify,
 		APIKey:   settingsService.APIKey,
