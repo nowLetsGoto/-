@@ -24,13 +24,16 @@ func NewService(repo *teamsrepo.Repository) *Service {
 	return &Service{repo: repo}
 }
 
-// List 返回全部团队，已带上关联的人员与项目。
-func (s *Service) List(ctx context.Context) (contract.TeamList, error) {
-	items, err := s.repo.List(ctx)
+// List 返回指定页的团队（含关联名字）与总数；page.PageSize=0 时返回全量。
+func (s *Service) List(ctx context.Context, page contract.PageQuery) (contract.TeamList, error) {
+	items, total, err := s.repo.List(ctx, page)
 	if err != nil {
 		return contract.TeamList{}, err
 	}
-	return contract.TeamList{Items: items}, nil
+	return contract.TeamList{
+		Items: items,
+		Page:  contract.Page{Page: page.Page, PageSize: page.PageSize, Total: total},
+	}, nil
 }
 
 // Get 按 id 取单个团队（含关联），供编辑页回填。

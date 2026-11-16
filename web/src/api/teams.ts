@@ -6,6 +6,8 @@
  */
 import type { components } from './schema';
 import { get, postJSON, putJSON } from './client';
+import type { PageQuery, PagedList } from './query';
+import { pageQuery } from './query';
 
 type Schemas = components['schemas'];
 
@@ -14,8 +16,11 @@ export type TeamInput = Schemas['TeamInput'];
 
 const TEAMS_PATH = '/api/v1/teams';
 
-export function listTeams(): Promise<{ items: Team[] }> {
-  return get<{ items: Team[] }>(TEAMS_PATH);
+export type TeamPage = PagedList<Team>;
+
+/** 传 { pageSize: 0 } 取全量（下拉选项用）；不传则按服务端默认 10 条分页。 */
+export function listTeams(query: PageQuery = {}): Promise<TeamPage> {
+  return get<TeamPage>(`${TEAMS_PATH}${pageQuery(query)}`);
 }
 
 export function getTeam(id: string): Promise<Team> {

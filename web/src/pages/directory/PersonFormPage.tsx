@@ -13,7 +13,7 @@ import { errorMessage } from '../../api/client';
 import { FormPage } from '../../components/FormPage';
 import { MultiSelect } from '../../components/MultiSelect';
 import { ErrorState, Loading } from '../../components/States';
-import { invalidateDirectory, useTeams } from '../../hooks/useDirectory';
+import { invalidateDirectory, useAllTeams } from '../../hooks/useDirectory';
 import { useProjects } from '../../hooks/useProjects';
 
 const EMPTY_FORM: PersonInput = {
@@ -33,7 +33,7 @@ export function PersonFormPage(): JSX.Element {
   const editing = Boolean(id);
   const navigate = useNavigate();
 
-  const { teams, loading: teamsLoading, error: teamsError, reload: reloadTeams } = useTeams();
+  const { items: teams, loading: teamsLoading, error: teamsError, reload: reloadTeams } = useAllTeams();
   const { projects } = useProjects();
 
   const [form, setForm] = useState<PersonInput>(EMPTY_FORM);

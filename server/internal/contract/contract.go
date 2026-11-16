@@ -254,9 +254,10 @@ type ProjectInput struct {
 	RepoURL     string `json:"repoUrl"`
 }
 
-// ProjectList 是项目列表响应体；空结果为 items: [] 而不是 nil。
+// ProjectList 是项目列表响应体：items 与分页元信息平铺；空结果为 items: [] 而不是 nil。
 type ProjectList struct {
 	Items []Project `json:"items"`
+	Page
 }
 
 // ProjectDetail 是项目详情：项目本身 + 关联的人员与团队（带名字，详情页不必再拉两份列表）。
@@ -271,6 +272,42 @@ type ProjectDetail struct {
 type RelationRef struct {
 	ID   string `json:"id"`
 	Name string `json:"name"`
+}
+
+// 列表分页的默认值与上限。PageSize=0 是显式的「不分页」，
+// 只给「要一次拿全量」的场景用（下拉选项、聚合统计），列表页一律传具体页大小。
+const (
+	DefaultPageSize = 10
+	MaxPageSize     = 200
+)
+
+// PageQuery 是列表的分页参数（已归一化，非法的 page 会被压到 1）。
+type PageQuery struct {
+	Page     int
+	PageSize int
+}
+
+// Limit 返回 SQL 的 LIMIT：不分页时给一个足够大的上限，避免为 0 时查出 0 行。
+func (q PageQuery) Limit() int {
+	if q.PageSize <= 0 {
+		return 1 << 30
+	}
+	return q.PageSize
+}
+
+// Offset 返回 SQL 的 OFFSET：不分页时恒为 0。
+func (q PageQuery) Offset() int {
+	if q.PageSize <= 0 || q.Page <= 1 {
+		return 0
+	}
+	return (q.Page - 1) * q.PageSize
+}
+
+// Page 是分页响应的元信息，与 items 平铺返回，前端据此渲染分页条。
+type Page struct {
+	Page     int `json:"page"`
+	PageSize int `json:"pageSize"`
+	Total    int `json:"total"`
 }
 
 // Person 是人员；Teams / Projects 是该人员关联的团队与项目（多选）。
@@ -297,9 +334,10 @@ type PersonInput struct {
 	ProjectIDs []string `json:"projectIds"`
 }
 
-// PersonList 是人员列表响应体。
+// PersonList 是人员列表响应体：items 与分页元信息平铺。
 type PersonList struct {
 	Items []Person `json:"items"`
+	Page
 }
 
 // Team 是团队；Persons / Projects 是该团队关联的人员与项目（多选）。
@@ -320,9 +358,10 @@ type TeamInput struct {
 	ProjectIDs  []string `json:"projectIds"`
 }
 
-// TeamList 是团队列表响应体。
+// TeamList 是团队列表响应体：items 与分页元信息平铺。
 type TeamList struct {
 	Items []Team `json:"items"`
+	Page
 }
 
 // Me 是「当前登录人」的档案投影：没有对应人员记录时 PersonID 为空、ProjectKeys 为空。

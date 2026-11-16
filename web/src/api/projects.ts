@@ -7,6 +7,8 @@
  */
 import type { components } from './schema';
 import { get, postJSON, putJSON } from './client';
+import type { PageQuery, PagedList } from './query';
+import { pageQuery } from './query';
 
 type Schemas = components['schemas'];
 
@@ -17,8 +19,11 @@ export type ProjectDetail = Schemas['ProjectDetail'];
 /** 契约路径的前端唯一镜像。 */
 const PROJECTS_PATH = '/api/v1/projects';
 
-export function listProjects(): Promise<{ items: Project[] }> {
-  return get<{ items: Project[] }>(PROJECTS_PATH);
+export type ProjectPage = PagedList<Project>;
+
+/** 传 { pageSize: 0 } 取全量（下拉与守卫用）；不传则按服务端默认 10 条分页。 */
+export function listProjects(query: PageQuery = {}): Promise<ProjectPage> {
+  return get<ProjectPage>(`${PROJECTS_PATH}${pageQuery(query)}`);
 }
 
 export function getProject(key: string): Promise<ProjectDetail> {

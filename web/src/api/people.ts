@@ -6,6 +6,8 @@
  */
 import type { components } from './schema';
 import { get, postJSON, putJSON } from './client';
+import type { PageQuery, PagedList } from './query';
+import { pageQuery } from './query';
 
 type Schemas = components['schemas'];
 
@@ -14,8 +16,11 @@ export type PersonInput = Schemas['PersonInput'];
 
 const PEOPLE_PATH = '/api/v1/people';
 
-export function listPeople(): Promise<{ items: Person[] }> {
-  return get<{ items: Person[] }>(PEOPLE_PATH);
+export type PersonPage = PagedList<Person>;
+
+/** 传 { pageSize: 0 } 取全量（下拉选项用）；不传则按服务端默认 10 条分页。 */
+export function listPeople(query: PageQuery = {}): Promise<PersonPage> {
+  return get<PersonPage>(`${PEOPLE_PATH}${pageQuery(query)}`);
 }
 
 export function getPerson(id: string): Promise<Person> {

@@ -24,13 +24,16 @@ func NewService(repo *projectrepo.Repository) *Service {
 	return &Service{repo: repo}
 }
 
-// List 返回全部项目，供下拉筛选、人员/团队关联选择使用。
-func (s *Service) List(ctx context.Context) (contract.ProjectList, error) {
-	items, err := s.repo.List(ctx)
+// List 返回指定页的项目与总数；下拉筛选传 pageSize=0 取全量。
+func (s *Service) List(ctx context.Context, page contract.PageQuery) (contract.ProjectList, error) {
+	items, total, err := s.repo.List(ctx, page)
 	if err != nil {
 		return contract.ProjectList{}, err
 	}
-	return contract.ProjectList{Items: items}, nil
+	return contract.ProjectList{
+		Items: items,
+		Page:  contract.Page{Page: page.Page, PageSize: page.PageSize, Total: total},
+	}, nil
 }
 
 // Detail 返回项目详情：项目本身 + 关联的人员与团队（带名字）。

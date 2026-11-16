@@ -27,11 +27,18 @@ func NewRepository(db *sql.DB) *Repository {
 
 const columns = `id::text, key, name, description, repo_url, created_at`
 
-// List 按创建时间正序返回全部项目；空结果为长度 0 的切片。
-func (r *Repository) List(ctx context.Context) ([]contract.Project, error) {
-	rows, err := r.db.QueryContext(ctx, `SELECT `+columns+` FROM projects ORDER BY created_at ASC`)
+// List 返回指定页的项目与总数；PageSize=0 表示全量（下拉选项、守卫回退用）。
+func (r *Repository) List(ctx context.Context, page contract.PageQuery) ([]contract.Project, int, error) {
+	var total int
+	if err := r.db.QueryRowContext(ctx, `SELECT count(*) FROM projects`).Scan(&total); err != nil {
+		return nil, 0, fmt.Errorf("统计项目数量失败: %w", err)
+	}
+
+	rows, err := r.db.QueryContext(ctx,
+		`SELECT `+columns+` FROM projects ORDER BY created_at ASC LIMIT $1 OFFSET $2`,
+		page.Limit(), page.Offset())
 	if err != nil {
-		return nil, fmt.Errorf("查询项目列表失败: %w", err)
+		return nil, 0, fmt.Errorf("查询项目列表失败: %w", err)
 	}
 	defer rows.Close()
 
@@ -39,14 +46,14 @@ func (r *Repository) List(ctx context.Context) ([]contract.Project, error) {
 	for rows.Next() {
 		item, err := scan(rows)
 		if err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 		items = append(items, item)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("遍历项目列表失败: %w", err)
+		return nil, 0, fmt.Errorf("遍历项目列表失败: %w", err)
 	}
-	return items, nil
+	return items, total, nil
 }
 
 // FindByKey 按 key 查询；无记录统一转 contract.ErrProjectInvalid，供错误中间件转 400。

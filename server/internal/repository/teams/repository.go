@@ -38,11 +38,18 @@ FROM team_projects tp
 JOIN projects p ON p.id = tp.project_id`
 )
 
-// List 返回全部团队，并一次性补齐关联的人员与项目（三查，不做 N+1）。
-func (r *Repository) List(ctx context.Context) ([]contract.Team, error) {
-	rows, err := r.db.QueryContext(ctx, `SELECT `+columns+` FROM teams ORDER BY created_at ASC`)
+// List 返回指定页的团队，并补齐该页的关联（共三查，不做 N+1）；同时返回总数供分页。
+func (r *Repository) List(ctx context.Context, page contract.PageQuery) ([]contract.Team, int, error) {
+	var total int
+	if err := r.db.QueryRowContext(ctx, `SELECT count(*) FROM teams`).Scan(&total); err != nil {
+		return nil, 0, fmt.Errorf("统计团队数量失败: %w", err)
+	}
+
+	rows, err := r.db.QueryContext(ctx,
+		`SELECT `+columns+` FROM teams ORDER BY created_at ASC LIMIT $1 OFFSET $2`,
+		page.Limit(), page.Offset())
 	if err != nil {
-		return nil, fmt.Errorf("查询团队列表失败: %w", err)
+		return nil, 0, fmt.Errorf("查询团队列表失败: %w", err)
 	}
 	defer rows.Close()
 
@@ -50,27 +57,31 @@ func (r *Repository) List(ctx context.Context) ([]contract.Team, error) {
 	for rows.Next() {
 		item, err := scan(rows)
 		if err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 		items = append(items, item)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("遍历团队列表失败: %w", err)
+		return nil, 0, fmt.Errorf("遍历团队列表失败: %w", err)
 	}
 
-	persons, err := r.grouped(ctx, personLinksSQL)
-	if err != nil {
-		return nil, err
+	ids := make([]string, 0, len(items))
+	for _, item := range items {
+		ids = append(ids, item.ID)
 	}
-	projects, err := r.grouped(ctx, projectLinksSQL)
+	persons, err := r.grouped(ctx, personLinksSQL+` WHERE tm.team_id = ANY($1::uuid[])`, ids)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
+	}
+	projects, err := r.grouped(ctx, projectLinksSQL+` WHERE tp.team_id = ANY($1::uuid[])`, ids)
+	if err != nil {
+		return nil, 0, err
 	}
 	for i := range items {
 		items[i].Persons = fill(persons[items[i].ID])
 		items[i].Projects = fill(projects[items[i].ID])
 	}
-	return items, nil
+	return items, total, nil
 }
 
 // FindByID 按 id 查团队（含关联）；无记录统一转 contract.ErrNotFound。

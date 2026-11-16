@@ -38,11 +38,18 @@ FROM project_members pm
 JOIN projects p ON p.id = pm.project_id`
 )
 
-// List 返回全部人员，并一次性补齐关联的团队与项目（三查，不做 N+1）。
-func (r *Repository) List(ctx context.Context) ([]contract.Person, error) {
-	rows, err := r.db.QueryContext(ctx, `SELECT `+columns+` FROM people ORDER BY created_at ASC`)
+// List 返回指定页的人员，并补齐该页的关联（共三查，不做 N+1）；同时返回总数供分页。
+func (r *Repository) List(ctx context.Context, page contract.PageQuery) ([]contract.Person, int, error) {
+	var total int
+	if err := r.db.QueryRowContext(ctx, `SELECT count(*) FROM people`).Scan(&total); err != nil {
+		return nil, 0, fmt.Errorf("统计人员数量失败: %w", err)
+	}
+
+	rows, err := r.db.QueryContext(ctx,
+		`SELECT `+columns+` FROM people ORDER BY created_at ASC LIMIT $1 OFFSET $2`,
+		page.Limit(), page.Offset())
 	if err != nil {
-		return nil, fmt.Errorf("查询人员列表失败: %w", err)
+		return nil, 0, fmt.Errorf("查询人员列表失败: %w", err)
 	}
 	defer rows.Close()
 
@@ -50,27 +57,32 @@ func (r *Repository) List(ctx context.Context) ([]contract.Person, error) {
 	for rows.Next() {
 		item, err := scan(rows)
 		if err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 		items = append(items, item)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("遍历人员列表失败: %w", err)
+		return nil, 0, fmt.Errorf("遍历人员列表失败: %w", err)
 	}
 
-	teams, err := r.grouped(ctx, teamLinksSQL)
-	if err != nil {
-		return nil, err
+	// 只查这一页涉及的关联，避免翻到第 1 页却扫了全表的关系行。
+	ids := make([]string, 0, len(items))
+	for _, item := range items {
+		ids = append(ids, item.ID)
 	}
-	projects, err := r.grouped(ctx, projectLinksSQL)
+	teams, err := r.grouped(ctx, teamLinksSQL+` WHERE tm.person_id = ANY($1::uuid[])`, ids)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
+	}
+	projects, err := r.grouped(ctx, projectLinksSQL+` WHERE pm.person_id = ANY($1::uuid[])`, ids)
+	if err != nil {
+		return nil, 0, err
 	}
 	for i := range items {
 		items[i].Teams = fill(teams[items[i].ID])
 		items[i].Projects = fill(projects[items[i].ID])
 	}
-	return items, nil
+	return items, total, nil
 }
 
 // FindByID 按 id 查人员（含关联）；无记录统一转 contract.ErrNotFound。

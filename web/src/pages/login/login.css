@@ -12,8 +12,9 @@
   /* faint 用于 12px 辅助文字与占位符：在 #fbfeff 与品牌底色上都保持 ≥4.5:1 */
   --login-faint: #526d78;
   --login-line: #d7e8ee;
-  --login-primary: #0e7490;
-  --login-primary-strong: #0b5c73;
+  /* 与 styles.css 的 --color-primary 保持一致 */
+  --login-primary: #0369a1;
+  --login-primary-strong: #075985;
   --login-primary-soft: rgba(14, 116, 144, 0.08);
   --login-ring: rgba(14, 116, 144, 0.16);
   --login-danger: #a03c3c;

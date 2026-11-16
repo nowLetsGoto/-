@@ -20,7 +20,6 @@ import { SettingsPage } from './pages/platform/SettingsPage';
 import { UploadPage } from './pages/distribution/UploadPage';
 import { PeoplePage } from './pages/directory/PeoplePage';
 import { PersonFormPage } from './pages/directory/PersonFormPage';
-import { ProjectDetailPage } from './pages/directory/ProjectDetailPage';
 import { ProjectFormPage } from './pages/directory/ProjectFormPage';
 import { ProjectsPage } from './pages/directory/ProjectsPage';
 import { TeamFormPage } from './pages/directory/TeamFormPage';
@@ -111,7 +110,6 @@ export function App(): JSX.Element {
           <Route path="/directory/teams/:id/edit" element={<TeamFormPage />} />
           <Route path="/directory/projects" element={<ProjectsPage />} />
           <Route path="/directory/projects/new" element={<ProjectFormPage />} />
-          <Route path="/directory/projects/:key" element={<ProjectDetailPage />} />
           <Route path="/directory/projects/:key/edit" element={<ProjectFormPage />} />
           <Route path="/settings" element={<SettingsPage />} />
         </Route>

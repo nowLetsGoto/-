@@ -2,7 +2,8 @@
  * 前端唯一 HTTP 出入口。
  * 职责：拼接同源/代理基址、自动附带登录令牌、统一解包 {code,data,message}、把失败抛成 ApiError。
  * 输入：API 相对路径与 fetch 配置；输出：已解包的 data。
- * 边界：不业务判断、不缓存、不拼 window.location.origin；FormData 不手动设 Content-Type（浏览器自带 boundary）；
+ * 边界：不业务判断、不缓存（只有 GET 的在途去重，落地即失效）、不拼 window.location.origin；
+ *       FormData 不手动设 Content-Type（浏览器自带 boundary）；
  *       401 统一在这里处理（清会话 + 回登录页），页面无需各自兜底。
  */
 import { clearSession, readSession } from './session';
@@ -68,8 +69,23 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return envelope.data as T;
 }
 
+/**
+ * GET 的在途去重：同一路径在这一个请求还没回来之前，后来的调用共享同一个 Promise。
+ * 目的：React StrictMode 会在开发模式重复执行 effect，没有它同一个列表会打两枪；
+ * 只在"请求进行中"去重，落地后立即出表，因此不会让人看到陈旧数据。
+ */
+const inflightGets = new Map<string, Promise<unknown>>();
+
 export function get<T>(path: string): Promise<T> {
-  return request<T>(path, { method: 'GET' });
+  const existing = inflightGets.get(path);
+  if (existing) {
+    return existing as Promise<T>;
+  }
+  const pending = request<T>(path, { method: 'GET' }).finally(() => {
+    inflightGets.delete(path);
+  });
+  inflightGets.set(path, pending);
+  return pending;
 }
 
 export function postJSON<T>(path: string, body: unknown): Promise<T> {

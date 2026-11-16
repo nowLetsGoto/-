@@ -9,8 +9,8 @@ import type { ThemeConfig } from 'antd';
 
 /** 与 styles.css :root 一一对应的色板（antd 需要字面量，不能用 CSS 变量）。 */
 const palette = {
-  primary: '#0e7490',
-  primaryStrong: '#0b5c73',
+  primary: '#0369a1',
+  primaryStrong: '#075985',
   text: '#0f2c36',
   textSecondary: '#5b7884',
   faint: '#7d97a2',

@@ -606,6 +606,12 @@ export interface components {
         ProjectsResponse: components["schemas"]["ApiResponse"] & {
             data: {
                 items: components["schemas"]["Project"][];
+                /** @description 总条数 */
+                total: number;
+                /** @description 当前页，从 1 开始 */
+                page: number;
+                /** @description 每页条数；0 表示不分页（全量） */
+                pageSize: number;
             };
         };
         ProjectDetailResponse: components["schemas"]["ApiResponse"] & {
@@ -617,6 +623,12 @@ export interface components {
         PersonListResponse: components["schemas"]["ApiResponse"] & {
             data: {
                 items: components["schemas"]["Person"][];
+                /** @description 总条数 */
+                total: number;
+                /** @description 当前页，从 1 开始 */
+                page: number;
+                /** @description 每页条数；0 表示不分页（全量） */
+                pageSize: number;
             };
         };
         TeamResponse: components["schemas"]["ApiResponse"] & {
@@ -625,6 +637,12 @@ export interface components {
         TeamListResponse: components["schemas"]["ApiResponse"] & {
             data: {
                 items: components["schemas"]["Team"][];
+                /** @description 总条数 */
+                total: number;
+                /** @description 当前页，从 1 开始 */
+                page: number;
+                /** @description 每页条数；0 表示不分页（全量） */
+                pageSize: number;
             };
         };
         MeResponse: components["schemas"]["ApiResponse"] & {
@@ -688,6 +706,10 @@ export interface components {
         };
     };
     parameters: {
+        /** @description 页码，从 1 开始；缺省或非法按 1 处理 */
+        PageParam: number;
+        /** @description 每页条数，默认 10、上限 200；显式传 0 表示不分页（返回全量，供下拉选项与聚合使用） */
+        PageSizeParam: number;
         /** @description 包稳定唯一标识 */
         BuildId: string;
     };
@@ -699,7 +721,12 @@ export type $defs = Record<string, never>;
 export interface operations {
     listProjects: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description 页码，从 1 开始；缺省或非法按 1 处理 */
+                page?: components["parameters"]["PageParam"];
+                /** @description 每页条数，默认 10、上限 200；显式传 0 表示不分页（返回全量，供下拉选项与聚合使用） */
+                pageSize?: components["parameters"]["PageSizeParam"];
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -800,7 +827,12 @@ export interface operations {
     };
     listPeople: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description 页码，从 1 开始；缺省或非法按 1 处理 */
+                page?: components["parameters"]["PageParam"];
+                /** @description 每页条数，默认 10、上限 200；显式传 0 表示不分页（返回全量，供下拉选项与聚合使用） */
+                pageSize?: components["parameters"]["PageSizeParam"];
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -899,7 +931,12 @@ export interface operations {
     };
     listTeams: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description 页码，从 1 开始；缺省或非法按 1 处理 */
+                page?: components["parameters"]["PageParam"];
+                /** @description 每页条数，默认 10、上限 200；显式传 0 表示不分页（返回全量，供下拉选项与聚合使用） */
+                pageSize?: components["parameters"]["PageSizeParam"];
+            };
             header?: never;
             path?: never;
             cookie?: never;

@@ -13,7 +13,7 @@ import { errorMessage } from '../../api/client';
 import { FormPage } from '../../components/FormPage';
 import { MultiSelect } from '../../components/MultiSelect';
 import { ErrorState, Loading } from '../../components/States';
-import { invalidateDirectory, usePeople } from '../../hooks/useDirectory';
+import { invalidateDirectory, useAllPeople } from '../../hooks/useDirectory';
 import { useProjects } from '../../hooks/useProjects';
 
 const EMPTY_FORM: TeamInput = { name: '', description: '', personIds: [], projectIds: [] };
@@ -25,7 +25,7 @@ export function TeamFormPage(): JSX.Element {
   const editing = Boolean(id);
   const navigate = useNavigate();
 
-  const { people, loading: peopleLoading, error: peopleError, reload: reloadPeople } = usePeople();
+  const { items: people, loading: peopleLoading, error: peopleError, reload: reloadPeople } = useAllPeople();
   const { projects } = useProjects();
 
   const [form, setForm] = useState<TeamInput>(EMPTY_FORM);

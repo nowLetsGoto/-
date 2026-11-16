@@ -16,9 +16,10 @@
   --color-text-2: #33525f;
   --color-muted: #5b7884;
   --color-faint: #7d97a2;
-  --color-primary: #0e7490;
-  --color-primary-strong: #0b5c73;
-  --color-primary-soft: #e4f3f8;
+  /* 主色：饱和天蓝。改这里时记得同步 theme/antd.ts 与 pages/login/login.css */
+  --color-primary: #0369a1;
+  --color-primary-strong: #075985;
+  --color-primary-soft: #e3f2fa;
   --color-border: #e3eef2;
   --color-border-soft: #edf5f8;
   --color-danger: #b42318;
@@ -864,7 +865,9 @@ ul {
   background: var(--color-surface-2);
 }
 
-.data-table .ant-pagination {
+/* antd 的 .ant-table-pagination 会盖掉外层 .ant-pagination 的 margin，
+   用双重类名提权，右侧留 16px，避免分页器贴住卡片边缘。 */
+.data-table .ant-table-pagination.ant-pagination {
   margin: 14px 16px;
   font-size: var(--font-size-sm);
 }
@@ -1205,6 +1208,64 @@ textarea.text-input {
 
 .repo-link:hover {
   text-decoration: underline;
+}
+
+/* 可点击的名称字段：主色文字 + 悬停加深并显示下划线，明确"这行点得动"，
+   但平时不加下划线，避免表格里一排蓝色下划线太吵。 */
+.project-link {
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--color-primary);
+  font: inherit;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+  border-bottom: 1px solid transparent;
+  transition:
+    color 120ms ease,
+    border-color 120ms ease;
+}
+
+.project-link:hover {
+  color: var(--color-primary-strong);
+  border-bottom-color: currentColor;
+}
+
+.project-link:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+  border-radius: 3px;
+}
+
+/* ================= 详情抽屉 ================= */
+
+.detail-drawer .ant-drawer-header {
+  border-bottom: 1px solid var(--color-border-soft);
+}
+
+.detail-drawer .ant-drawer-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.detail-drawer .ant-drawer-body {
+  padding: var(--spacing-lg);
+}
+
+.drawer-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-lg);
+}
+
+.drawer-section h3 {
+  margin: 0 0 var(--spacing-xs);
+  color: var(--color-faint);
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
 }
 
 /* ================= 系统设置 ================= */

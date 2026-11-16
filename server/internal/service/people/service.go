@@ -25,13 +25,16 @@ func NewService(repo *peoplerepo.Repository) *Service {
 	return &Service{repo: repo}
 }
 
-// List 返回全部人员，已带上关联的团队与项目。
-func (s *Service) List(ctx context.Context) (contract.PersonList, error) {
-	items, err := s.repo.List(ctx)
+// List 返回指定页的人员（含关联名字）与总数；page.PageSize=0 时返回全量。
+func (s *Service) List(ctx context.Context, page contract.PageQuery) (contract.PersonList, error) {
+	items, total, err := s.repo.List(ctx, page)
 	if err != nil {
 		return contract.PersonList{}, err
 	}
-	return contract.PersonList{Items: items}, nil
+	return contract.PersonList{
+		Items: items,
+		Page:  contract.Page{Page: page.Page, PageSize: page.PageSize, Total: total},
+	}, nil
 }
 
 // Get 按 id 取单个人员（含关联），供编辑页回填。

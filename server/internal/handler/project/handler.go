@@ -25,7 +25,7 @@ func NewHandler(svc *projectsvc.Service) *Handler {
 
 // List 返回全部项目；下拉筛选与人员/团队关联选择都用它。
 func (h *Handler) List(w http.ResponseWriter, r *http.Request) error {
-	data, err := h.svc.List(r.Context())
+	data, err := h.svc.List(r.Context(), handler.ReadPage(r))
 	if err != nil {
 		return err
 	}

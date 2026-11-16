@@ -126,7 +126,7 @@ make build          # 前端产物 → server/public/，再 CGO_ENABLED=0 go bui
 | # | 方法 | 路径 | 鉴权 | 说明 |
 | --- | --- | --- | --- | --- |
 | 1 | POST | `/api/v1/auth/login` | 公开 | JSON `{username,password}`，返回 `{token,username,expiresAt}`；凭据错误返回 400 |
-| 2 | GET | `/api/v1/projects` | 需登录 | 全部项目（按创建时间正序），项目切换器与新建项目用 |
+| 2 | GET | `/api/v1/projects` | 需登录 | 项目列表（按创建时间正序）；`?page=&pageSize=`，下拉与守卫传 `pageSize=0` 取全量 |
 | 3 | POST | `/api/v1/projects` | 需登录 | JSON `{key,name,description}`，`key` 全仓唯一、创建后不可改（它是 URL 段），返回 201 |
 | 4 | POST | `/api/v1/builds/stage` | 需登录 | multipart `file`，暂存 + 同步解析，恒 200（解析失败只写 `warnings`） |
 | 5 | POST | `/api/v1/builds` | 需登录 | **application/json**，`CommitBuildRequest` **恰好 9 字段**（`project` + stageToken + 表单值），不含文件与 `metaSource`，返回 201 完整 Build |
@@ -140,10 +140,10 @@ make build          # 前端产物 → server/public/，再 CGO_ENABLED=0 go bui
 | 13 | POST | `/api/v1/open/builds` | **API Key** | 外部系统一步式上传（multipart，`project` 必填），详见 `docs/09-OPEN-API.md` |
 | 14 | GET | `/api/v1/projects/{key}` | 需登录 | 项目详情（含关联人员 / 团队 ID） |
 | 15 | PUT | `/api/v1/projects/{key}` | 需登录 | 编辑项目（名称 / 描述 / 库地址；`key` 不可改） |
-| 16 | GET | `/api/v1/people` | 需登录 | 人员列表（含关联团队 / 项目 ID） |
+| 16 | GET | `/api/v1/people` | 需登录 | 人员列表（含关联名字）；`?page=&pageSize=`，`pageSize=0` 取全量 |
 | 17 | POST | `/api/v1/people` | 需登录 | 新增人员，`teamIds` / `projectIds` 为多选 |
 | 18 | PUT | `/api/v1/people/{id}` | 需登录 | 编辑人员（全量覆盖字段与关联） |
-| 19 | GET | `/api/v1/teams` | 需登录 | 团队列表（含关联人员 / 项目 ID） |
+| 19 | GET | `/api/v1/teams` | 需登录 | 团队列表（含关联名字）；分页同上 |
 | 20 | POST | `/api/v1/teams` | 需登录 | 新增团队，`personIds` / `projectIds` 为多选 |
 | 21 | PUT | `/api/v1/teams/{id}` | 需登录 | 编辑团队（全量覆盖字段与关联） |
 | 22 | GET | `/api/v1/me` | 需登录 | 当前登录人 + 关联项目 key（列表页默认项目的来源） |
@@ -217,7 +217,7 @@ curl -sS http://localhost:8080/d/<ID> | head -5
 
 8. **基础资料是纯主数据，不含权限**：人员 / 团队 / 项目三张主表 + 三张多对多关联表（`team_members` / `project_members` / `team_projects`），关联由两侧各自维护自己那一半（人员页改 `teamIds`、团队页改 `personIds`，落到同一张表）；编辑一律**全量覆盖**（事务内先清后写），前端每次提交完整多选结果。**列表接口直接返回关联的 `{id,name}`（`RelationRef`）**，因此人员管理只调 `/people`、团队管理只调 `/teams`、项目管理只调 `/projects`——页面不会为了把 ID 显示成名字再去拉别的列表（这是「一个页面一个列表接口」的硬约束）。`people.username` 关联登录账号，`GET /api/v1/me` 用它把「我关联的第一个项目」投影给前端做列表页默认值——**只做默认值，不做权限**；谁能看哪个项目仍由 P2 的角色体系决定。
 
-9. **UI 组件库只用在一个薄封装里**：选 **Ant Design 5**（表格/表单/分页最全、中文生态最好），但 `antd` 只允许出现在 `components/DataTable.tsx` 与 `theme/antd.ts`，业务页面只描述「有哪些列」。主题通过 `ConfigProvider` 的 token 对齐现有青色设计系统（主色 `#0e7490`、圆角 8/12、控件高 34px），表格外观再由 `.data-table` 的一段 CSS 覆盖到与手写表格一致。带来的代价是体积：antd 单独一个 chunk 约 248 KB(gzip)，业务代码约 37 KB(gzip)；`vite.config.ts` 用 `manualChunks` 把 antd 拆出去，业务更新不会让它重新下载。**分页目前是前端分页**（`DataTable` 内置，数据不足一页时自动隐藏分页条），当某个列表超过约 2000 行时再改成服务端分页（接口加 `page/pageSize`，`DataTable` 换成受控分页）。
+9. **UI 组件库只用在一个薄封装里**：选 **Ant Design 5**（表格/表单/分页最全、中文生态最好），但 `antd` 只允许出现在 `components/DataTable.tsx`、`components/DetailDrawer.tsx` 与 `theme/antd.ts`，业务页面只描述「有哪些列」。主题通过 `ConfigProvider` 的 token 对齐现有青色设计系统（主色 `#0369a1`、圆角 8/12、控件高 34px），表格外观再由 `.data-table` 的一段 CSS 覆盖到与手写表格一致。带来的代价是体积：antd 单独一个 chunk 约 248 KB(gzip)，业务代码约 37 KB(gzip)；`vite.config.ts` 用 `manualChunks` 把 antd 拆出去，业务更新不会让它重新下载。**列表分页是服务端分页**：人员 / 团队 / 项目三个列表支持 `?page=&pageSize=`（默认 10 条、上限 200，`pageSize=0` 表示不分页取全量），响应平铺 `{items, total, page, pageSize}`；`DataTable` 传 `serverPagination` 即切到受控分页，不传则退化为前端分页（如应用包列表）。项目详情用**抽屉**展示（`components/DetailDrawer.tsx`，同样只在这里出现 antd 的 Drawer），点项目名即可展开，不再单开详情页。
 
 **多板块 / push 预留**：只体现在三段式 Layout + 一个导航数组（总览 / 分发 / 基础资料 / 平台四组）、`/d/:id` 路由命名空间永不改动、`/api/v1` 前缀、`BuildService.Create()` 这个唯一「上传完成」时点、装配层可注入。没有任何占位菜单、空页面、事件类型、outbox 表或 `TODO`。
 

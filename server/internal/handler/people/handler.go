@@ -27,7 +27,7 @@ func NewHandler(svc *peoplesvc.Service) *Handler {
 
 // List 返回全部人员，已带关联的团队与项目。
 func (h *Handler) List(w http.ResponseWriter, r *http.Request) error {
-	data, err := h.svc.List(r.Context())
+	data, err := h.svc.List(r.Context(), handler.ReadPage(r))
 	if err != nil {
 		return err
 	}

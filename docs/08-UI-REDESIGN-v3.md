@@ -58,7 +58,7 @@ Dandelion 研发交付平台
 --line: #e3eef2;         /* 分割线 */
 --bg: #f6fafb;           /* 页面底 */
 --surface: #ffffff;      /* 卡片 */
---primary: #0e7490;      /* 主色（与登录页一致） */
+--primary: #0369a1;      /* 主色：饱和天蓝，白底对比度 5.93:1（与登录页一致） */
 --primary-strong: #0b5c73;
 --primary-soft: #e4f3f8; /* 激活底 */
 --ok: #127a5c;  --warn: #a45a0b;  --danger: #b42318;

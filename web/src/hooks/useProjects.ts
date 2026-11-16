@@ -23,7 +23,7 @@ function loadProjects(): Promise<Project[]> {
     return Promise.resolve(cache);
   }
   if (!inflight) {
-    inflight = listProjects()
+    inflight = listProjects({ pageSize: 0 })
       .then((result) => {
         cache = result.items;
         return cache;
@@ -135,4 +135,43 @@ export function useCurrentProject(): CurrentProject {
   }, [resolvedKey]);
 
   return { key, project, loading, notFound };
+}
+
+/**
+ * 项目列表（分页）：只给「项目管理」列表页用。
+ * 与 useProjects（全量、带缓存）区分开——下拉选项与项目守卫需要完整列表，
+ * 列表页需要的是「当前页」，两者混用会让一边拿到错的数据量。
+ */
+export function useProjectsPage(
+  page: number,
+  pageSize: number,
+): { projects: Project[]; total: number; loading: boolean; error: string; reload: () => void } {
+  const [state, setState] = useState<{ projects: Project[]; total: number; loading: boolean; error: string }>({
+    projects: [],
+    total: 0,
+    loading: true,
+    error: '',
+  });
+  const [version, setVersion] = useState(0);
+
+  useEffect(() => {
+    let cancelled = false;
+    setState((prev) => ({ ...prev, loading: true, error: '' }));
+    listProjects({ page, pageSize })
+      .then((result) => {
+        if (!cancelled) {
+          setState({ projects: result.items, total: result.total, loading: false, error: '' });
+        }
+      })
+      .catch((err: unknown) => {
+        if (!cancelled) {
+          setState({ projects: [], total: 0, loading: false, error: errorMessage(err) });
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [page, pageSize, version]);
+
+  return { ...state, reload: () => setVersion((value) => value + 1) };
 }
