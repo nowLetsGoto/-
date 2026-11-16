@@ -1,0 +1,3 @@
+#!/usr/bin/env sh
+# 提交前只对暂存文件跑 lint + 格式化，由 lint-staged 按文件类型分派。
+cd web && npx lint-staged

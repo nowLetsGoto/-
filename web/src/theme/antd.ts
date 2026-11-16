@@ -19,7 +19,8 @@ const palette = {
   surface: '#ffffff',
   surface2: '#fafdfe',
   danger: '#b42318',
-  fontSans: '-apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", "Segoe UI", sans-serif',
+  fontSans:
+    '-apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", "Segoe UI", sans-serif',
 } as const;
 
 export const antdTheme: ThemeConfig = {
@@ -43,6 +44,12 @@ export const antdTheme: ThemeConfig = {
     controlHeight: 34,
   },
   components: {
+    // 适配 console-kit 基础控件，保持原有轻量按钮与输入框的密度。
+    Button: {
+      defaultShadow: 'none',
+      primaryShadow: 'none',
+      dangerShadow: 'none',
+    },
     Table: {
       headerBg: palette.surface2,
       headerColor: palette.faint,

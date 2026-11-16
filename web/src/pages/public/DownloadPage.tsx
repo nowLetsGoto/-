@@ -13,6 +13,7 @@ import { QRCode } from '@seakoi/console-kit';
 import type { Build } from '../../api/builds';
 import { getBuild, isShareableUrl } from '../../api/builds';
 import { ApiError, errorMessage } from '../../api/client';
+import { Button } from '../../components/Controls';
 import { Empty, ErrorState, Loading } from '../../components/States';
 import { environmentLabel, formatBytes, formatDate, platformLabel } from '../../utils/format';
 
@@ -27,7 +28,12 @@ const DOWNLOAD_COOLDOWN_MS = 3000;
 
 export function DownloadPage(): JSX.Element {
   const { id } = useParams<{ id: string }>();
-  const [state, setState] = useState<PageState>({ loading: true, data: null, error: '', missing: false });
+  const [state, setState] = useState<PageState>({
+    loading: true,
+    data: null,
+    error: '',
+    missing: false,
+  });
   const [reloadKey, setReloadKey] = useState(0);
   const [downloadDisabled, setDownloadDisabled] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -103,7 +109,10 @@ export function DownloadPage(): JSX.Element {
   if (state.error || !state.data) {
     return (
       <section className="download-page">
-        <ErrorState message={state.error || '加载失败'} onRetry={() => setReloadKey((value) => value + 1)} />
+        <ErrorState
+          message={state.error || '加载失败'}
+          onRetry={() => setReloadKey((value) => value + 1)}
+        />
       </section>
     );
   }
@@ -201,9 +210,13 @@ export function DownloadPage(): JSX.Element {
         </div>
 
         <div className="actions actions-center">
-          <button className="button button-ghost" type="button" onClick={() => void copyText(build.downloadPageUrl)}>
+          <Button
+            className="button button-ghost"
+            type="button"
+            onClick={() => void copyText(build.downloadPageUrl)}
+          >
             {copied ? '已复制' : '复制页面地址'}
-          </button>
+          </Button>
         </div>
         {notice ? <p className="field-error">{notice}</p> : null}
 

@@ -9,6 +9,7 @@ import { useNavigate } from 'react-router-dom';
 import type { UserInput } from '../../api/users';
 import { createUser } from '../../api/users';
 import { errorMessage } from '../../api/client';
+import { Checkbox, Input } from '../../components/Controls';
 import { FormPage } from '../../components/FormPage';
 
 const EMPTY: UserInput = { username: '', password: '', personId: '', isSuperAdmin: false };
@@ -50,7 +51,7 @@ export function AccountFormPage(): JSX.Element {
       <div className="field-grid">
         <label className="field">
           <span>账号名 *</span>
-          <input
+          <Input
             className="text-input"
             maxLength={32}
             placeholder="字母、数字、点、下划线、短横线，3-32 位"
@@ -60,7 +61,7 @@ export function AccountFormPage(): JSX.Element {
         </label>
         <label className="field">
           <span>初始密码 *</span>
-          <input
+          <Input
             className="text-input"
             type="text"
             maxLength={64}
@@ -71,15 +72,16 @@ export function AccountFormPage(): JSX.Element {
         </label>
       </div>
 
-      <label className="field-check field-check-admin">
-        <input
-          type="checkbox"
-          checked={form.isSuperAdmin}
-          onChange={(event) => setForm({ ...form, isSuperAdmin: event.target.checked })}
-        />
+      <Checkbox
+        className="field-check field-check-admin"
+        checked={form.isSuperAdmin}
+        onChange={(event) => setForm({ ...form, isSuperAdmin: event.target.checked })}
+      >
         设为超级管理员
-        <span className="settings-hint">可进入「超级管理员」专区：管理账号与平台配置。请谨慎授予。</span>
-      </label>
+        <span className="settings-hint">
+          可进入「超级管理员」专区：管理账号与平台配置。请谨慎授予。
+        </span>
+      </Checkbox>
     </FormPage>
   );
 }

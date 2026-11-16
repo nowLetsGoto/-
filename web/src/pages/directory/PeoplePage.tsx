@@ -7,6 +7,7 @@
 import { Link, useNavigate } from 'react-router-dom';
 import type { TableColumnsType } from '@seakoi/console-kit';
 import type { Person } from '../../api/people';
+import { Button } from '../../components/Controls';
 import { DataTable } from '../../components/DataTable';
 import { Empty, ErrorState } from '../../components/States';
 import { usePageState } from '../../hooks/usePageState';
@@ -38,13 +39,19 @@ export function PeoplePage(): JSX.Element {
       key: 'role',
       width: 130,
       render: (_, person) =>
-        person.roleName ? <span className="badge badge-role">{person.roleName}</span> : <span className="cell-sub">未分配</span>,
+        person.roleName ? (
+          <span className="badge badge-role">{person.roleName}</span>
+        ) : (
+          <span className="cell-sub">未分配</span>
+        ),
     },
     {
       title: '联系方式',
       key: 'contact',
       render: (_, person) => (
-        <span className="cell-sub">{[person.email, person.phone].filter(Boolean).join(' · ') || '—'}</span>
+        <span className="cell-sub">
+          {[person.email, person.phone].filter(Boolean).join(' · ') || '—'}
+        </span>
       ),
     },
     {
@@ -85,13 +92,13 @@ export function PeoplePage(): JSX.Element {
       width: 90,
       render: (_, person) => (
         <div className="row-actions">
-          <button
+          <Button
             className="button button-ghost button-small"
             type="button"
             onClick={() => navigate(`/directory/people/${person.id}/edit`)}
           >
             编辑
-          </button>
+          </Button>
         </div>
       ),
     },

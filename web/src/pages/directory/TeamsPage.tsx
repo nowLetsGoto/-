@@ -7,6 +7,7 @@
 import { Link, useNavigate } from 'react-router-dom';
 import type { TableColumnsType } from '@seakoi/console-kit';
 import type { Team } from '../../api/teams';
+import { Button } from '../../components/Controls';
 import { DataTable } from '../../components/DataTable';
 import { Empty, ErrorState } from '../../components/States';
 import { usePageState } from '../../hooks/usePageState';
@@ -66,13 +67,13 @@ export function TeamsPage(): JSX.Element {
       width: 90,
       render: (_, team) => (
         <div className="row-actions">
-          <button
+          <Button
             className="button button-ghost button-small"
             type="button"
             onClick={() => navigate(`/directory/teams/${team.id}/edit`)}
           >
             编辑
-          </button>
+          </Button>
         </div>
       ),
     },

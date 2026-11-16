@@ -8,9 +8,16 @@
 import { useRef, useState } from 'react';
 import type { FormEvent } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import type { Build, CommitBuildRequest, Environment, Platform, StageResult } from '../../api/builds';
+import type {
+  Build,
+  CommitBuildRequest,
+  Environment,
+  Platform,
+  StageResult,
+} from '../../api/builds';
 import { commitBuild, isShareableUrl, stageBuild } from '../../api/builds';
 import { ApiError, errorMessage } from '../../api/client';
+import { Button, Input, TextArea } from '../../components/Controls';
 import { FileDropzone } from '../../components/FileDropzone';
 import { useEnvironment } from '../../hooks/useEnvironment';
 import { useCurrentProject } from '../../hooks/useProjects';
@@ -18,7 +25,12 @@ import { ENVIRONMENTS, PLATFORMS, platformFromFileName } from '../../utils/forma
 
 type ParsedField = 'appName' | 'packageId' | 'version' | 'buildNumber';
 type TextField = ParsedField | 'changelog';
-const PARSED_FIELDS: ReadonlyArray<ParsedField> = ['appName', 'packageId', 'version', 'buildNumber'];
+const PARSED_FIELDS: ReadonlyArray<ParsedField> = [
+  'appName',
+  'packageId',
+  'version',
+  'buildNumber',
+];
 
 interface FormState {
   environment: Environment;
@@ -178,25 +190,38 @@ export function UploadPage(): JSX.Element {
           <h1>上传成功</h1>
           <p className="muted">下载页绝对地址，可直接转发给同事：</p>
           <div className="copy-row">
-            <input className="text-input" readOnly value={created.downloadPageUrl} aria-label="下载页地址" />
-            <button className="button button-primary" type="button" onClick={() => void copyText(created.downloadPageUrl)}>
+            <Input
+              className="text-input"
+              readOnly
+              value={created.downloadPageUrl}
+              aria-label="下载页地址"
+            />
+            <Button
+              className="button button-primary"
+              type="button"
+              onClick={() => void copyText(created.downloadPageUrl)}
+            >
               {copied ? '已复制' : '复制地址'}
-            </button>
+            </Button>
           </div>
           {!isShareableUrl(created.downloadPageUrl) ? (
             <p className="notice">当前对外基址不可被手机访问，请配置 PUBLIC_BASE_URL 后再扫码</p>
           ) : null}
           <div className="actions">
             {/* downloadPagePath 的唯一用途：react-router 内部跳转 */}
-            <button className="button button-primary" type="button" onClick={() => navigate(created.downloadPagePath)}>
+            <Button
+              className="button button-primary"
+              type="button"
+              onClick={() => navigate(created.downloadPagePath)}
+            >
               去下载页
-            </button>
+            </Button>
             <Link className="button button-ghost" to={`/p/${key}/packages`}>
               返回列表
             </Link>
-            <button className="button button-ghost" type="button" onClick={resetAll}>
+            <Button className="button button-ghost" type="button" onClick={resetAll}>
               再上传一个
-            </button>
+            </Button>
           </div>
         </div>
       </section>
@@ -215,7 +240,12 @@ export function UploadPage(): JSX.Element {
       <form className="card form-card" onSubmit={(event) => void handleSubmit(event)}>
         <div className="form-section">
           <h2>1. 选择安装包</h2>
-          <FileDropzone file={file} disabled={parsing || submitting} onSelect={(f, p) => void handleSelect(f, p)} onRemove={handleRemove} />
+          <FileDropzone
+            file={file}
+            disabled={parsing || submitting}
+            onSelect={(f, p) => void handleSelect(f, p)}
+            onRemove={handleRemove}
+          />
           {parsing ? <p className="notice">解析中… 正在识别应用名、包名与版本号</p> : null}
           {warnings.length > 0 ? <p className="notice">部分信息未自动识别，可手动修正</p> : null}
         </div>
@@ -225,7 +255,7 @@ export function UploadPage(): JSX.Element {
           <label className="field-label">环境</label>
           <div className="segmented">
             {ENVIRONMENTS.map((item) => (
-              <button
+              <Button
                 key={item.value}
                 type="button"
                 className={form.environment === item.value ? 'segment segment-active' : 'segment'}
@@ -234,14 +264,14 @@ export function UploadPage(): JSX.Element {
               >
                 {item.label}
                 <small>{item.value}</small>
-              </button>
+              </Button>
             ))}
           </div>
 
           <label className="field-label">平台</label>
           <div className="segmented">
             {PLATFORMS.map((item) => (
-              <button
+              <Button
                 key={item.value}
                 type="button"
                 className={form.platform === item.value ? 'segment segment-active' : 'segment'}
@@ -249,7 +279,7 @@ export function UploadPage(): JSX.Element {
                 disabled={submitting}
               >
                 {item.label}
-              </button>
+              </Button>
             ))}
           </div>
         </div>
@@ -260,31 +290,65 @@ export function UploadPage(): JSX.Element {
           <div className="field-grid">
             <label className="field">
               <span>应用名</span>
-              <input className="text-input" maxLength={100} value={form.appName} onChange={(e) => setField('appName', e.target.value)} />
+              <Input
+                className="text-input"
+                maxLength={100}
+                value={form.appName}
+                onChange={(e) => setField('appName', e.target.value)}
+              />
             </label>
             <label className="field">
               <span>包名 / Bundle ID</span>
-              <input className="text-input" maxLength={100} value={form.packageId} onChange={(e) => setField('packageId', e.target.value)} />
+              <Input
+                className="text-input"
+                maxLength={100}
+                value={form.packageId}
+                onChange={(e) => setField('packageId', e.target.value)}
+              />
             </label>
             <label className="field">
               <span>版本号</span>
-              <input className="text-input" maxLength={50} value={form.version} onChange={(e) => setField('version', e.target.value)} />
+              <Input
+                className="text-input"
+                maxLength={50}
+                value={form.version}
+                onChange={(e) => setField('version', e.target.value)}
+              />
             </label>
             <label className="field">
               <span>构建号</span>
-              <input className="text-input" maxLength={50} value={form.buildNumber} onChange={(e) => setField('buildNumber', e.target.value)} />
+              <Input
+                className="text-input"
+                maxLength={50}
+                value={form.buildNumber}
+                onChange={(e) => setField('buildNumber', e.target.value)}
+              />
             </label>
           </div>
           <label className="field">
             <span>更新说明</span>
-            <textarea className="text-input" rows={3} maxLength={2000} value={form.changelog} onChange={(e) => setField('changelog', e.target.value)} />
+            <TextArea
+              className="text-input"
+              rows={3}
+              maxLength={2000}
+              value={form.changelog}
+              onChange={(e) => setField('changelog', e.target.value)}
+            />
           </label>
         </div>
 
-        {error ? <p className="field-error" role="alert">{error}</p> : null}
-        <button className="button button-primary button-block" type="submit" disabled={parsing || submitting || !file || !stageToken}>
+        {error ? (
+          <p className="field-error" role="alert">
+            {error}
+          </p>
+        ) : null}
+        <Button
+          className="button button-primary button-block"
+          type="submit"
+          disabled={parsing || submitting || !file || !stageToken}
+        >
           {submitting ? '正在发布…' : '上传并发布'}
-        </button>
+        </Button>
       </form>
     </section>
   );

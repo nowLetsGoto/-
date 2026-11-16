@@ -1,10 +1,9 @@
 /**
- * 单选下拉（Ant Design Select 的唯一封装）。
+ * 单选下拉（使用 console-kit 的 Select 命名导出）。
  * 职责：统一下拉的触发态、选项面板、键盘操作、禁用态与主题外观。
  * 输入：当前值、选项列表与变更回调；输出：单选下拉。
- * 边界：**业务页面不得直接 import antd 的 Select**——antd 只允许出现在本文件、
- *       DataTable、DetailDrawer、ConfirmDialog 与 theme/antd.ts；
- *       本组件不取数、不持有业务状态、不拼接口 URL。
+ * 边界：页面通过本组件统一使用下拉；本组件只管理弹层，不取数、
+ *       不持有业务选值、不拼接口 URL。
  */
 import { Select as AntSelect } from '@seakoi/console-kit';
 import { useEffect, useState } from 'react';
@@ -32,7 +31,13 @@ interface SelectProps {
 function ChevronDown(): JSX.Element {
   return (
     <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true">
-      <path d="m2.5 4.5 3.5 3 3.5-3" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
+      <path
+        d="m2.5 4.5 3.5 3 3.5-3"
+        stroke="currentColor"
+        strokeWidth="1.4"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
     </svg>
   );
 }

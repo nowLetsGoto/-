@@ -4,6 +4,8 @@
  * 输入：label、options（id + 名称）、selected（ID 数组）；输出：onChange(新数组)。
  * 边界：不取数、不校验、不排序；选项为空时给一句可读的提示而不是空白。
  */
+import { Checkbox } from './Controls';
+
 export interface MultiSelectOption {
   id: string;
   label: string;
@@ -17,7 +19,13 @@ interface MultiSelectProps {
   emptyText?: string;
 }
 
-export function MultiSelect({ label, options, selected, onChange, emptyText }: MultiSelectProps): JSX.Element {
+export function MultiSelect({
+  label,
+  options,
+  selected,
+  onChange,
+  emptyText,
+}: MultiSelectProps): JSX.Element {
   const toggle = (id: string): void => {
     onChange(selected.includes(id) ? selected.filter((item) => item !== id) : [...selected, id]);
   };
@@ -32,10 +40,14 @@ export function MultiSelect({ label, options, selected, onChange, emptyText }: M
           {options.map((option) => {
             const checked = selected.includes(option.id);
             return (
-              <label key={option.id} className={checked ? 'field-check field-check-on' : 'field-check'}>
-                <input type="checkbox" checked={checked} onChange={() => toggle(option.id)} />
+              <Checkbox
+                key={option.id}
+                className={checked ? 'field-check field-check-on' : 'field-check'}
+                checked={checked}
+                onChange={() => toggle(option.id)}
+              >
                 {option.label}
-              </label>
+              </Checkbox>
             );
           })}
         </div>

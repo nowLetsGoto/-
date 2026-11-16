@@ -8,6 +8,7 @@ import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import type { TableColumnsType } from '@seakoi/console-kit';
 import type { Project } from '../../api/projects';
+import { Button } from '../../components/Controls';
 import { DataTable } from '../../components/DataTable';
 import { Empty, ErrorState } from '../../components/States';
 import { usePageState } from '../../hooks/usePageState';
@@ -27,9 +28,9 @@ export function ProjectsPage(): JSX.Element {
       title: '项目名称',
       key: 'name',
       render: (_, project) => (
-        <button className="project-link" type="button" onClick={() => setDetailKey(project.key)}>
+        <Button className="project-link" type="button" onClick={() => setDetailKey(project.key)}>
           {project.name}
-        </button>
+        </Button>
       ),
     },
     {
@@ -71,13 +72,13 @@ export function ProjectsPage(): JSX.Element {
       width: 90,
       render: (_, project) => (
         <div className="row-actions">
-          <button
+          <Button
             className="button button-ghost button-small"
             type="button"
             onClick={() => navigate(`/directory/projects/${project.key}/edit`)}
           >
             编辑
-          </button>
+          </Button>
         </div>
       ),
     },

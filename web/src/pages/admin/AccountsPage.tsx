@@ -10,6 +10,7 @@ import type { TableColumnsType } from '@seakoi/console-kit';
 import { errorMessage } from '../../api/client';
 import type { User } from '../../api/users';
 import { listUsers, resetUserPassword, setUserStatus } from '../../api/users';
+import { Button, Input } from '../../components/Controls';
 import { ConfirmDialog } from '../../components/ConfirmDialog';
 import { DataTable } from '../../components/DataTable';
 import { Empty, ErrorState } from '../../components/States';
@@ -48,7 +49,9 @@ export function AccountsPage(): JSX.Element {
   const [pending, setPending] = useState<PendingAction | null>(null);
   const [busy, setBusy] = useState(false);
   // 临时密码只展示一次：刷新页面或点关闭就再也看不到
-  const [tempPassword, setTempPassword] = useState<{ username: string; password: string } | null>(null);
+  const [tempPassword, setTempPassword] = useState<{ username: string; password: string } | null>(
+    null,
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -114,7 +117,11 @@ export function AccountsPage(): JSX.Element {
       key: 'isSuperAdmin',
       width: 120,
       render: (_, user) =>
-        user.isSuperAdmin ? <span className="badge badge-admin">超级管理员</span> : <span className="cell-sub">普通用户</span>,
+        user.isSuperAdmin ? (
+          <span className="badge badge-admin">超级管理员</span>
+        ) : (
+          <span className="cell-sub">普通用户</span>
+        ),
     },
     {
       title: '状态',
@@ -132,7 +139,9 @@ export function AccountsPage(): JSX.Element {
       key: 'lastLogin',
       render: (_, user) => (
         <span className="cell-sub">
-          {user.lastLoginAt ? `${formatDate(user.lastLoginAt)}${user.lastLoginIp ? ` · ${user.lastLoginIp}` : ''}` : '从未登录'}
+          {user.lastLoginAt
+            ? `${formatDate(user.lastLoginAt)}${user.lastLoginIp ? ` · ${user.lastLoginIp}` : ''}`
+            : '从未登录'}
         </span>
       ),
     },
@@ -144,23 +153,25 @@ export function AccountsPage(): JSX.Element {
         const isSelf = user.username === me?.username;
         return (
           <div className="row-actions">
-            <button
+            <Button
               className="button button-ghost button-small"
               type="button"
               onClick={() => setPending({ kind: 'reset', user })}
             >
               重置密码
-            </button>
-            <button
+            </Button>
+            <Button
               className="button button-ghost button-small"
               type="button"
               // 自己禁自己会让当前会话立即失效，服务端也会拒绝——这里先禁掉按钮
               disabled={isSelf && user.status === 'active'}
               title={isSelf && user.status === 'active' ? '不能禁用当前登录的账号' : undefined}
-              onClick={() => setPending({ kind: user.status === 'active' ? 'disable' : 'enable', user })}
+              onClick={() =>
+                setPending({ kind: user.status === 'active' ? 'disable' : 'enable', user })
+              }
             >
               {user.status === 'active' ? '禁用' : '启用'}
-            </button>
+            </Button>
           </div>
         );
       },
@@ -170,10 +181,14 @@ export function AccountsPage(): JSX.Element {
   const emptyState = (
     <Empty
       title={query ? '没有匹配的账号' : '还没有账号'}
-      description={query ? '换个关键字试试，或清空搜索看全部账号。' : '新建账号后，把一次性密码发给对方即可登录。'}
+      description={
+        query
+          ? '换个关键字试试，或清空搜索看全部账号。'
+          : '新建账号后，把一次性密码发给对方即可登录。'
+      }
       action={
         query ? (
-          <button
+          <Button
             className="button button-ghost"
             type="button"
             onClick={() => {
@@ -182,7 +197,7 @@ export function AccountsPage(): JSX.Element {
             }}
           >
             清空搜索
-          </button>
+          </Button>
         ) : (
           <Link className="button button-primary" to="/admin/accounts/new">
             新建第一个账号
@@ -209,17 +224,23 @@ export function AccountsPage(): JSX.Element {
           <div>
             <strong>{tempPassword.username}</strong> 的临时密码：
             <code>{tempPassword.password}</code>
-            <span className="temp-password-hint">只显示这一次，请立即转交并提醒对方登录后修改。</span>
+            <span className="temp-password-hint">
+              只显示这一次，请立即转交并提醒对方登录后修改。
+            </span>
           </div>
-          <button className="button button-ghost button-small" type="button" onClick={() => setTempPassword(null)}>
+          <Button
+            className="button button-ghost button-small"
+            type="button"
+            onClick={() => setTempPassword(null)}
+          >
             我已记下
-          </button>
+          </Button>
         </div>
       ) : null}
 
       <div className="card">
         <div className="toolbar">
-          <input
+          <Input
             className="text-input toolbar-search"
             placeholder="搜索账号或姓名"
             value={keyword}
@@ -230,9 +251,13 @@ export function AccountsPage(): JSX.Element {
               }
             }}
           />
-          <button className="button button-ghost button-small" type="button" onClick={() => setQuery(keyword)}>
+          <Button
+            className="button button-ghost button-small"
+            type="button"
+            onClick={() => setQuery(keyword)}
+          >
             搜索
-          </button>
+          </Button>
         </div>
 
         {state.error ? (
@@ -253,7 +278,9 @@ export function AccountsPage(): JSX.Element {
         open={pending !== null}
         title={pending ? ACTION_TITLES[pending.kind] : ''}
         description={describeAction(pending)}
-        confirmText={pending?.kind === 'disable' ? '禁用' : pending?.kind === 'reset' ? '重置' : '启用'}
+        confirmText={
+          pending?.kind === 'disable' ? '禁用' : pending?.kind === 'reset' ? '重置' : '启用'
+        }
         danger={pending?.kind !== 'enable'}
         loading={busy}
         onConfirm={() => void runPending()}
@@ -273,19 +300,25 @@ function describeAction(pending: PendingAction | null): JSX.Element | null {
     return (
       <>
         <p>
-          账号 <strong>{user.username}</strong> 将无法登录，<strong>已登录的会话会立即失效</strong>。
+          账号 <strong>{user.username}</strong> 将无法登录，<strong>已登录的会话会立即失效</strong>
+          。
         </p>
         <p className="settings-hint">账号数据与历史记录都会保留，随时可以重新启用。</p>
       </>
     );
   }
   if (kind === 'enable') {
-    return <p>账号 <strong>{user.username}</strong> 将恢复登录能力。</p>;
+    return (
+      <p>
+        账号 <strong>{user.username}</strong> 将恢复登录能力。
+      </p>
+    );
   }
   return (
     <>
       <p>
-        将为 <strong>{user.username}</strong> 生成一个新的随机密码，<strong>旧密码与已登录会话立即失效</strong>。
+        将为 <strong>{user.username}</strong> 生成一个新的随机密码，
+        <strong>旧密码与已登录会话立即失效</strong>。
       </p>
       <p className="settings-hint">新密码只会显示一次，请立即转交。</p>
     </>

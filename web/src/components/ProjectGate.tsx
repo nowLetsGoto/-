@@ -10,6 +10,7 @@
 import type { ReactNode } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { recentProjectKey, useCurrentProject, useProjects } from '../hooks/useProjects';
+import { Button } from './Controls';
 import { Empty } from './States';
 
 export function ProjectGate({ children }: { children: ReactNode }): JSX.Element {
@@ -43,9 +44,13 @@ function ProjectScopedGate({ children }: { children: ReactNode }): JSX.Element {
       description="链接里的项目可能已被删除或改名，也可能只是地址拼错了。"
       action={
         <>
-          <button className="button button-primary" type="button" onClick={() => navigate(backTarget)}>
+          <Button
+            className="button button-primary"
+            type="button"
+            onClick={() => navigate(backTarget)}
+          >
             回到最近项目
-          </button>
+          </Button>
           <Link className="button button-ghost" to="/directory/projects">
             去项目管理
           </Link>

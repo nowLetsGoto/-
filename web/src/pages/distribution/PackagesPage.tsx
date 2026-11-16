@@ -11,12 +11,19 @@ import type { TableColumnsType } from '@seakoi/console-kit';
 import type { Build, ListBuildsResult, Platform } from '../../api/builds';
 import { listBuilds } from '../../api/builds';
 import { errorMessage } from '../../api/client';
+import { Button } from '../../components/Controls';
 import { DataTable } from '../../components/DataTable';
 import { ProjectSelect } from '../../components/ProjectSelect';
 import { Empty, ErrorState } from '../../components/States';
 import { useEnvironment } from '../../hooks/useEnvironment';
 import { useCurrentProject, useProjects } from '../../hooks/useProjects';
-import { PLATFORMS, environmentLabel, formatBytes, formatDate, platformLabel } from '../../utils/format';
+import {
+  PLATFORMS,
+  environmentLabel,
+  formatBytes,
+  formatDate,
+  platformLabel,
+} from '../../utils/format';
 
 interface PageState {
   loading: boolean;
@@ -110,7 +117,9 @@ export function PackagesPage(): JSX.Element {
     {
       title: '平台',
       key: 'platform',
-      render: (_, build) => <span className={`badge badge-${build.platform}`}>{platformLabel(build.platform)}</span>,
+      render: (_, build) => (
+        <span className={`badge badge-${build.platform}`}>{platformLabel(build.platform)}</span>
+      ),
     },
     { title: '大小', key: 'size', render: (_, build) => formatBytes(build.fileSize) },
     {
@@ -125,9 +134,13 @@ export function PackagesPage(): JSX.Element {
       width: 100,
       render: (_, build) => (
         <div className="row-actions">
-          <button className="button button-ghost button-small" type="button" onClick={() => navigate(build.downloadPagePath)}>
+          <Button
+            className="button button-ghost button-small"
+            type="button"
+            onClick={() => navigate(build.downloadPagePath)}
+          >
             下载页
-          </button>
+          </Button>
         </div>
       ),
     },
@@ -149,9 +162,13 @@ export function PackagesPage(): JSX.Element {
         title={`${environmentLabel(environment)}环境暂无 ${platformLabel(platform)} 包`}
         description="换一个平台，或回到全部平台看看其它包。"
         action={
-          <button className="button button-ghost" type="button" onClick={() => setPlatform(ALL_PLATFORMS)}>
+          <Button
+            className="button button-ghost"
+            type="button"
+            onClick={() => setPlatform(ALL_PLATFORMS)}
+          >
             查看全部平台
-          </button>
+          </Button>
         }
       />
     );
@@ -162,7 +179,8 @@ export function PackagesPage(): JSX.Element {
         <div>
           <h1>应用包</h1>
           <p className="sub">
-            {environmentLabel(environment)}环境 · {state.data ? `共 ${state.data.total} 个包` : '加载中…'} · 按上传时间倒序
+            {environmentLabel(environment)}环境 ·{' '}
+            {state.data ? `共 ${state.data.total} 个包` : '加载中…'} · 按上传时间倒序
           </p>
         </div>
         <div className="page-head-actions">
@@ -174,22 +192,22 @@ export function PackagesPage(): JSX.Element {
         {showToolbar ? (
           <div className="toolbar">
             <div className="segmented" role="group" aria-label="平台">
-              <button
+              <Button
                 type="button"
                 className={platform === ALL_PLATFORMS ? 'segment segment-active' : 'segment'}
                 onClick={() => setPlatform(ALL_PLATFORMS)}
               >
                 全部
-              </button>
+              </Button>
               {PLATFORMS.map((item) => (
-                <button
+                <Button
                   key={item.value}
                   type="button"
                   className={platform === item.value ? 'segment segment-active' : 'segment'}
                   onClick={() => setPlatform(item.value)}
                 >
                   {item.label}
-                </button>
+                </Button>
               ))}
             </div>
           </div>

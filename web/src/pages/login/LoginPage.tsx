@@ -8,6 +8,7 @@
 import { useState } from 'react';
 import type { FormEvent } from 'react';
 import { Navigate, useLocation, useNavigate } from 'react-router-dom';
+import { Button, Input, Radio } from '../../components/Controls';
 import { login } from '../../api/auth';
 import { errorMessage } from '../../api/client';
 import type { SessionMode } from '../../api/session';
@@ -110,35 +111,37 @@ export function LoginPage(): JSX.Element {
             <fieldset className="login-mode">
               <legend className="login-label">使用模式</legend>
               <div className="login-mode-options">
-                <label className={mode === 'solo' ? 'login-mode-option login-mode-active' : 'login-mode-option'}>
-                  <input
-                    type="radio"
-                    name="mode"
-                    value="solo"
-                    checked={mode === 'solo'}
-                    onChange={() => setMode('solo')}
-                  />
+                <Radio
+                  className={
+                    mode === 'solo' ? 'login-mode-option login-mode-active' : 'login-mode-option'
+                  }
+                  name="mode"
+                  value="solo"
+                  checked={mode === 'solo'}
+                  onChange={() => setMode('solo')}
+                >
                   <span className="login-mode-title">单人模式</span>
                   <span className="login-mode-desc">只看自己上传的应用包</span>
-                </label>
-                <label className={mode === 'team' ? 'login-mode-option login-mode-active' : 'login-mode-option'}>
-                  <input
-                    type="radio"
-                    name="mode"
-                    value="team"
-                    checked={mode === 'team'}
-                    onChange={() => setMode('team')}
-                  />
+                </Radio>
+                <Radio
+                  className={
+                    mode === 'team' ? 'login-mode-option login-mode-active' : 'login-mode-option'
+                  }
+                  name="mode"
+                  value="team"
+                  checked={mode === 'team'}
+                  onChange={() => setMode('team')}
+                >
                   <span className="login-mode-title">团队模式</span>
                   <span className="login-mode-desc">查看团队全部数据与管理功能</span>
-                </label>
+                </Radio>
               </div>
             </fieldset>
 
             <label className="login-field">
               <span className="login-label">用户名</span>
               <span className="login-control">
-                <input
+                <Input
                   className="login-input"
                   name="username"
                   type="text"
@@ -156,7 +159,7 @@ export function LoginPage(): JSX.Element {
             <label className="login-field">
               <span className="login-label">密码</span>
               <span className="login-control">
-                <input
+                <Input
                   className="login-input login-input-password"
                   name="password"
                   type={showPassword ? 'text' : 'password'}
@@ -167,7 +170,7 @@ export function LoginPage(): JSX.Element {
                   value={password}
                   onChange={(event) => setPassword(event.target.value)}
                 />
-                <button
+                <Button
                   className="login-eye"
                   type="button"
                   aria-pressed={showPassword}
@@ -175,7 +178,7 @@ export function LoginPage(): JSX.Element {
                   onClick={() => setShowPassword((value) => !value)}
                 >
                   {showPassword ? '隐藏' : '显示'}
-                </button>
+                </Button>
               </span>
             </label>
 
@@ -185,9 +188,9 @@ export function LoginPage(): JSX.Element {
               </p>
             ) : null}
 
-            <button className="login-submit" type="submit" disabled={submitting}>
+            <Button className="login-submit" type="submit" disabled={submitting}>
               {submitting ? '正在登录…' : '登录'}
-            </button>
+            </Button>
           </form>
 
           <p className="login-hint">账号由部署配置提供，忘记密码请联系平台维护者。</p>

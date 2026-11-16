@@ -12,6 +12,7 @@ import { createPerson, getPerson, updatePerson } from '../../api/people';
 import type { Role } from '../../api/roles';
 import { listRoles } from '../../api/roles';
 import { errorMessage } from '../../api/client';
+import { Input } from '../../components/Controls';
 import { FormPage } from '../../components/FormPage';
 import { Select } from '../../components/Select';
 import { MultiSelect } from '../../components/MultiSelect';
@@ -37,7 +38,12 @@ export function PersonFormPage(): JSX.Element {
   const editing = Boolean(id);
   const navigate = useNavigate();
 
-  const { items: teams, loading: teamsLoading, error: teamsError, reload: reloadTeams } = useAllTeams();
+  const {
+    items: teams,
+    loading: teamsLoading,
+    error: teamsError,
+    reload: reloadTeams,
+  } = useAllTeams();
   const { projects } = useProjects();
 
   const [form, setForm] = useState<PersonInput>(EMPTY_FORM);
@@ -161,7 +167,7 @@ export function PersonFormPage(): JSX.Element {
       <div className="field-grid">
         <label className="field">
           <span>姓名 *</span>
-          <input
+          <Input
             className="text-input"
             maxLength={40}
             value={form.name}
@@ -170,7 +176,7 @@ export function PersonFormPage(): JSX.Element {
         </label>
         <label className="field">
           <span>登录名</span>
-          <input
+          <Input
             className="text-input"
             maxLength={64}
             placeholder="填了才能与登录账号对应"
@@ -180,7 +186,7 @@ export function PersonFormPage(): JSX.Element {
         </label>
         <label className="field">
           <span>邮箱</span>
-          <input
+          <Input
             className="text-input"
             maxLength={120}
             value={form.email}
@@ -189,7 +195,7 @@ export function PersonFormPage(): JSX.Element {
         </label>
         <label className="field">
           <span>手机号</span>
-          <input
+          <Input
             className="text-input"
             maxLength={40}
             value={form.phone}
@@ -198,7 +204,7 @@ export function PersonFormPage(): JSX.Element {
         </label>
         <label className="field">
           <span>岗位</span>
-          <input
+          <Input
             className="text-input"
             maxLength={60}
             value={form.title}
@@ -209,7 +215,10 @@ export function PersonFormPage(): JSX.Element {
           <span>角色</span>
           <Select
             value={form.roleKey}
-            options={[{ value: '', label: '未分配' }, ...roles.map((role) => ({ value: role.key, label: role.name }))]}
+            options={[
+              { value: '', label: '未分配' },
+              ...roles.map((role) => ({ value: role.key, label: role.name })),
+            ]}
             onChange={(roleKey) => setForm({ ...form, roleKey })}
           />
         </label>

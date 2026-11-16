@@ -12,6 +12,7 @@ import { createProject, getProject, updateProject } from '../../api/projects';
 import type { Role } from '../../api/roles';
 import { listRoles } from '../../api/roles';
 import { errorMessage } from '../../api/client';
+import { Input } from '../../components/Controls';
 import { FormPage } from '../../components/FormPage';
 import { Select } from '../../components/Select';
 import { ErrorState, Loading } from '../../components/States';
@@ -136,7 +137,7 @@ export function ProjectFormPage(): JSX.Element {
       <div className="field-grid">
         <label className="field">
           <span>项目名称 *</span>
-          <input
+          <Input
             className="text-input"
             maxLength={60}
             value={form.name}
@@ -145,7 +146,7 @@ export function ProjectFormPage(): JSX.Element {
         </label>
         <label className="field">
           <span>项目标识 *</span>
-          <input
+          <Input
             className="text-input"
             maxLength={32}
             placeholder="如 shop，用于地址栏"
@@ -156,7 +157,7 @@ export function ProjectFormPage(): JSX.Element {
         </label>
         <label className="field">
           <span>项目库地址</span>
-          <input
+          <Input
             className="text-input"
             maxLength={300}
             placeholder="https://gitlab.example.com/group/repo"
@@ -177,7 +178,7 @@ export function ProjectFormPage(): JSX.Element {
         </label>
         <label className="field">
           <span>描述</span>
-          <input
+          <Input
             className="text-input"
             maxLength={200}
             value={form.description}

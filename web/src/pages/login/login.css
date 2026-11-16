@@ -18,7 +18,7 @@
   --login-primary-soft: rgba(14, 116, 144, 0.08);
   --login-ring: rgba(14, 116, 144, 0.16);
   --login-danger: #a03c3c;
-  --login-serif: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif;
+  --login-serif: 'Iowan Old Style', 'Palatino Linotype', Palatino, Georgia, serif;
   --login-ease: cubic-bezier(0.22, 1, 0.36, 1);
 
   display: grid;
@@ -70,7 +70,7 @@
 }
 
 .login-halo::after {
-  content: "";
+  content: '';
   position: absolute;
   inset: 58px;
   border: 1px solid rgba(14, 116, 144, 0.08);
@@ -88,7 +88,7 @@
 }
 
 .login-seed::after {
-  content: "";
+  content: '';
   position: absolute;
   top: -3px;
   left: -2.5px;
@@ -264,6 +264,35 @@
     background 120ms ease;
 }
 
+/* 模式卡片隐藏库单选的圆圈，保留 input 的语义、checked 与键盘操作。 */
+.login-mode-option .ant-radio {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+}
+
+.login-mode-option.ant-radio-wrapper {
+  margin: 0;
+  align-items: stretch;
+  min-width: 0;
+  border: 1px solid var(--login-line);
+  border-radius: 9px;
+  color: var(--login-ink);
+}
+
+.login-mode-option.login-mode-active.ant-radio-wrapper {
+  border-color: var(--login-primary);
+  background: #f1f8fc;
+}
+
+.login-mode-option.ant-radio-wrapper > span:last-child {
+  display: flex;
+  flex-direction: column;
+  padding-inline: 0;
+}
+
 .login-mode-option input {
   position: absolute;
   width: 1px;
@@ -322,7 +351,9 @@
   color: var(--login-ink);
   font-family: inherit;
   font-size: 15px;
-  transition: border-color 160ms ease, box-shadow 160ms ease;
+  transition:
+    border-color 160ms ease,
+    box-shadow 160ms ease;
 }
 
 .login-input::placeholder {
@@ -358,6 +389,12 @@
   cursor: pointer;
 }
 
+/* 库按钮保留密码显隐的小尺寸，不能继承普通按钮的控件高度。 */
+.login-eye.app-control-button.ant-btn {
+  height: auto;
+  line-height: 1.4;
+}
+
 .login-eye:hover {
   background: var(--login-primary-soft);
 }
@@ -381,7 +418,7 @@
 }
 
 .login-error::before {
-  content: "!";
+  content: '!';
   display: grid;
   place-items: center;
   flex: 0 0 16px;
@@ -407,7 +444,17 @@
   font-weight: 600;
   letter-spacing: 0.04em;
   cursor: pointer;
-  transition: background-color 160ms ease, box-shadow 200ms ease, transform 200ms var(--login-ease);
+  transition:
+    background-color 160ms ease,
+    box-shadow 200ms ease,
+    transform 200ms var(--login-ease);
+}
+
+.login-submit.app-control-button.ant-btn {
+  height: 48px;
+  border-radius: 10px;
+  font-size: 15px;
+  font-weight: 600;
 }
 
 .login-submit:hover:not(:disabled) {

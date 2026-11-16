@@ -7,7 +7,7 @@
 -include .env
 export DATABASE_URL PUBLIC_BASE_URL PORT HOST STORAGE_DIR MAX_UPLOAD_MB GO_ENV VITE_API_BASE ADMIN_USERNAME ADMIN_PASSWORD AUTH_SECRET
 
-.PHONY: gen\:api dev build test up down
+.PHONY: gen\:api dev build test lint up down
 
 # 契约变更时重生成前端类型；生成物入库，前端 dev 不需要 Go、后端 build 不需要 Node。
 gen\:api:
@@ -24,6 +24,10 @@ build:
 
 test:
 	cd server && go test ./...
+
+# 前端静态检查：ESLint（TS/TSX）+ Stylelint（CSS）。格式由 prettier 在提交时统一处理。
+lint:
+	npm --prefix web run lint
 
 up:
 	docker compose -f deploy/docker-compose.yml up -d --build

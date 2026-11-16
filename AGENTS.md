@@ -132,7 +132,7 @@ main.tsx（挂载） → App
 
 ## 6. UI 规范
 
-- **UI 组件库统一从 `@seakoi/console-kit` 根入口的命名导出获取**，当前已覆盖 Table / Drawer / Modal / Select / ConfigProvider / zhCN / QRCode 及表格与主题类型。业务代码 **不直接 import `antd` 或 `qrcode.react`**。
+- **UI 组件库统一从 `@seakoi/console-kit` 根入口的命名导出获取**，当前已覆盖 Table / Drawer / Modal / Select / Button / Input / TextArea / Checkbox / Radio / Upload / ConfigProvider / zhCN / QRCode 及表格与主题类型。业务代码 **不直接 import `antd` 或 `qrcode.react`**。
 - `console-kit@0.5.16` 的 `./antd` 子入口在 npm 包中**只有 .d.ts、没有 JS**，Vite 无法解析；**禁止使用该子路径**。根入口可用，已通过 `vite.config.ts` 的 `manualChunks['console-kit']` 独立拆包，避免业务代码更新导致组件库重新下载。
 - `antd` 仅保留为 console-kit 的 peer 依赖与 Vite 的 chunk 名；新增组件一律先查 console-kit 根入口，没有合适能力才写自定义组件。
 - 业务页面不直接散用组件库裸控件：Table / Drawer / Modal / Select 仍经 `components/` 的四个封装使用，便于统一主题、空态、分页与安全交互；ConfigProvider / zhCN 只在 `main.tsx` 装配，ThemeConfig 只在 `theme/antd.ts` 映射。

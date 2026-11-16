@@ -7,6 +7,7 @@
  */
 import { Link } from 'react-router-dom';
 import type { Build } from '../../api/builds';
+import { Button } from '../../components/Controls';
 import { ProjectSelect } from '../../components/ProjectSelect';
 import { Empty, ErrorState, Loading } from '../../components/States';
 import { useAllBuilds } from '../../hooks/useAllBuilds';
@@ -37,9 +38,9 @@ export function AppsPage(): JSX.Element {
         </div>
         <div className="page-head-actions">
           <ProjectSelect projects={projects} currentKey={key} />
-          <button className="button button-ghost" type="button" onClick={reload}>
+          <Button className="button button-ghost" type="button" onClick={reload}>
             刷新
-          </button>
+          </Button>
         </div>
       </div>
 
@@ -114,7 +115,9 @@ function summarize(builds: Build[]): AppSummary[] {
   }
 
   return Array.from(byApp, ([name, items]) => {
-    const latest = items.reduce((newest, build) => (build.createdAt > newest.createdAt ? build : newest));
+    const latest = items.reduce((newest, build) =>
+      build.createdAt > newest.createdAt ? build : newest,
+    );
     const prod = items.find((build) => build.environment === 'prd');
     return {
       name,

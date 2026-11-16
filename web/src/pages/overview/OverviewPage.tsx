@@ -8,12 +8,19 @@
  */
 import { Link } from 'react-router-dom';
 import type { Build, Environment } from '../../api/builds';
+import { Button } from '../../components/Controls';
 import { ProjectSelect } from '../../components/ProjectSelect';
 import { Empty, ErrorState, Loading } from '../../components/States';
 import type { EnvGroup } from '../../hooks/useAllBuilds';
 import { useAllBuilds } from '../../hooks/useAllBuilds';
 import { useCurrentProject, useProjects } from '../../hooks/useProjects';
-import { ENVIRONMENTS, environmentLabel, formatBytes, formatDate, platformLabel } from '../../utils/format';
+import {
+  ENVIRONMENTS,
+  environmentLabel,
+  formatBytes,
+  formatDate,
+  platformLabel,
+} from '../../utils/format';
 
 const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
 
@@ -32,9 +39,9 @@ export function OverviewPage(): JSX.Element {
         </div>
         <div className="page-head-actions">
           <ProjectSelect projects={projects} currentKey={key} />
-          <button className="button button-ghost" type="button" onClick={reload}>
+          <Button className="button button-ghost" type="button" onClick={reload}>
             刷新
-          </button>
+          </Button>
         </div>
       </div>
 
@@ -67,7 +74,9 @@ function OverviewDashboard({ groups }: { groups: EnvGroup[] }): JSX.Element {
   const fallbackCount = all.filter((build) => build.metaSource === 'fallback').length;
 
   // 四个环境合到一起后按时间倒序，取最近 5 条。
-  const recent = [...all].sort((left, right) => right.createdAt.localeCompare(left.createdAt)).slice(0, 5);
+  const recent = [...all]
+    .sort((left, right) => right.createdAt.localeCompare(left.createdAt))
+    .slice(0, 5);
   const maxTotal = Math.max(...groups.map((group) => group.total), 1);
 
   return (
@@ -99,7 +108,9 @@ function OverviewDashboard({ groups }: { groups: EnvGroup[] }): JSX.Element {
                     {build.buildNumber ? ` (${build.buildNumber})` : ''}
                   </div>
                   <div className="feed-meta">
-                    <span className={`badge badge-${build.platform}`}>{platformLabel(build.platform)}</span>
+                    <span className={`badge badge-${build.platform}`}>
+                      {platformLabel(build.platform)}
+                    </span>
                     <span className="badge badge-env">{environmentLabel(build.environment)}</span>
                     {formatBytes(build.fileSize)}
                   </div>

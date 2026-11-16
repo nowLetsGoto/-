@@ -10,6 +10,7 @@ import type { TableColumnsType } from '@seakoi/console-kit';
 import { errorMessage } from '../../api/client';
 import type { Role } from '../../api/roles';
 import { listRoles } from '../../api/roles';
+import { Button } from '../../components/Controls';
 import { DataTable } from '../../components/DataTable';
 import { Empty, ErrorState } from '../../components/States';
 import { useMe } from '../../hooks/useMe';
@@ -50,9 +51,13 @@ export function RolesPage(): JSX.Element {
       title: '角色名称',
       key: 'name',
       render: (_, role) => (
-        <button className="project-link" type="button" onClick={() => navigate(`/directory/roles/${role.key}/edit`)}>
+        <Button
+          className="project-link"
+          type="button"
+          onClick={() => navigate(`/directory/roles/${role.key}/edit`)}
+        >
           {role.name}
-        </button>
+        </Button>
       ),
     },
     {
@@ -65,7 +70,11 @@ export function RolesPage(): JSX.Element {
       key: 'isBuiltin',
       width: 110,
       render: (_, role) =>
-        role.isBuiltin ? <span className="badge badge-builtin">内置</span> : <span className="cell-sub">自定义</span>,
+        role.isBuiltin ? (
+          <span className="badge badge-builtin">内置</span>
+        ) : (
+          <span className="cell-sub">自定义</span>
+        ),
     },
     {
       title: '权限数',
@@ -84,13 +93,13 @@ export function RolesPage(): JSX.Element {
       width: 90,
       render: (_, role) => (
         <div className="row-actions">
-          <button
+          <Button
             className="button button-ghost button-small"
             type="button"
             onClick={() => navigate(`/directory/roles/${role.key}/edit`)}
           >
             {role.key === 'super-admin' || !me?.isSuperAdmin ? '查看' : '编辑'}
-          </button>
+          </Button>
         </div>
       ),
     },

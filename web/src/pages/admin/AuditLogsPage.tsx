@@ -9,6 +9,7 @@ import type { TableColumnsType } from '@seakoi/console-kit';
 import { errorMessage } from '../../api/client';
 import type { AuditLog } from '../../api/audit';
 import { listAuditLogs } from '../../api/audit';
+import { Button, Input } from '../../components/Controls';
 import { DataTable } from '../../components/DataTable';
 import { DetailDrawer } from '../../components/DetailDrawer';
 import { Empty, ErrorState } from '../../components/States';
@@ -41,7 +42,11 @@ const RESULT_OPTIONS: ReadonlyArray<{ value: '' | 'success' | 'failure'; label: 
 export function AuditLogsPage(): JSX.Element {
   const { page, pageSize, change } = usePageState();
 
-  const [form, setForm] = useState({ action: '', actor: '', result: '' as '' | 'success' | 'failure' });
+  const [form, setForm] = useState({
+    action: '',
+    actor: '',
+    result: '' as '' | 'success' | 'failure',
+  });
   const [applied, setApplied] = useState(form);
   const [version, setVersion] = useState(0);
   const [state, setState] = useState<PageState>({ items: [], total: 0, loading: true, error: '' });
@@ -79,7 +84,12 @@ export function AuditLogsPage(): JSX.Element {
       width: 170,
       render: (_, log) => <span className="cell-sub">{formatDate(log.createdAt)}</span>,
     },
-    { title: '操作者', key: 'actorName', width: 130, render: (_, log) => log.actorName || 'system' },
+    {
+      title: '操作者',
+      key: 'actorName',
+      width: 130,
+      render: (_, log) => log.actorName || 'system',
+    },
     {
       title: '动作',
       key: 'action',
@@ -93,7 +103,9 @@ export function AuditLogsPage(): JSX.Element {
     {
       title: '对象',
       key: 'object',
-      render: (_, log) => <span className="cell-sub">{`${log.objectType}${log.objectId ? ` · ${shortId(log.objectId)}` : ''}`}</span>,
+      render: (_, log) => (
+        <span className="cell-sub">{`${log.objectType}${log.objectId ? ` · ${shortId(log.objectId)}` : ''}`}</span>
+      ),
     },
     {
       title: '结果',
@@ -106,16 +118,25 @@ export function AuditLogsPage(): JSX.Element {
           <span className="status-dot status-offline">失败</span>
         ),
     },
-    { title: 'IP', key: 'ip', width: 130, render: (_, log) => <span className="cell-sub">{log.ip || '—'}</span> },
+    {
+      title: 'IP',
+      key: 'ip',
+      width: 130,
+      render: (_, log) => <span className="cell-sub">{log.ip || '—'}</span>,
+    },
     {
       title: '',
       key: 'actions',
       width: 80,
       render: (_, log) => (
         <div className="row-actions">
-          <button className="button button-ghost button-small" type="button" onClick={() => setDetail(log)}>
+          <Button
+            className="button button-ghost button-small"
+            type="button"
+            onClick={() => setDetail(log)}
+          >
             详情
-          </button>
+          </Button>
         </div>
       ),
     },
@@ -134,7 +155,7 @@ export function AuditLogsPage(): JSX.Element {
 
       <div className="card">
         <div className="toolbar">
-          <input
+          <Input
             className="text-input toolbar-search"
             placeholder="动作，如 user.disabled"
             value={form.action}
@@ -145,7 +166,7 @@ export function AuditLogsPage(): JSX.Element {
               }
             }}
           />
-          <input
+          <Input
             className="text-input toolbar-search"
             placeholder="操作者账号"
             value={form.actor}
@@ -158,21 +179,25 @@ export function AuditLogsPage(): JSX.Element {
           />
           <div className="segmented" role="group" aria-label="结果">
             {RESULT_OPTIONS.map((option) => (
-              <button
+              <Button
                 key={option.value || 'all'}
                 type="button"
                 className={form.result === option.value ? 'segment segment-active' : 'segment'}
                 onClick={() => setForm({ ...form, result: option.value })}
               >
                 {option.label}
-              </button>
+              </Button>
             ))}
           </div>
-          <button className="button button-ghost button-small" type="button" onClick={() => setApplied(form)}>
+          <Button
+            className="button button-ghost button-small"
+            type="button"
+            onClick={() => setApplied(form)}
+          >
             查询
-          </button>
+          </Button>
           {hasFilter ? (
-            <button
+            <Button
               className="button button-quiet button-small"
               type="button"
               onClick={() => {
@@ -182,7 +207,7 @@ export function AuditLogsPage(): JSX.Element {
               }}
             >
               清空
-            </button>
+            </Button>
           ) : null}
         </div>
 

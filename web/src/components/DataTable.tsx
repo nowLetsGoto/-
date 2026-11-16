@@ -1,10 +1,10 @@
 /**
- * 全站唯一的表格封装（基于 Ant Design Table）。
+ * 全站统一表格封装（使用 console-kit 的 Table 命名导出）。
  * 职责：统一列配置、加载态、空态、分页与视觉，业务页面只描述「有哪些列」。
  * 输入：columns / dataSource / rowKey / loading / empty / pageSize / serverPagination。
  * 输出：带分页的表格。
- * 边界：**业务页面不得直接 import antd 的 Table**——antd 只出现在本文件与 theme/antd.ts，
- *       将来换组件库或调整表格外观，只改这两处。
+ * 边界：页面只传列与数据，不直接依赖底层 Table；分页与外观集中于此，
+ *       不在这里请求业务数据。
  */
 import { Table } from '@seakoi/console-kit';
 import type { TableColumnsType } from '@seakoi/console-kit';

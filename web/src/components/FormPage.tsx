@@ -6,6 +6,7 @@
  */
 import type { FormEvent, ReactNode } from 'react';
 import { Link } from 'react-router-dom';
+import { Button } from './Controls';
 
 interface FormPageProps {
   title: string;
@@ -20,7 +21,16 @@ interface FormPageProps {
   children: ReactNode;
 }
 
-export function FormPage({ title, subtitle, backTo, saving, notice, onSubmit, readOnly = false, children }: FormPageProps): JSX.Element {
+export function FormPage({
+  title,
+  subtitle,
+  backTo,
+  saving,
+  notice,
+  onSubmit,
+  readOnly = false,
+  children,
+}: FormPageProps): JSX.Element {
   const handleSubmit = (event: FormEvent<HTMLFormElement>): void => {
     event.preventDefault();
     if (!saving) {
@@ -47,9 +57,9 @@ export function FormPage({ title, subtitle, backTo, saving, notice, onSubmit, re
 
         <div className="settings-actions">
           {readOnly ? null : (
-            <button className="button button-primary" type="submit" disabled={saving}>
+            <Button className="button button-primary" type="submit" disabled={saving}>
               {saving ? '保存中…' : '保存'}
-            </button>
+            </Button>
           )}
           <Link className="button button-ghost" to={backTo}>
             {readOnly ? '返回列表' : '取消'}

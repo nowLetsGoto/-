@@ -1,0 +1,5 @@
+# 生成物与构建产物不格式化
+src/api/schema.d.ts
+../server/public/
+dist/
+package-lock.json

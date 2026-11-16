@@ -43,9 +43,10 @@
   --font-size: 14px;
   --font-size-sm: 12.5px;
   --font-size-lg: 22px;
-  --font-sans: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", "Segoe UI", sans-serif;
-  --font-serif: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif;
-  --font-mono: "SF Mono", ui-monospace, Menlo, Consolas, monospace;
+  --font-sans:
+    -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Microsoft YaHei', 'Segoe UI', sans-serif;
+  --font-serif: 'Iowan Old Style', 'Palatino Linotype', Palatino, Georgia, serif;
+  --font-mono: 'SF Mono', ui-monospace, Menlo, Consolas, monospace;
   --shadow-sm: 0 1px 2px rgba(15, 44, 54, 0.05);
   --shadow-md: 0 10px 28px rgba(15, 44, 54, 0.08);
 }
@@ -179,7 +180,9 @@ ul {
   color: #41626e;
   font-size: 13.5px;
   white-space: nowrap;
-  transition: background-color 140ms ease, color 140ms ease;
+  transition:
+    background-color 140ms ease,
+    color 140ms ease;
 }
 
 .nav-item:hover {
@@ -282,7 +285,9 @@ ul {
   font-size: var(--font-size-sm);
   cursor: pointer;
   white-space: nowrap;
-  transition: background-color 140ms ease, color 140ms ease;
+  transition:
+    background-color 140ms ease,
+    color 140ms ease;
 }
 
 .env-option:hover {
@@ -343,6 +348,49 @@ ul {
 }
 
 /* ================= 通用组件 ================= */
+
+/* console-kit 基础控件保留原站点密度；仅作用于 Controls 适配层，不覆盖弹窗内置按钮。 */
+.app-control-button.ant-btn {
+  box-shadow: none;
+}
+
+.app-control-button.ant-btn.button {
+  height: 34px;
+  padding: 0 14px;
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+}
+
+.app-control-button.ant-btn.button-small {
+  height: 28px;
+  padding: 0 10px;
+  font-size: var(--font-size-sm);
+}
+
+.app-control-button.ant-btn.button-ghost:not(:disabled) {
+  border-color: var(--color-border);
+  background: var(--color-surface);
+  color: var(--color-text-2);
+}
+
+.app-control-button.ant-btn.project-link {
+  height: auto;
+  padding: 0;
+  border-radius: 0;
+  color: var(--color-primary);
+  font-weight: 600;
+}
+
+.app-control-button.ant-btn.project-link:hover {
+  background: transparent;
+  color: var(--color-primary-strong);
+  border-bottom-color: currentColor;
+}
+
+.field > .app-control-check,
+.field > .app-control-radio {
+  margin: 0;
+}
 
 .card {
   background: var(--color-surface);
@@ -411,7 +459,11 @@ ul {
   font-size: 13px;
   white-space: nowrap;
   cursor: pointer;
-  transition: background-color 140ms ease, border-color 140ms ease, color 140ms ease, box-shadow 140ms ease;
+  transition:
+    background-color 140ms ease,
+    border-color 140ms ease,
+    color 140ms ease,
+    box-shadow 140ms ease;
 }
 
 .button:focus-visible {
@@ -748,7 +800,9 @@ ul {
   font-family: inherit;
   font-size: var(--font-size-sm);
   cursor: pointer;
-  transition: background-color 140ms ease, color 140ms ease;
+  transition:
+    background-color 140ms ease,
+    color 140ms ease;
 }
 
 .segment small {
@@ -882,7 +936,10 @@ ul {
 
 .app-card {
   padding: var(--spacing-md);
-  transition: border-color 160ms ease, box-shadow 160ms ease, transform 160ms ease;
+  transition:
+    border-color 160ms ease,
+    box-shadow 160ms ease,
+    transform 160ms ease;
 }
 
 .app-card:hover {
@@ -1055,7 +1112,9 @@ ul {
   color: var(--color-text);
   font-family: inherit;
   font-size: var(--font-size);
-  transition: border-color 140ms ease, box-shadow 140ms ease;
+  transition:
+    border-color 140ms ease,
+    box-shadow 140ms ease;
 }
 
 .text-input:focus {
@@ -1072,23 +1131,19 @@ textarea.text-input {
   margin-top: var(--spacing-sm);
 }
 
-.dropzone {
-  padding: var(--spacing-xl) var(--spacing-md);
+.package-dropzone.ant-upload-wrapper .ant-upload-drag {
   border: 2px dashed var(--color-border);
   border-radius: var(--radius);
   background: var(--color-surface-2);
-  text-align: center;
-  cursor: pointer;
 }
 
-.dropzone-active {
+.package-dropzone.ant-upload-wrapper .ant-upload-drag:not(.ant-upload-disabled):hover {
   border-color: var(--color-primary);
-  background: rgba(14, 116, 144, 0.05);
+  background: var(--color-primary-soft);
 }
 
-.dropzone-disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
+.package-dropzone.ant-upload-wrapper .ant-upload-btn {
+  padding: var(--spacing-xl) var(--spacing-md);
 }
 
 .dropzone-title {
@@ -1419,7 +1474,10 @@ textarea.text-input {
   font-size: var(--font-size-sm);
   cursor: pointer;
   user-select: none;
-  transition: border-color 140ms ease, background-color 140ms ease, color 140ms ease;
+  transition:
+    border-color 140ms ease,
+    background-color 140ms ease,
+    color 140ms ease;
 }
 
 .field-check:hover {
@@ -1427,11 +1485,14 @@ textarea.text-input {
   color: var(--color-text);
 }
 
-.field-check input {
-  width: 13px;
-  height: 13px;
-  margin: 0;
-  accent-color: var(--color-primary);
+/* 库 Checkbox 内部 input 应铺满圆框；不能沿用原生控件的 13px 规则。 */
+.field-check .ant-checkbox-input {
+  width: 100%;
+  height: 100%;
+}
+
+.field-check.ant-checkbox-wrapper {
+  margin-inline-start: 0;
 }
 
 .field-check-on {
@@ -1737,7 +1798,9 @@ code {
   border-radius: var(--radius-sm) !important;
   background: var(--color-surface) !important;
   box-shadow: none !important;
-  transition: border-color 140ms ease, box-shadow 140ms ease;
+  transition:
+    border-color 140ms ease,
+    box-shadow 140ms ease;
 }
 
 .app-select .ant-select-selection-item,

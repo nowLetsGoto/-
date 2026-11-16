@@ -9,8 +9,15 @@ import { Link, useLocation } from 'react-router-dom';
 import { useEnvironment } from '../hooks/useEnvironment';
 import { useCurrentProject } from '../hooks/useProjects';
 import { ENVIRONMENTS, environmentLabel } from '../utils/format';
+import { Button } from './Controls';
 import { Icon } from './icons';
-import { boardLabel, canUpload, isEnvScoped, isProjectScoped, projectKeyFromPath } from './navigation';
+import {
+  boardLabel,
+  canUpload,
+  isEnvScoped,
+  isProjectScoped,
+  projectKeyFromPath,
+} from './navigation';
 
 export function Topbar(): JSX.Element {
   const { pathname } = useLocation();
@@ -38,7 +45,7 @@ export function Topbar(): JSX.Element {
       {envScoped ? (
         <div className="env-switch" role="group" aria-label="环境">
           {ENVIRONMENTS.map((item) => (
-            <button
+            <Button
               key={item.value}
               type="button"
               className={item.value === environment ? 'env-option env-option-active' : 'env-option'}
@@ -46,7 +53,7 @@ export function Topbar(): JSX.Element {
               onClick={() => setEnvironment(item.value)}
             >
               {item.label}
-            </button>
+            </Button>
           ))}
         </div>
       ) : null}

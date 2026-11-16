@@ -10,6 +10,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import type { TeamInput } from '../../api/teams';
 import { createTeam, getTeam, updateTeam } from '../../api/teams';
 import { errorMessage } from '../../api/client';
+import { Input } from '../../components/Controls';
 import { FormPage } from '../../components/FormPage';
 import { MultiSelect } from '../../components/MultiSelect';
 import { ErrorState, Loading } from '../../components/States';
@@ -25,7 +26,12 @@ export function TeamFormPage(): JSX.Element {
   const editing = Boolean(id);
   const navigate = useNavigate();
 
-  const { items: people, loading: peopleLoading, error: peopleError, reload: reloadPeople } = useAllPeople();
+  const {
+    items: people,
+    loading: peopleLoading,
+    error: peopleError,
+    reload: reloadPeople,
+  } = useAllPeople();
   const { projects } = useProjects();
 
   const [form, setForm] = useState<TeamInput>(EMPTY_FORM);
@@ -125,7 +131,7 @@ export function TeamFormPage(): JSX.Element {
       <div className="field-grid">
         <label className="field">
           <span>团队名称 *</span>
-          <input
+          <Input
             className="text-input"
             maxLength={60}
             value={form.name}
@@ -134,7 +140,7 @@ export function TeamFormPage(): JSX.Element {
         </label>
         <label className="field">
           <span>描述</span>
-          <input
+          <Input
             className="text-input"
             maxLength={200}
             value={form.description}

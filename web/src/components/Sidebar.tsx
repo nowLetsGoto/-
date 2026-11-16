@@ -9,6 +9,7 @@ import { NavLink, useNavigate } from 'react-router-dom';
 import { clearSession, readSession } from '../api/session';
 import { clearMe, useMe } from '../hooks/useMe';
 import { useProjectKey } from '../hooks/useProjects';
+import { Button } from './Controls';
 import { Icon } from './icons';
 import { NAV_SECTIONS, navHref } from './navigation';
 
@@ -98,9 +99,9 @@ export function Sidebar(): JSX.Element {
           <span className="account-name" title="当前登录账号">
             {session.username}
           </span>
-          <button className="button button-quiet button-small" type="button" onClick={handleLogout}>
+          <Button className="button button-quiet button-small" type="button" onClick={handleLogout}>
             退出
-          </button>
+          </Button>
         </div>
       ) : null}
     </aside>

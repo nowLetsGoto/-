@@ -12,6 +12,7 @@ import type { Settings, WebhookConfig, WebhookField, WebhookTestResult } from '.
 import { getSettings, rotateApiKey, testWebhook, updateWebhook } from '../../api/settings';
 import { errorMessage } from '../../api/client';
 import { useCurrentProject } from '../../hooks/useProjects';
+import { Button, Checkbox, Input } from '../../components/Controls';
 import { ConfirmDialog } from '../../components/ConfirmDialog';
 import { ErrorState, Loading } from '../../components/States';
 
@@ -151,7 +152,7 @@ export function SettingsPage(): JSX.Element {
       </div>
 
       <div className="tabs" role="tablist">
-        <button
+        <Button
           type="button"
           role="tab"
           aria-selected={tab === 'webhook'}
@@ -159,8 +160,8 @@ export function SettingsPage(): JSX.Element {
           onClick={() => setTab('webhook')}
         >
           Webhook
-        </button>
-        <button
+        </Button>
+        <Button
           type="button"
           role="tab"
           aria-selected={tab === 'api'}
@@ -168,7 +169,7 @@ export function SettingsPage(): JSX.Element {
           onClick={() => setTab('api')}
         >
           外部 API
-        </button>
+        </Button>
       </div>
 
       {tab === 'webhook' ? (
@@ -220,7 +221,7 @@ function WebhookPanel(props: WebhookPanelProps): JSX.Element {
           <div className="settings-label">启用 Webhook</div>
           <p className="settings-hint">发布成功后，把下面勾选的包信息推送到接收地址。</p>
         </div>
-        <button
+        <Button
           type="button"
           role="switch"
           aria-checked={form.enabled}
@@ -229,12 +230,12 @@ function WebhookPanel(props: WebhookPanelProps): JSX.Element {
           onClick={() => props.onPatch({ enabled: !form.enabled })}
         >
           <span className="switch-knob" aria-hidden="true" />
-        </button>
+        </Button>
       </div>
 
       <label className="settings-field">
         <span>接收地址</span>
-        <input
+        <Input
           className="text-input"
           type="url"
           inputMode="url"
@@ -246,7 +247,7 @@ function WebhookPanel(props: WebhookPanelProps): JSX.Element {
 
       <label className="settings-field">
         <span>签名密钥（可选）</span>
-        <input
+        <Input
           className="text-input"
           type="text"
           placeholder="填写后请求头会带 X-Dandelion-Signature"
@@ -260,29 +261,40 @@ function WebhookPanel(props: WebhookPanelProps): JSX.Element {
         <span>推送字段</span>
         <div className="field-picker">
           {data.availableFields.map((option) => (
-            <label
+            <Checkbox
               key={option.key}
-              className={form.fields.includes(option.key) ? 'field-check field-check-on' : 'field-check'}
+              className={
+                form.fields.includes(option.key) ? 'field-check field-check-on' : 'field-check'
+              }
+              checked={form.fields.includes(option.key)}
+              onChange={() => props.onToggleField(option.key)}
             >
-              <input
-                type="checkbox"
-                checked={form.fields.includes(option.key)}
-                onChange={() => props.onToggleField(option.key)}
-              />
               {option.label}
-            </label>
+            </Checkbox>
           ))}
         </div>
-        <em className="settings-hint">只推送勾选的字段；勾上「下载页地址」接收端就能直接转发扫码链接。</em>
+        <em className="settings-hint">
+          只推送勾选的字段；勾上「下载页地址」接收端就能直接转发扫码链接。
+        </em>
       </div>
 
       <div className="settings-actions">
-        <button className="button button-primary" type="button" onClick={props.onSave} disabled={saving}>
+        <Button
+          className="button button-primary"
+          type="button"
+          onClick={props.onSave}
+          disabled={saving}
+        >
           {saving ? '保存中…' : '保存'}
-        </button>
-        <button className="button" type="button" onClick={props.onTest} disabled={testing || !form.enabled}>
+        </Button>
+        <Button
+          className="button"
+          type="button"
+          onClick={props.onTest}
+          disabled={testing || !form.enabled}
+        >
           {testing ? '发送中…' : '发送测试消息'}
-        </button>
+        </Button>
         {notice ? <span className="settings-notice">{notice}</span> : null}
       </div>
 
@@ -371,13 +383,21 @@ function ApiPanel({
       <div className="settings-block">
         <h2>API Key</h2>
         <div className="copy-row">
-          <input className="text-input mono" readOnly value={apiKey} aria-label="API Key" />
-          <button className="button button-ghost" type="button" onClick={() => onCopy(apiKey, 'API Key 已复制')}>
+          <Input className="text-input mono" readOnly value={apiKey} aria-label="API Key" />
+          <Button
+            className="button button-ghost"
+            type="button"
+            onClick={() => onCopy(apiKey, 'API Key 已复制')}
+          >
             复制
-          </button>
-          <button className="button button-ghost" type="button" onClick={() => setConfirmOpen(true)}>
+          </Button>
+          <Button
+            className="button button-ghost"
+            type="button"
+            onClick={() => setConfirmOpen(true)}
+          >
             轮换
-          </button>
+          </Button>
         </div>
         <p className="settings-hint">
           仅超级管理员可见与轮换。轮换后旧 Key <strong>立即失效</strong>，请同步更新所有外部系统。
@@ -390,7 +410,8 @@ function ApiPanel({
           description={
             <>
               <p>
-                旧 Key 会<strong>立即失效</strong>，所有使用它的 CI / 脚本都会开始返回 401，直到换成新 Key。
+                旧 Key 会<strong>立即失效</strong>，所有使用它的 CI / 脚本都会开始返回
+                401，直到换成新 Key。
               </p>
               <p className="settings-hint">新 Key 只显示一次，请立即复制到外部系统。</p>
             </>
@@ -459,9 +480,13 @@ function ApiPanel({
         <h2>调用示例</h2>
         <pre className="code-block">{curl}</pre>
         <div className="settings-actions">
-          <button className="button button-ghost" type="button" onClick={() => onCopy(curl, '示例已复制')}>
+          <Button
+            className="button button-ghost"
+            type="button"
+            onClick={() => onCopy(curl, '示例已复制')}
+          >
             复制示例
-          </button>
+          </Button>
         </div>
         <p className="settings-hint">完整说明见仓库 docs/09-OPEN-API.md。</p>
       </div>

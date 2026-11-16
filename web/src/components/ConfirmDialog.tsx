@@ -1,9 +1,9 @@
 /**
- * 确认弹窗（Ant Design Modal 的唯一封装）。
+ * 确认弹窗（使用 console-kit 的 Modal 命名导出）。
  * 职责：危险操作的二次确认，统一标题、影响面文案与按钮语义。
  * 输入：open / title / description / confirmText / danger / onConfirm / onCancel。
  * 输出：居中弹窗。
- * 边界：**业务页面不得直接 import antd 的 Modal**——与 DataTable、DetailDrawer 同理。
+ * 边界：只负责确认交互；请求、提交状态与危险操作的具体影响面由调用方提供。
  */
 import { Modal } from '@seakoi/console-kit';
 import type { ReactNode } from 'react';

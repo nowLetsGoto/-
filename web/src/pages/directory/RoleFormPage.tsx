@@ -11,7 +11,14 @@ import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { errorMessage } from '../../api/client';
 import type { Permission, RoleInput } from '../../api/roles';
-import { SUPER_ADMIN_ROLE_KEY, createRole, getRole, listPermissions, updateRole } from '../../api/roles';
+import {
+  SUPER_ADMIN_ROLE_KEY,
+  createRole,
+  getRole,
+  listPermissions,
+  updateRole,
+} from '../../api/roles';
+import { Checkbox, Input } from '../../components/Controls';
 import { FormPage } from '../../components/FormPage';
 import { ErrorState, Loading } from '../../components/States';
 import { useMe } from '../../hooks/useMe';
@@ -126,7 +133,11 @@ export function RoleFormPage(): JSX.Element {
     );
   }
 
-  const title = editing ? (readOnly && me?.isSuperAdmin ? `查看角色：${form.name}` : `编辑角色：${form.name}`) : '新建角色';
+  const title = editing
+    ? readOnly && me?.isSuperAdmin
+      ? `查看角色：${form.name}`
+      : `编辑角色：${form.name}`
+    : '新建角色';
 
   return (
     <FormPage
@@ -145,7 +156,7 @@ export function RoleFormPage(): JSX.Element {
       <div className="field-grid">
         <label className="field">
           <span>角色名称 *</span>
-          <input
+          <Input
             className="text-input"
             maxLength={40}
             value={form.name}
@@ -155,7 +166,7 @@ export function RoleFormPage(): JSX.Element {
         </label>
         <label className="field">
           <span>角色标识 *</span>
-          <input
+          <Input
             className="text-input"
             maxLength={32}
             placeholder="如 release-manager，创建后不可改"
@@ -167,7 +178,7 @@ export function RoleFormPage(): JSX.Element {
         </label>
         <label className="field">
           <span>描述</span>
-          <input
+          <Input
             className="text-input"
             maxLength={200}
             value={form.description}
@@ -184,19 +195,16 @@ export function RoleFormPage(): JSX.Element {
             {items.map((permission) => {
               const checked = form.permissions.includes(permission.key);
               return (
-                <label
+                <Checkbox
                   key={permission.key}
                   className={checked ? 'field-check field-check-on' : 'field-check'}
                   title={permission.key}
+                  checked={checked}
+                  disabled={readOnly}
+                  onChange={() => toggle(permission.key)}
                 >
-                  <input
-                    type="checkbox"
-                    checked={checked}
-                    disabled={readOnly}
-                    onChange={() => toggle(permission.key)}
-                  />
                   {permission.label}
-                </label>
+                </Checkbox>
               );
             })}
           </div>

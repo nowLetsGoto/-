@@ -1,6 +1,6 @@
 /**
  * 前端入口。
- * 职责：引入全局样式、挂载 React、提供 BrowserRouter 与 antd 主题。
+ * 职责：引入全局样式、挂载 React、提供 BrowserRouter 与 console-kit 全局主题。
  * 输入：index.html 的 #root 节点；输出：运行中的 SPA。
  * 边界：只做挂载与全局 Provider，不放任何业务逻辑或请求代码。
  */
@@ -20,7 +20,7 @@ if (!container) {
 
 createRoot(container).render(
   <React.StrictMode>
-    {/* antd 只在 components/DataTable 等薄封装里使用，主题与中文语言包统一在这里注入 */}
+    {/* console-kit 组件共用主题与中文语言包；业务页面不重复配置 Provider。 */}
     <ConfigProvider theme={antdTheme} locale={zhCN}>
       <BrowserRouter>
         <App />

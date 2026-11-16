@@ -5,6 +5,7 @@
  * 边界：不发请求、不持有跨页状态、不含任何板块专属文案。
  */
 import type { ReactNode } from 'react';
+import { Button } from './Controls';
 
 export function Loading({ text = '加载中…' }: { text?: string }): JSX.Element {
   return (
@@ -18,7 +19,14 @@ export function Loading({ text = '加载中…' }: { text?: string }): JSX.Eleme
 /** 空状态插画：蒲公英线稿，与登录页同一意象，纯装饰。 */
 function EmptyArt(): JSX.Element {
   return (
-    <svg className="empty-art" width="72" height="72" viewBox="0 0 72 72" fill="none" aria-hidden="true">
+    <svg
+      className="empty-art"
+      width="72"
+      height="72"
+      viewBox="0 0 72 72"
+      fill="none"
+      aria-hidden="true"
+    >
       <path d="M36 44v18" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
       <path
         d="M36 44c-7-3-11-9-11-16M36 44c7-3 11-9 11-16M36 44c0-8 3-14 8-19M36 44c0-8-3-14-8-19"
@@ -53,15 +61,21 @@ export function Empty({
   );
 }
 
-export function ErrorState({ message, onRetry }: { message: string; onRetry?: () => void }): JSX.Element {
+export function ErrorState({
+  message,
+  onRetry,
+}: {
+  message: string;
+  onRetry?: () => void;
+}): JSX.Element {
   return (
     <div className="state state-error" role="alert">
       <p className="state-title">{message}</p>
       {onRetry ? (
         <div className="state-action">
-          <button className="button button-ghost" type="button" onClick={onRetry}>
+          <Button className="button button-ghost" type="button" onClick={onRetry}>
             重试
-          </button>
+          </Button>
         </div>
       ) : null}
     </div>
