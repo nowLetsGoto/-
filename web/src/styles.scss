@@ -198,14 +198,16 @@ ul {
 }
 
 /* 侧栏底部账号按钮：整块可点，点击向上弹出账号卡。
-   用 button 而不是 div，是因为它确实改变了可见区域（展开账号卡），语义上就是个开关。 */
+   用 button 而不是 div，是因为它确实改变了可见区域（展开账号卡），语义上就是个开关。
+   上下内边距必须相等——否则头像不在点击区的垂直中线上（旧版 10px/2px 就是这么歪的），
+   按钮底部与侧栏底边之间的留白改由 .sidebar 的 padding-bottom 提供，不再混进这里。 */
 .sidebar-account {
   display: flex;
   align-items: center;
   gap: 8px;
   width: 100%;
   margin-top: auto;
-  padding: 10px 6px 2px;
+  padding: 10px 6px;
   border: none;
   border-top: 1px solid var(--color-border);
   background: none;
@@ -909,10 +911,14 @@ ul {
 }
 
 /* 审计日志的「模式」标签：单人 / 团队用不同底色，扫一眼就能区分。 */
+/* 模式标签：底色由修饰类给，这里的中性底色只是兜底——
+   万一模式值异常（例如后端未返回 mode），至少还是个能看见的灰标签，不是空白。 */
 .mode-tag {
   display: inline-block;
   padding: 1px 8px;
   border-radius: 999px;
+  background: var(--color-border-soft);
+  color: var(--color-muted);
   font-size: 12px;
   line-height: 20px;
   white-space: nowrap;

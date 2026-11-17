@@ -51,8 +51,13 @@ export const MODE_HINTS: Record<SessionMode, string> = {
   team: '查看团队全部数据与管理功能',
 };
 
+/**
+ * 模式值 → 中文标签。
+ * 兜底成「未知」而不是回显原值：后端旧版本不返回 mode 时原值是空串，
+ * 回显会渲染出一个既没文字也没底色的空标签，看起来像样式坏了，实际是数据缺失。
+ */
 export function modeLabel(value: string): string {
-  return MODE_LABELS[value as SessionMode] ?? value;
+  return MODE_LABELS[value as SessionMode] ?? (value || '未知');
 }
 
 export function platformLabel(value: string): string {
