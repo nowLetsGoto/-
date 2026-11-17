@@ -26,8 +26,19 @@ func NewFilter(base int) *Filter { return &Filter{base: base} }
 
 // Add 追加一个 AND 条件；模板中的 ? 会被替换成该参数对应的占位符。
 func (f *Filter) Add(template string, arg any) *Filter {
-	f.args = append(f.args, arg)
-	f.conditions = append(f.conditions, strings.Replace(template, "?", f.Placeholder(len(f.args)-1), 1))
+	return f.AddMulti(template, arg)
+}
+
+// AddMulti 追加一个含多个占位符的条件：模板里的 ? 依次绑定 args。
+// 用于同一条件内比较多个列——如 (a ILIKE ? OR b ILIKE ?) 传同一个模式串，
+// 若拆成两次 Add 会变成 AND，语义就错了。
+func (f *Filter) AddMulti(template string, args ...any) *Filter {
+	offset := len(f.args)
+	f.args = append(f.args, args...)
+	for i := range args {
+		template = strings.Replace(template, "?", f.Placeholder(offset+i), 1)
+	}
+	f.conditions = append(f.conditions, template)
 	return f
 }
 

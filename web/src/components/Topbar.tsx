@@ -8,8 +8,10 @@
 import { Link, useLocation } from 'react-router-dom';
 import type { Environment } from '../api/builds';
 import { useEnvironment } from '../hooks/useEnvironment';
+import { useMe } from '../hooks/useMe';
 import { useCurrentProject } from '../hooks/useProjects';
 import { ENVIRONMENTS, environmentLabel } from '../utils/format';
+import { can } from '../utils/permission';
 import { Segmented } from './Controls';
 import { Icon } from './icons';
 import {
@@ -23,10 +25,12 @@ import {
 export function Topbar(): JSX.Element {
   const { pathname } = useLocation();
   const [environment, setEnvironment] = useEnvironment();
+  const { me } = useMe();
 
   const projectScoped = isProjectScoped(pathname);
   const envScoped = isEnvScoped(pathname);
-  const showUpload = canUpload(pathname);
+  // 两个条件缺一不可：板块本身要有上传入口，本人还要有上传权限。
+  const showUpload = canUpload(pathname) && can(me, 'build.write');
 
   return (
     <header className="topbar">

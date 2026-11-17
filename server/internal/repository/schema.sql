@@ -228,10 +228,14 @@ CREATE TABLE IF NOT EXISTS teams (
 -- users：账号（替代"环境变量单账号"）。密码只存 PBKDF2-HMAC-SHA256 派生值；
 -- token_version 自增即让该账号已发出的令牌全部失效（强制下线，无需会话表）；
 -- person_id 可空：账号可以先建，之后再绑定人员档案。
+-- mode 是账号归属的模式：它决定这行账号属于哪套业务数据，也是账号管理的筛选维度
+-- （超管在单人模式下只看到并只能删单人模式的账号）。账号是登录的前提、登录时还没选模式，
+-- 所以 users 留在 public，只用 mode 列标注归属，不参与物理分区。
 CREATE TABLE IF NOT EXISTS users (
   id             UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
   username       TEXT        UNIQUE NOT NULL,
   password_hash  TEXT        NOT NULL,
+  mode           TEXT        NOT NULL DEFAULT 'team',
   person_id      UUID        REFERENCES people(id) ON DELETE SET NULL,
   is_super_admin BOOLEAN     NOT NULL DEFAULT false,
   status         TEXT        NOT NULL DEFAULT 'active',
@@ -241,6 +245,11 @@ CREATE TABLE IF NOT EXISTS users (
   created_at     TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+-- 存量库补列：老账号都是团队账号，DEFAULT 'team' 让历史数据自动归位。
+ALTER TABLE users ADD COLUMN IF NOT EXISTS mode TEXT NOT NULL DEFAULT 'team';
+
+-- 账号管理按「模式 + 创建时间」列出，索引与查询条件同序。
+CREATE INDEX IF NOT EXISTS idx_users_mode_created ON users (mode, created_at);
 CREATE INDEX IF NOT EXISTS idx_users_person ON users (person_id);
 
 -- ---------------------------------------------------------------------------

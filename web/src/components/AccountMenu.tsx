@@ -1,9 +1,9 @@
 /**
  * 侧栏底部的账号区：头像 + 账号名，点击向上弹出账号卡。
- * 职责：展示当前账号、所处的登录模式，并提供「修改密码」「退出登录」两个入口。
- * 输入：会话（令牌里的用户名与模式）、当前人员（补全姓名与超管身份）。
+ * 职责：展示当前账号、所处的登录模式与当前角色，并提供「修改密码」「退出登录」两个入口。
+ * 输入：会话（令牌里的用户名与模式）、当前人员（补全姓名、角色与超管身份）。
  * 输出：底部账号按钮 + 向上弹出的账号卡 + 修改密码弹窗。
- * 边界：不取数（/me 走 useMe 缓存）、不做权限判断（模式只影响菜单投影，边界在服务端）；
+ * 边界：不取数（/me 走 useMe 缓存）、不做权限判断（模式与角色只用于展示，边界在服务端）；
  *       退出登录只清本地无状态会话，服务端没有登出接口。
  */
 import { useState } from 'react';
@@ -67,6 +67,15 @@ export function AccountMenu(): JSX.Element | null {
         <span className={`mode-tag mode-${mode}`}>{MODE_LABELS[mode]}</span>
         <span className="account-card-mode-hint">{MODE_HINTS[mode]}</span>
       </div>
+
+      {/* 角色只对团队模式有意义：单人模式没有角色区分，显示一行空值反而让人以为配错了。
+          未分配角色时统一显示「普通用户」——这是展示约定，后端不为此造一个假角色。 */}
+      {mode === 'team' ? (
+        <div className="account-card-role">
+          <span className="account-card-role-label">当前角色</span>
+          <span className="account-card-role-value">{me?.roleName || '普通用户'}</span>
+        </div>
+      ) : null}
 
       <div className="account-card-actions">
         <button

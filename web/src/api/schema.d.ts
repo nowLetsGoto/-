@@ -177,8 +177,9 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get?: never;
-        /** 改超管标记与绑定人员（登录名不可改） */
+        /** 账号详情（仅超级管理员；供编辑页回填） */
+        get: operations["getUser"];
+        /** 改绑定人员、角色与超管标记（登录名与模式不可改） */
         put: operations["updateUser"];
         post?: never;
         /** 删除账号（不可恢复；不能删自己，也不能删掉最后一个可用超管） */
@@ -664,6 +665,10 @@ export interface components {
             username: string;
             personId: string;
             name: string;
+            /** @description 人员在团队里的角色 key；未分配角色时为空串 */
+            roleKey: string;
+            /** @description 角色名；为空表示该人员没有角色，前端统一显示「普通用户」 */
+            roleName: string;
             /** @description 该人员关联的项目 key，按项目创建顺序；前端据此决定列表页默认项目 */
             projectKeys: string[];
             /** @description 是否超级管理员；前端据此决定是否渲染「超级管理员」菜单（真正的边界在服务端 403） */
@@ -676,9 +681,14 @@ export interface components {
             /** Format: uuid */
             id: string;
             username: string;
+            mode: components["schemas"]["SessionMode"];
             /** @description 绑定的人员档案 id，空表示未绑定 */
             personId: string;
             personName: string;
+            /** @description 绑定人员的角色 key；账号本身没有角色，角色挂在人员身上 */
+            roleKey: string;
+            /** @description 角色名；为空表示未分配角色，前端显示「普通用户」 */
+            roleName: string;
             isSuperAdmin: boolean;
             /** @enum {string} */
             status: "active" | "disabled";
@@ -688,16 +698,20 @@ export interface components {
             /** Format: date-time */
             createdAt: string;
         };
-        /** @description 新建账号 */
+        /** @description 新建账号。没有 mode 字段：账号归属模式由创建者的登录模式决定， 登录时已选定模式，页面上只做只读展示。 */
         UserInput: {
             username: string;
             password: string;
+            /** @description 绑定的人员档案 id，可留空（之后再绑定） */
             personId: string;
             isSuperAdmin: boolean;
         };
-        /** @description 编辑账号（登录名不可改） */
+        /** @description 编辑账号（登录名与模式都不可改）。roleKey 写的是绑定人员的角色（people.role_key）， 因此「在这里改角色」与「在人员管理里改角色」是同一件事。 */
         UserUpdate: {
+            /** @description 绑定的人员档案 id；为空时 roleKey 会被忽略（角色必须挂在人身上） */
             personId: string;
+            /** @description 绑定人员的角色 key；空串表示不分配角色 */
+            roleKey: string;
             isSuperAdmin: boolean;
         };
         Permission: {
@@ -1473,6 +1487,43 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             /** @description 非超级管理员 */
             403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    getUser: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 账号详情 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UserResponse"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            /** @description 非超级管理员 */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description 账号不存在，或不属于当前登录模式 */
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };

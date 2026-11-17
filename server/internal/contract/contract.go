@@ -40,6 +40,17 @@ type ValidationError struct {
 
 func (e *ValidationError) Error() string { return e.Message }
 
+// NotFoundError 是「要操作的资源不存在」的场景化说法，同样由 handler.WriteError 翻译成 404。
+//
+// 为什么不复用 ErrNotFound：那个 sentinel 的文案是为应用包写的（"包不存在或已被移除"），
+// 放到账号、人员等场景上会让用户找错方向。资源种类一多，sentinel 就会变成一串近义错误，
+// 不如让调用方直接给出这一处该说的话。
+type NotFoundError struct {
+	Message string
+}
+
+func (e *NotFoundError) Error() string { return e.Message }
+
 // 环境枚举：全仓 Go 侧唯一定义处，与 api/openapi.yaml 的 Environment.enum 顺序一致。
 const (
 	EnvTest   = "test"
@@ -239,6 +250,20 @@ func NormalizeMode(mode SessionMode) (SessionMode, error) {
 	return mode, nil
 }
 
+// NormalizeAccountMode 归一化账号自带的模式，**缺省为团队模式**。
+// 仅供「种子账号」这类没有登录上下文、必须显式指定模式的内部调用使用；
+// 超管在页面上建账号时模式取自他自己的登录模式，不经过这里——
+// 登录时已经选定模式，账号的归属随之确定，不该再由建账号的人二次挑选。
+func NormalizeAccountMode(mode SessionMode) (SessionMode, error) {
+	if mode == "" {
+		return ModeTeam, nil
+	}
+	if !mode.IsValid() {
+		return "", &ValidationError{Message: "账号模式只能是单人模式或团队模式"}
+	}
+	return mode, nil
+}
+
 // LoginResult 是登录成功后的无状态令牌；服务端不存会话，只校验签名与到期时间。
 type LoginResult struct {
 	Token     string      `json:"token"`
@@ -419,9 +444,14 @@ type TeamList struct {
 // Me 是「当前登录人」的档案投影：没有对应人员记录时 PersonID 为空、ProjectKeys 为空。
 // 前端据此把应用包/应用的默认项目设为「我关联的第一个项目」。
 type Me struct {
-	Username     string   `json:"username"`
-	PersonID     string   `json:"personId"`
-	Name         string   `json:"name"`
+	Username string `json:"username"`
+	PersonID string `json:"personId"`
+	Name     string `json:"name"`
+	// RoleKey / RoleName 是人员在团队里的角色，供账号卡展示「当前角色」。
+	// 未分配角色时两者都是空串，由前端统一显示成「普通用户」——
+	// 「没有角色」与「角色名叫普通用户」在展示上是同一件事，不必在后端造一个假角色。
+	RoleKey      string   `json:"roleKey"`
+	RoleName     string   `json:"roleName"`
 	ProjectKeys  []string `json:"projectKeys"`
 	IsSuperAdmin bool     `json:"isSuperAdmin"`
 	// Permissions 是"全局视角"（不含项目）的权限集合，供前端裁剪菜单与按钮。
@@ -498,10 +528,17 @@ type Identity struct {
 
 // User 是账号视图：**不含任何密码字段**。
 type User struct {
-	ID           string `json:"id"`
-	Username     string `json:"username"`
-	PersonID     string `json:"personId"`
-	PersonName   string `json:"personName"`
+	ID       string `json:"id"`
+	Username string `json:"username"`
+	// Mode 是账号归属的模式：创建它的人用的是哪个登录模式，它就属于哪个模式。
+	// 登录时已经选定模式，所以这里只做展示（列表按模式筛选、删除按模式匹配），不接受修改。
+	Mode         SessionMode `json:"mode"`
+	PersonID     string      `json:"personId"`
+	PersonName   string      `json:"personName"`
+	// RoleKey / RoleName 是账号对应人员的角色，随账号一起返回，省得账号列表为显示角色名再拉人员列表。
+	// 角色的真相在 people.role_key：账号只是"以哪个人的身份登录"，它自己没有角色。
+	RoleKey      string `json:"roleKey"`
+	RoleName     string `json:"roleName"`
 	IsSuperAdmin bool   `json:"isSuperAdmin"`
 	Status       string `json:"status"`
 	LastLoginAt  string `json:"lastLoginAt"`
@@ -510,6 +547,8 @@ type User struct {
 }
 
 // UserInput 新建账号：账号名 + 初始密码 + 是否超管（+ 可选绑定人员）。
+// **没有 mode 字段**：账号归属由创建者的登录模式决定，页面上的模式是只读展示。
+// **也没有 roleKey**：角色挂在人员身上，先建好账号、绑定了人员，再去编辑页设角色。
 type UserInput struct {
 	Username     string `json:"username"`
 	Password     string `json:"password"`
@@ -517,9 +556,12 @@ type UserInput struct {
 	IsSuperAdmin bool   `json:"isSuperAdmin"`
 }
 
-// UserUpdate 编辑账号：账号名不可改，只允许改超管标记与绑定人员。
+// UserUpdate 编辑账号：账号名与模式都不可改，只允许改绑定人员、角色与超管标记。
+// RoleKey 写的是绑定人员的角色（people.role_key），不是账号上的字段——
+// 这样"改账号的角色"与"改人员的角色"永远是同一件事，不会出现两处角色互相矛盾。
 type UserUpdate struct {
 	PersonID     string `json:"personId"`
+	RoleKey      string `json:"roleKey"`
 	IsSuperAdmin bool   `json:"isSuperAdmin"`
 }
 

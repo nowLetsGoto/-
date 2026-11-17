@@ -102,7 +102,12 @@ main.tsx（挂载） → App
 - 唯一性按分区各表各定：`team.projects (key)` 全平台唯一；`solo.projects (owner_user_id, key)` 只在本人空间内唯一——两个人各自拥有一个 `web` 互不冲突。
 - 代码层的唯一投影是 `repository.Partitioned[T]`：装配层为两个分区各建一份同构仓储，上层用 `.For(mode)` 取用，业务代码里**不出现 `if team / else solo`**。公开链路没有登录态，用 `.All()` 跨分区查找。
 - 分区失败安全：`PartitionFor` 只有明确的 `ModeSolo` 才进 solo，其余（含零值）一律 team——宁可给团队数据，也不让人误入单人空间。
-- 单人隔离由「表边界 + `solo.projects.owner_user_id` 过滤」承担，包随项目天然隔离，`builds` 查询不再叠 owner 条件，`ListQuery` 也不带 owner 字段。
+- 单人隔离由三层共同承担，缺一不可：
+  1. **表边界**：solo 与 team 是不同 schema，跨模式在物理上就访问不到；
+  2. **项目 owner 过滤**：`solo.projects.owner_user_id` 由项目仓储的 `ownerScoped` 强制追加；
+  3. **包的 owner 过滤**：`solo.builds` 查询同样叠 `owner_user_id` 条件（`BuildRepository.ownerScoped`）。
+- **新增/修改 build 查询必须走 `resolveProject(..., ownerUserID, mode)`**：这条既是调用点约定，也是仓储层的兜底——漏写 `resolveProject` 时仓储仍会把 owner 变成 SQL 条件，不会读到别人的包。隔离是仓储的性质，不是调用者的纪律。
+- 团队分区的两个 `ownerScoped` 都是 `false`：团队数据本就共享，同一份代码用分区参数而不是 `if team / else solo` 来区分。
 - `schema.sql` 幂等且由 `//go:embed` 打进二进制，启动时 `EnsureSchema` 执行一次；存量 `public` 表通过 `ALTER TABLE ... SET SCHEMA team` 迁入分区（外键引用表 OID，不会被打断）。
 - **部署约束**：`schema.sql` 必须由应用自己的数据库账号执行。分区与表的属主决定访问权，用别的账号手工跑一遍会造出应用连不上的 `solo` 分区。
 
@@ -144,8 +149,30 @@ main.tsx（挂载） → App
   - `solo` + 超管：额外看到账号管理、审计日志、平台集成；账号接口完整可操作。
   - `team`：完整平台视图。
 - 前端菜单只是会话投影；服务端 `RequireTeamMode`、`RequireSuperAdmin`、`RequirePermission` 才是安全边界。
+- **前端所有写操作入口都按权限点隐藏**，判定统一走 `web/src/utils/permission.ts` 的 `can(me, permission)`，不要在页面里重复写 `me?.permissions.includes(...)`：
+  - 「上传包」：`build.write`
+  - 「新增 / 编辑人员、团队」：`directory.write`
+  - 「新增 / 编辑项目」：`project.write`
+  - `me` 尚未加载完（为 `null`）时一律按无权限处理——宁可少渲染一个按钮，也不要先画出来再让它点了报 403。
+  - 单人模式不需要在前端分模式判断：它的基线权限已由服务端算进 `permissions`。
+- `/me` 返回 `roleKey` / `roleName` 供账号卡展示「当前角色」；没有角色时两者都是空串，**前端统一显示「普通用户」**，后端不为此造一个假角色。
 - 禁用账号、重置密码、禁止自己取消超管、禁止禁用自己、禁止丢掉最后一个超管：这些护栏属于业务层，不能只靠 UI。
-- 删除账号：`DELETE /admin/users/{id}`。`users` 表没有被外键引用（`projects` / `builds.owner_user_id` 均为 TEXT 非 FK，只有 `users.person_id → people(id) ON DELETE SET NULL`），因此直接删除无级联障碍，历史构建与审计日志不受影响。禁止删自己；删在用超管前先确保还有别的超管。删除不可撤销，UI 需同时给出「想暂时停用请改用禁用」的替代路径。
+- **账号本身带模式**：`users.mode`（`solo` / `team`）记录账号归属哪套数据，**创建时定下、之后不可改**。账号管理列表、详情、编辑、删除都**按当前登录模式筛选**：单人模式只看得到、也只能操作单人账号，反之亦然；跨模式在 `service` 一律判为「账号不存在」，仓储的 `DELETE ... WHERE id=$1 AND mode=$2` 再兜一层，不泄漏另一种模式里有没有这个账号。
+- **建账号的模式取自调用者的登录模式，不来自请求体**：`service.Create(ctx, caller, in)` 用 `caller.Mode`（handler 从 `authctx.From(ctx)` 取令牌里的模式）落库，契约 `UserInput` 里**没有 `mode` 字段**，`DecodeJSON` 的未知字段白名单也不含它。账号表单上的模式是**只读展示**（来自 `readSession()?.mode`），用户不能切换——登录时选了哪个模式，就在哪个模式里建账号。
+  - `NormalizeAccountMode` 仅剩一个用武之地：种子管理员这类**没有登录上下文**的内部调用。业务请求路径不应再调用它。
+- 删除账号：`DELETE /admin/users/{id}`。`users` 没有被任何外键引用（`projects` / `builds.owner_user_id` 均为 TEXT 非 FK，只有 `users.person_id → people(id) ON DELETE SET NULL`），所以删除本身不级联破坏历史数据。
+  - **无论账号是什么模式，都必须清理它在 `solo` 分区的项目与包**。`owner_user_id` 是裸 TEXT，账号一旦消失这些数据就成了永久孤儿（库里查不到、界面进不去、磁盘还占着）。**判定依据只能是「这个 id 在 solo 分区有没有数据」，不能是 `users.mode == 'solo'`**：`login.Service.Authenticate` 完全不校验账号模式，一个 `team` 账号照样能以单人模式登录并产出 solo 数据。多清一次只是一次空转（两条 DELETE），少清一次就是永久孤儿。
+  - 清理在 `AccountCleanup.PurgeSoloData` 的一个事务里完成，顺序不可颠倒：先删 `solo.builds`（`RETURNING relative_path`）再删 `solo.projects`——`builds.project_id` 是外键且**没有** `ON DELETE CASCADE`，反过来会被约束挡下。
+  - 包的 owner 判定覆盖两个来源：`b.owner_user_id`（本人上传）**或** `p.owner_user_id`（挂在本人项目下）。
+  - 磁盘文件在事务**提交之后**才删（文件系统没有事务，塞进事务只会造出"库回滚了文件却没了"的假象）；删文件失败只记日志，不把已成功的删除翻成失败。
+  - **团队分区的数据不清理**：团队的项目与包属于团队，账号消失后仍应留在团队视图里。这与上一条不冲突——清的是 solo 分区里以该 id 为 owner 的数据，不是团队分区。
+  - 审计日志一律不删：它是"只追加"的事实记录，且已冗余 `actor_name`，账号消失后仍可读。
+  - 禁止删自己；删在用超管前先确保还有别的超管。删除不可撤销，UI 需同时给出「想暂时停用请改用禁用」的替代路径，并按模式说明清理范围。
+- **账号没有自己的角色，角色挂在人身上**：真相来源是 `people.role_key → roles.key`，账号侧通过 `users.person_id` 关联。列表与详情里的 `User.roleKey/roleName` 是仓储两次 `LEFT JOIN`（`users → people → roles`）**JOIN 出来的展示投影**，不是 `users` 表的列。
+  - 因此账号编辑页改角色，改的是**绑定人员的档案**；与人员管理页改角色是同一件事，两个入口写同一列。不为了"账号自己的角色"给 `users` 加 `role_key`，那会造出第二个真相来源。
+  - `UserUpdate.roleKey` 只能改角色，**新建时不能设**（`UserInput` 里没有该字段）：账号还没绑定人员，没有地方落这个值。未绑人员时前端角色下拉置灰。
+  - `repository/user.Update` 用**一个事务**同时写 `users.person_id / is_super_admin` 与 `people.role_key`，保证「换绑定人员 + 改角色」不会半截生效。`UPDATE people` 影响 0 行不算错误（人员合法性已由 `users.person_id` 的外键保证）。
+  - 账号编辑页 := `/admin/accounts/new` 与 `/admin/accounts/:id/edit` 复用同一个 `AccountFormPage`；编辑时登录名 `disabled`、不渲染密码输入，回填走 `GET /admin/users/{id}`。
 - 修改自己的密码：`PUT /me/password`。`SetPassword` 必然自增 `token_version`，改密成功即等于旧令牌当场失效，所以前端必须清会话回登录页——不要试图换发新令牌把用户留在原地。
 
 ## 6. UI 规范

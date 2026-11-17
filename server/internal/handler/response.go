@@ -94,9 +94,13 @@ func WriteError(w http.ResponseWriter, r *http.Request, err error) {
 	if !errors.As(err, &appErr) {
 		// 业务层的校验拒绝（如 Webhook 地址非法）直接透传中文文案。
 		var invalid *contract.ValidationError
+		// 资源缺失的场景化说法：文案由调用方给定（账号 / 人员 / 包各不相同）。
+		var missing *contract.NotFoundError
 		switch {
 		case errors.As(err, &invalid):
 			appErr = &AppError{Status: 400, Code: 400, Message: invalid.Message}
+		case errors.As(err, &missing):
+			appErr = &AppError{Status: 404, Code: 404, Message: missing.Message}
 		case errors.Is(err, contract.ErrNotFound):
 			appErr = &AppError{Status: 404, Code: 404, Message: contract.ErrNotFound.Error()}
 		// 项目 key 不存在属于「请求参数不对」，不是资源缺失，故 400 而非 404。

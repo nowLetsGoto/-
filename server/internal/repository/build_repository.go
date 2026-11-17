@@ -12,7 +12,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -30,18 +29,24 @@ type BuildRepository struct {
 	db      *sql.DB
 	table   string // 全限定表名，如 team.builds；只能来自 Partition.Table
 	project string // 同分区的项目表，用于把项目 key 解析成 id
+	// ownerScoped 为真表示该表按创建者隔离（单人分区）：列表必须带 owner_user_id 条件。
+	// 与 project 仓储的 ownerScoped 同名同义——两处隔离用同一个词，读代码时不必重新推断。
+	// 这一层校验是兜底：正常路径由 service 先 resolveProject（带 owner）再按项目查，
+	// 但"先解析项目"只是调用点的约定，仓储自己带上 owner 条件才不依赖任何人记得。
+	ownerScoped bool
 }
 
 // NewBuildPartitioned 为 team 与 solo 各建一个访问器，交给上层按会话模式取用。
 func NewBuildPartitioned(db *sql.DB) Partitioned[*BuildRepository] {
-	return NewPartitioned(newBuildRepository(db, PartitionTeam), newBuildRepository(db, PartitionSolo))
+	return NewPartitioned(newBuildRepository(db, PartitionTeam, false), newBuildRepository(db, PartitionSolo, true))
 }
 
-func newBuildRepository(db *sql.DB, schema Partition) *BuildRepository {
+func newBuildRepository(db *sql.DB, schema Partition, ownerScoped bool) *BuildRepository {
 	return &BuildRepository{
-		db:      db,
-		table:   schema.Table("builds"),
-		project: schema.Table("projects"),
+		db:          db,
+		table:       schema.Table("builds"),
+		project:     schema.Table("projects"),
+		ownerScoped: ownerScoped,
 	}
 }
 
@@ -84,21 +89,23 @@ func (r *BuildRepository) Insert(ctx context.Context, projectID string, b *contr
 	return nil
 }
 
-// List 固定 WHERE project_id=$1 AND environment=$2 [AND platform=$3] ORDER BY created_at DESC，
-// 命中 idx_builds_project_env_platform_created；第一版不分页，空结果返回空切片而不是 404。
-// 不再按 owner 过滤：单人隔离已由「项目属于谁」保证——
-// solo 分区的项目按 owner 创建与解析，只有本人能往自己的项目上传，所以包天然属于本人。
-func (r *BuildRepository) List(ctx context.Context, projectID string, q contract.ListQuery) ([]contract.Build, error) {
-	var query strings.Builder
-	query.WriteString(`SELECT ` + buildColumns + ` FROM ` + r.table + ` WHERE project_id = $1 AND environment = $2`)
-	args := []any{projectID, q.Environment}
-	if q.Platform != "" {
-		query.WriteString(` AND platform = $3`)
-		args = append(args, q.Platform)
-	}
-	query.WriteString(` ORDER BY created_at DESC`)
+// List 固定 WHERE project_id=$1 AND environment=$2 [AND platform=$3] [AND owner_user_id=$n]
+// ORDER BY created_at DESC，命中 idx_builds_project_env_platform_created；第一版不分页，
+// 空结果返回空切片而不是 404。
+//
+// ownerUserID 在单人分区是**必需**条件：项目本身已按 owner 隔离，这里再加一道，
+// 使"忘了先 resolveProject"也不会读到别人的包——隔离从此是仓储的性质，不是调用点的纪律。
+// 团队分区忽略该参数（团队数据本就共享）。
+func (r *BuildRepository) List(ctx context.Context, projectID string, q contract.ListQuery, ownerUserID string) ([]contract.Build, error) {
+	filter := NewFilter(0).
+		Add(`project_id = ?`, projectID).
+		Add(`environment = ?`, q.Environment).
+		AddIf(q.Platform != "", `platform = ?`, q.Platform).
+		AddIf(r.ownerScoped && ownerUserID != "", `owner_user_id = ?`, ownerUserID)
 
-	rows, err := r.db.QueryContext(ctx, query.String(), args...)
+	query := `SELECT ` + buildColumns + ` FROM ` + r.table + filter.Where() + ` ORDER BY created_at DESC`
+
+	rows, err := r.db.QueryContext(ctx, query, filter.Args()...)
 	if err != nil {
 		return nil, fmt.Errorf("查询包列表失败: %w", err)
 	}

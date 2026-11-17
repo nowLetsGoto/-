@@ -2,7 +2,8 @@
  * 人员列表（基础资料 → 人员管理）。
  * 职责：只调人员列表接口，关联的团队/项目名字由该接口直接带回。
  * 输入：URL 的 page / pageSize；输出：服务端分页的 DataTable + 「新增人员」入口。
- * 边界：不拉团队或项目列表（那属于对应页面自己的事）、不内嵌表单。
+ * 边界：不拉团队或项目列表（那属于对应页面自己的事）、不内嵌表单；
+ *       「新增 / 编辑」按 directory.write 隐藏，真正能不能写由服务端判定。
  */
 import { Link, useNavigate } from 'react-router-dom';
 import type { TableColumnsType } from '@seakoi/console-kit';
@@ -10,13 +11,17 @@ import type { Person } from '../../api/people';
 import { Button } from '../../components/Controls';
 import { DataTable } from '../../components/DataTable';
 import { Empty, ErrorState } from '../../components/States';
+import { useMe } from '../../hooks/useMe';
 import { usePageState } from '../../hooks/usePageState';
 import { usePeoplePage } from '../../hooks/useDirectory';
+import { can } from '../../utils/permission';
 
 export function PeoplePage(): JSX.Element {
   const navigate = useNavigate();
   const { page, pageSize, change: changePage } = usePageState();
   const { items: people, total, loading, error, reload } = usePeoplePage(page, pageSize);
+  const { me } = useMe();
+  const writable = can(me, 'directory.write');
 
   const columns: TableColumnsType<Person> = [
     {
@@ -90,17 +95,18 @@ export function PeoplePage(): JSX.Element {
       title: '',
       key: 'actions',
       width: 90,
-      render: (_, person) => (
-        <div className="row-actions">
-          <Button
-            className="button button-ghost button-small"
-            type="button"
-            onClick={() => navigate(`/directory/people/${person.id}/edit`)}
-          >
-            编辑
-          </Button>
-        </div>
-      ),
+      render: (_, person) =>
+        writable ? (
+          <div className="row-actions">
+            <Button
+              className="button button-ghost button-small"
+              type="button"
+              onClick={() => navigate(`/directory/people/${person.id}/edit`)}
+            >
+              编辑
+            </Button>
+          </div>
+        ) : null,
     },
   ];
 
@@ -111,9 +117,11 @@ export function PeoplePage(): JSX.Element {
           <h1>人员管理</h1>
           <p className="sub">共 {total} 人 · 可关联多个团队与项目</p>
         </div>
-        <Link className="button button-primary" to="/directory/people/new">
-          新增人员
-        </Link>
+        {writable ? (
+          <Link className="button button-primary" to="/directory/people/new">
+            新增人员
+          </Link>
+        ) : null}
       </div>
 
       <div className="card">
@@ -129,11 +137,17 @@ export function PeoplePage(): JSX.Element {
             empty={
               <Empty
                 title="还没有人员"
-                description="新增人员后，可以在团队与项目中关联他。"
+                description={
+                  writable
+                    ? '新增人员后，可以在团队与项目中关联他。'
+                    : '暂无人员，请联系管理员添加。'
+                }
                 action={
-                  <Link className="button button-primary" to="/directory/people/new">
-                    新增第一个人员
-                  </Link>
+                  writable ? (
+                    <Link className="button button-primary" to="/directory/people/new">
+                      新增第一个人员
+                    </Link>
+                  ) : undefined
                 }
               />
             }

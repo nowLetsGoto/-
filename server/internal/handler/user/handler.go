@@ -28,9 +28,11 @@ func NewHandler(svc *usersvc.Service, audit *auditsvc.Service) *Handler {
 	return &Handler{svc: svc, audit: audit}
 }
 
-// List 按关键字与分页返回账号列表。
+// List 按登录模式 + 关键字 + 分页返回账号列表。
+// 账号列表跟着模式走：单人模式只看单人账号，团队模式只看团队账号。
 func (h *Handler) List(w http.ResponseWriter, r *http.Request) error {
-	data, err := h.svc.List(r.Context(), handler.ReadPage(r), r.URL.Query().Get("keyword"))
+	caller := authctx.From(r.Context())
+	data, err := h.svc.List(r.Context(), handler.ReadPage(r), caller.Mode, r.URL.Query().Get("keyword"))
 	if err != nil {
 		return err
 	}
@@ -38,24 +40,36 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) error {
 }
 
 // Create 新建账号；请求体 4 个字段（username / password / personId / isSuperAdmin）。
+// 归属模式不来自请求体，而是取自调用者的登录模式——建出来的账号一定落在自己看得见的视图里。
 func (h *Handler) Create(w http.ResponseWriter, r *http.Request) error {
 	var in contract.UserInput
 	if err := handler.DecodeJSON(w, r, &in, "username/password/personId/isSuperAdmin"); err != nil {
 		return err
 	}
-	item, err := h.svc.Create(r.Context(), in)
+	caller := authctx.From(r.Context())
+	item, err := h.svc.Create(r.Context(), caller, in)
 	if err != nil {
 		return err
 	}
-	h.audit.Record(r.Context(), authctx.From(r.Context()), "user.created", "user", item.ID,
-		map[string]any{"username": item.Username, "isSuperAdmin": item.IsSuperAdmin}, handler.ClientIP(r))
+	h.audit.Record(r.Context(), caller, "user.created", "user", item.ID,
+		map[string]any{"username": item.Username, "mode": item.Mode, "isSuperAdmin": item.IsSuperAdmin},
+		handler.ClientIP(r))
 	return handler.OKWithStatus(w, http.StatusCreated, item)
 }
 
-// Update 改超管标记与绑定人员。
+// Get 返回单个账号，供编辑页回填。
+func (h *Handler) Get(w http.ResponseWriter, r *http.Request) error {
+	item, err := h.svc.Get(r.Context(), authctx.From(r.Context()), chi.URLParam(r, "id"))
+	if err != nil {
+		return err
+	}
+	return handler.OK(w, item)
+}
+
+// Update 改绑定人员、角色与超管标记。
 func (h *Handler) Update(w http.ResponseWriter, r *http.Request) error {
 	var in contract.UserUpdate
-	if err := handler.DecodeJSON(w, r, &in, "personId/isSuperAdmin"); err != nil {
+	if err := handler.DecodeJSON(w, r, &in, "personId/roleKey/isSuperAdmin"); err != nil {
 		return err
 	}
 	caller := authctx.From(r.Context())
@@ -64,7 +78,10 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	h.audit.Record(r.Context(), caller, "user.updated", "user", item.ID,
-		map[string]any{"username": item.Username, "isSuperAdmin": item.IsSuperAdmin, "personId": item.PersonID}, handler.ClientIP(r))
+		map[string]any{
+			"username": item.Username, "isSuperAdmin": item.IsSuperAdmin,
+			"personId": item.PersonID, "roleKey": item.RoleKey,
+		}, handler.ClientIP(r))
 	return handler.OK(w, item)
 }
 
@@ -108,7 +125,8 @@ func (h *Handler) Delete(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	h.audit.Record(r.Context(), caller, "user.deleted", "user", item.ID,
-		map[string]any{"username": item.Username, "isSuperAdmin": item.IsSuperAdmin}, handler.ClientIP(r))
+		map[string]any{"username": item.Username, "mode": item.Mode, "isSuperAdmin": item.IsSuperAdmin},
+		handler.ClientIP(r))
 	return handler.OK(w, item)
 }
 

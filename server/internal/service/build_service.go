@@ -345,12 +345,13 @@ func (s *BuildService) fillURLs(b *contract.Build) {
 
 // List 返回该项目的按时间倒序列表，空结果为空数组；统一填充三个 URL 字段。
 // 分区由 identity 决定：单人只可能看到自己分区里的包，团队看到团队分区。
+// owner 一并下传：单人分区的仓储会把它变成 SQL 条件，隔离不只依赖这次 resolveProject。
 func (s *BuildService) List(ctx context.Context, q contract.ListQuery, identity contract.Identity) (contract.ListResult, error) {
 	project, err := s.resolveProject(ctx, q.Project, identity.UserID, identity.Mode)
 	if err != nil {
 		return contract.ListResult{}, err
 	}
-	items, err := s.repos.For(identity.Mode).List(ctx, project.ID, q)
+	items, err := s.repos.For(identity.Mode).List(ctx, project.ID, q, identity.UserID)
 	if err != nil {
 		return contract.ListResult{}, err
 	}

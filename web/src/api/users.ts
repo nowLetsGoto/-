@@ -1,8 +1,9 @@
 /**
  * 账号管理接口（仅超级管理员可用）。
- * 职责：列表 / 新建 / 编辑 / 重置密码 / 启用禁用 / 删除。
+ * 职责：列表 / 详情 / 新建 / 编辑 / 重置密码 / 启用禁用 / 删除。
  * 输入：契约生成的 User 相关类型；输出：同样的契约类型。
- * 边界：不做缓存（账号变动频繁，且列表页本就分页）；非超管调用会拿到 403。
+ * 边界：不发模式参数——账号归属模式由令牌里的登录模式决定，前端无法也不该越权指定；
+ *       不做缓存（账号变动频繁，且列表页本就分页）；非超管调用会拿到 403。
  */
 import type { components } from './schema';
 import { del, get, postJSON, putJSON } from './client';
@@ -24,6 +25,11 @@ export function listUsers(query: PageQuery & { keyword?: string } = {}): Promise
   const separator = base ? '&' : '?';
   const suffix = keyword ? `${separator}keyword=${encodeURIComponent(keyword)}` : '';
   return get<PagedList<User>>(`${USERS_PATH}${base}${suffix}`);
+}
+
+/** 详情：编辑页回填角色、绑定人员与超管标记。 */
+export function getUser(id: string): Promise<User> {
+  return get<User>(`${USERS_PATH}/${id}`);
 }
 
 export function createUser(input: UserInput): Promise<User> {

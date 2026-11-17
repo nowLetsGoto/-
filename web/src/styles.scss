@@ -323,6 +323,28 @@ ul {
   line-height: 1.3;
 }
 
+/* 当前角色：左标签右值，值右对齐——角色名长短不一，左对齐会让两个账号卡看起来不像同一块布局 */
+.account-card-role {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding-bottom: 10px;
+}
+
+.account-card-role-label {
+  color: var(--color-muted);
+  font-size: 11.5px;
+}
+
+.account-card-role-value {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  font-weight: 600;
+}
+
 .account-card-actions {
   display: flex;
   flex-direction: column;
@@ -932,6 +954,14 @@ ul {
 .mode-team {
   background: #edf7f0;
   color: #237a4a;
+}
+
+/* 表单里的只读值（如账号的归属模式）：占住与输入框相同的高度，
+   让人一眼看出「这里有值、但不可改」，而不是以为控件加载失败了。 */
+.readonly-value {
+  display: flex;
+  align-items: center;
+  min-height: 34px;
 }
 
 .table-scroll {

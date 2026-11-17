@@ -76,12 +76,13 @@ func (s *Service) Update(ctx context.Context, id string, in contract.PersonInput
 // personID 由 authz 服务按"账号绑定优先"解析，和权限判定共用同一人；
 // 没有对应人员不算错误：返回空档案，前端据此回退到第一个项目。
 func (s *Service) Me(ctx context.Context, username, personID string, isSuperAdmin bool) (contract.Me, error) {
+	empty := contract.Me{Username: username, ProjectKeys: []string{}, IsSuperAdmin: isSuperAdmin}
 	if personID == "" {
-		return contract.Me{Username: username, ProjectKeys: []string{}, IsSuperAdmin: isSuperAdmin}, nil
+		return empty, nil
 	}
 	person, err := s.repo.FindByID(ctx, personID)
 	if errors.Is(err, contract.ErrNotFound) {
-		return contract.Me{Username: username, ProjectKeys: []string{}, IsSuperAdmin: isSuperAdmin}, nil
+		return empty, nil
 	}
 	if err != nil {
 		return contract.Me{}, err
@@ -92,6 +93,8 @@ func (s *Service) Me(ctx context.Context, username, personID string, isSuperAdmi
 	}
 	return contract.Me{
 		Username: username, PersonID: person.ID, Name: person.Name,
+		// 角色原样透出：未分配角色时是空串，由前端统一显示「普通用户」。
+		RoleKey: person.RoleKey, RoleName: person.RoleName,
 		ProjectKeys: keys, IsSuperAdmin: isSuperAdmin,
 	}, nil
 }

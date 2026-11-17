@@ -142,7 +142,8 @@ func run() error {
 	auditService := auditsvc.NewService(auditRepos)
 
 	usersRepository := userRepo.NewRepository(db)
-	userService := usersvc.NewService(usersRepository)
+	// 删账号要顺带清掉它在单人分区的项目与文件，因此账号服务依赖清理器与存储路径。
+	userService := usersvc.NewService(usersRepository, repository.NewAccountCleanup(db), paths)
 
 	// 权限判定：超管全量 → 单人业务基线 → 项目角色 → 人员角色 → 空集
 	authzService := authzsvc.NewService(usersRepository, peopleRepository, projectRepos, roleRepository)

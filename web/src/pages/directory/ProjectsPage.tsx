@@ -4,6 +4,7 @@
  * 输入：URL 的 page / pageSize；输出：DataTable + 详情抽屉。
  * 边界：不内嵌表单、不发写请求；列表不留「详情」按钮——项目名本身就是唯一入口，避免两个入口抢注意力。
  *       单人模式与团队模式共用这一页，差异只有「角色列」——单人没有角色区分。
+ *       「新增 / 编辑」按 project.write 隐藏：单人模式的该权限来自服务端基线，前端不必分模式。
  */
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
@@ -13,8 +14,10 @@ import { readSession } from '../../api/session';
 import { Button } from '../../components/Controls';
 import { DataTable } from '../../components/DataTable';
 import { Empty, ErrorState } from '../../components/States';
+import { useMe } from '../../hooks/useMe';
 import { usePageState } from '../../hooks/usePageState';
 import { useProjectsPage } from '../../hooks/useProjects';
+import { can } from '../../utils/permission';
 import { ProjectDetailDrawer } from './ProjectDetailDrawer';
 
 export function ProjectsPage(): JSX.Element {
@@ -22,6 +25,8 @@ export function ProjectsPage(): JSX.Element {
   const { page, pageSize, change: changePage } = usePageState();
   // 单人模式没有角色区分：只裁掉角色列，新增与编辑照常可用（单人可自建项目）。
   const solo = (readSession()?.mode ?? 'solo') === 'solo';
+  const { me } = useMe();
+  const writable = can(me, 'project.write');
 
   const { projects, total, loading, error, reload } = useProjectsPage(page, pageSize);
   // 详情改用抽屉：null 表示关闭，字符串表示正在看哪个项目。
@@ -78,17 +83,18 @@ export function ProjectsPage(): JSX.Element {
       title: '',
       key: 'actions',
       width: 90,
-      render: (_, project) => (
-        <div className="row-actions">
-          <Button
-            className="button button-ghost button-small"
-            type="button"
-            onClick={() => navigate(`/directory/projects/${project.key}/edit`)}
-          >
-            编辑
-          </Button>
-        </div>
-      ),
+      render: (_, project) =>
+        writable ? (
+          <div className="row-actions">
+            <Button
+              className="button button-ghost button-small"
+              type="button"
+              onClick={() => navigate(`/directory/projects/${project.key}/edit`)}
+            >
+              编辑
+            </Button>
+          </div>
+        ) : null,
     },
   ];
 
@@ -101,9 +107,11 @@ export function ProjectsPage(): JSX.Element {
             {solo ? `共 ${total} 个你的项目` : `共 ${total} 个项目 · 应用包与应用都挂在项目下`}
           </p>
         </div>
-        <Link className="button button-primary" to="/directory/projects/new">
-          新增项目
-        </Link>
+        {writable ? (
+          <Link className="button button-primary" to="/directory/projects/new">
+            新增项目
+          </Link>
+        ) : null}
       </div>
 
       <div className="card">
@@ -119,11 +127,17 @@ export function ProjectsPage(): JSX.Element {
             empty={
               <Empty
                 title={solo ? '还没有你的项目' : '还没有项目'}
-                description="项目是应用包与应用的一级归属，先建一个再上传包。"
+                description={
+                  writable
+                    ? '项目是应用包与应用的一级归属，先建一个再上传包。'
+                    : '暂无项目，请联系管理员创建。'
+                }
                 action={
-                  <Link className="button button-primary" to="/directory/projects/new">
-                    新增第一个项目
-                  </Link>
+                  writable ? (
+                    <Link className="button button-primary" to="/directory/projects/new">
+                      新增第一个项目
+                    </Link>
+                  ) : undefined
                 }
               />
             }

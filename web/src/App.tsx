@@ -240,6 +240,15 @@ export function App(): JSX.Element {
               </AdminGate>
             }
           />
+          {/* 新建与编辑复用同一个页面组件：字段几乎相同，拆两份只会让两处慢慢走偏 */}
+          <Route
+            path="/admin/accounts/:id/edit"
+            element={
+              <AdminGate>
+                <AccountFormPage />
+              </AdminGate>
+            }
+          />
           <Route
             path="/admin/audit-logs"
             element={

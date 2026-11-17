@@ -1,8 +1,10 @@
 /**
  * 账号管理（超级管理员 → 账号管理）。
- * 职责：服务端分页列出账号，支持新建、重置密码、启用/禁用、删除；危险操作一律二次确认并写明影响面。
+ * 职责：服务端分页列出**当前模式下的**账号，支持新建、编辑、重置密码、启用/禁用、删除；
+ *       危险操作一律二次确认并写明影响面。
  * 输入：URL 的 page / pageSize、关键字搜索；输出：DataTable + 确认弹窗 + 临时密码 / 结果提示条。
- * 边界：不内嵌编辑表单（新建走独立路由）；不做权限判断——非超管进不来，接口也会 403。
+ * 边界：不内嵌编辑表单（编辑与新建走同一套独立路由）；不做权限判断——非超管进不来，接口也会 403；
+ *       不传模式参数——列表范围由令牌里的登录模式决定，前端无法也不该越权查看另一种模式的账号。
  */
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
@@ -16,7 +18,7 @@ import { DataTable } from '../../components/DataTable';
 import { Empty, ErrorState } from '../../components/States';
 import { useMe } from '../../hooks/useMe';
 import { usePageState } from '../../hooks/usePageState';
-import { formatDate } from '../../utils/format';
+import { formatDate, MODE_LABELS } from '../../utils/format';
 
 interface PageState {
   items: User[];
@@ -133,9 +135,26 @@ export function AccountsPage(): JSX.Element {
       ),
     },
     {
+      title: '模式',
+      key: 'mode',
+      width: 110,
+      // 模式决定这行账号属于哪套数据，也是本列表的存在前提，因此紧跟账号名展示。
+      render: (_, user) => (
+        <span className={`mode-tag mode-${user.mode}`}>{MODE_LABELS[user.mode]}</span>
+      ),
+    },
+    {
       title: '绑定人员',
       key: 'personName',
       render: (_, user) => <span className="cell-sub">{user.personName || '未绑定'}</span>,
+    },
+    {
+      title: '角色',
+      key: 'roleName',
+      width: 140,
+      // 角色挂在绑定人员身上：未绑定人员就没有角色可谈，未分配时显示「普通用户」
+      // ——「没有角色」与「角色叫普通用户」在展示上是同一件事。
+      render: (_, user) => <span className="cell-sub">{user.roleName || '普通用户'}</span>,
     },
     {
       title: '身份',
@@ -173,11 +192,17 @@ export function AccountsPage(): JSX.Element {
     {
       title: '',
       key: 'actions',
-      width: 270,
+      width: 320,
       render: (_, user) => {
         const isSelf = user.username === me?.username;
         return (
           <div className="row-actions">
+            <Link
+              className="button button-ghost button-small"
+              to={`/admin/accounts/${user.id}/edit`}
+            >
+              编辑
+            </Link>
             <Button
               className="button button-ghost button-small"
               type="button"
@@ -362,8 +387,11 @@ function describeAction(pending: PendingAction | null): JSX.Element | null {
           删除<strong>不可撤销</strong>
           ，也无法恢复。若只是想暂时停用，请改用「禁用」——禁用会保留账号与历史记录。
         </p>
+        {/* 影响面按模式分开说：两种模式的清理范围不同，含糊成一句话会让人误删团队资产。 */}
         <p className="settings-hint">
-          项目、构建记录与审计日志不会随之删除，它们只保留账号 ID，不会因为这个账号消失而丢失。
+          {user.mode === 'solo'
+            ? '该账号在单人模式下创建的项目与应用包（含已上传的文件）会一并清理，删除后无法找回；审计日志保留。'
+            : '团队模式的项目与应用包属于团队，不会随之删除；审计日志同样保留。'}
         </p>
       </>
     );

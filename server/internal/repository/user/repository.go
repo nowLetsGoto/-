@@ -17,6 +17,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"dandelion/server/internal/contract"
+	"dandelion/server/internal/repository"
 )
 
 // Record 是仓储内部行：对外 DTO 之外还带密码哈希与令牌版本。
@@ -35,12 +36,16 @@ func NewRepository(db *sql.DB) *Repository {
 	return &Repository{db: db}
 }
 
-// columns 带 LEFT JOIN 取人员姓名：列表页要显示"绑定的人是谁"，一次查完不做 N+1。
-const columns = `u.id::text, u.username, u.password_hash, coalesce(u.person_id::text, ''),
+// columns 带 LEFT JOIN 取人员姓名与角色名：列表页要显示"绑定的人是谁、什么角色"，一次查完不做 N+1。
+const columns = `u.id::text, u.username, u.mode, u.password_hash, coalesce(u.person_id::text, ''),
 u.is_super_admin, u.status, u.token_version, u.last_login_at, u.last_login_ip,
-u.created_at, coalesce(p.name, '')`
+u.created_at, coalesce(p.name, ''), coalesce(p.role_key, ''), coalesce(r.name, '')`
 
-const fromClause = ` FROM users u LEFT JOIN people p ON p.id = u.person_id`
+// fromClause 两次 LEFT JOIN 都是"可空"的：账号可以先建、之后再绑定人员；
+// 人员也可以没有角色。两种情况都要让账号本身仍能被查出来。
+const fromClause = ` FROM users u
+LEFT JOIN people p ON p.id = u.person_id
+LEFT JOIN roles r ON r.key = p.role_key`
 
 // FindByUsername 按登录名查账号；无记录转 contract.ErrNotFound（调用方自行决定是否暴露）。
 func (r *Repository) FindByUsername(ctx context.Context, username string) (Record, error) {
@@ -54,19 +59,22 @@ func (r *Repository) FindByID(ctx context.Context, id string) (Record, error) {
 	return scanRecord(row)
 }
 
-// List 返回指定页的账号与总数；keyword 同时匹配登录名与绑定人员姓名。
-func (r *Repository) List(ctx context.Context, page contract.PageQuery, keyword string) ([]contract.User, int, error) {
-	where, args := keywordClause(keyword)
+// List 返回指定模式的账号页与总数；keyword 同时匹配登录名与绑定人员姓名。
+// mode 是硬筛选：账号管理的视图跟着登录模式走，单人模式看不到团队账号，反之亦然。
+func (r *Repository) List(ctx context.Context, page contract.PageQuery, mode contract.SessionMode, keyword string) ([]contract.User, int, error) {
+	filter := accountFilter(mode, keyword)
 
 	var total int
-	if err := r.db.QueryRowContext(ctx, `SELECT count(*) FROM users u LEFT JOIN people p ON p.id = u.person_id`+where, args...).Scan(&total); err != nil {
+	countSQL := `SELECT count(*)` + fromClause + filter.Where()
+	if err := r.db.QueryRowContext(ctx, countSQL, filter.Args()...).Scan(&total); err != nil {
 		return nil, 0, fmt.Errorf("统计账号数量失败: %w", err)
 	}
 
-	// 分页参数追加在关键字参数之后，占位符顺序与 args 保持一致。
-	args = append(args, page.Limit(), page.Offset())
-	query := `SELECT ` + columns + fromClause + where +
-		fmt.Sprintf(` ORDER BY u.is_super_admin DESC, u.created_at ASC LIMIT $%d OFFSET $%d`, len(args)-1, len(args))
+	// 分页参数追加在筛选参数之后，占位符顺序与 args 一致。
+	args := append(filter.Args(), page.Limit(), page.Offset())
+	query := `SELECT ` + columns + fromClause + filter.Where() +
+		fmt.Sprintf(` ORDER BY u.is_super_admin DESC, u.created_at ASC LIMIT %s OFFSET %s`,
+			filter.Next(0), filter.Next(1))
 
 	rows, err := r.db.QueryContext(ctx, query, args...)
 	if err != nil {
@@ -90,12 +98,12 @@ func (r *Repository) List(ctx context.Context, page contract.PageQuery, keyword 
 
 // Create 新建账号；用户名冲突由唯一索引拒绝，service 翻译成可读提示。
 // 插入后按 id 重查一次：columns 里有 JOIN people 取姓名，RETURNING 拿不到。
-func (r *Repository) Create(ctx context.Context, username, passwordHash, personID string, isSuperAdmin bool) (Record, error) {
+func (r *Repository) Create(ctx context.Context, username, passwordHash string, mode contract.SessionMode, personID string, isSuperAdmin bool) (Record, error) {
 	row := r.db.QueryRowContext(ctx,
-		`INSERT INTO users (username, password_hash, person_id, is_super_admin)
-		 VALUES ($1, $2, NULLIF($3, '')::uuid, $4)
+		`INSERT INTO users (username, password_hash, mode, person_id, is_super_admin)
+		 VALUES ($1, $2, $3, NULLIF($4, '')::uuid, $5)
 		 RETURNING id::text`,
-		username, passwordHash, personID, isSuperAdmin)
+		username, passwordHash, mode, personID, isSuperAdmin)
 
 	var id string
 	if err := row.Scan(&id); err != nil {
@@ -104,12 +112,36 @@ func (r *Repository) Create(ctx context.Context, username, passwordHash, personI
 	return r.FindByID(ctx, id)
 }
 
-// Update 改超管标记与绑定人员（登录名不可改）。
-func (r *Repository) Update(ctx context.Context, id, personID string, isSuperAdmin bool) (Record, error) {
-	if _, err := r.db.ExecContext(ctx,
+// Update 改绑定人员与超管标记（登录名与模式都不可改）。
+//
+// roleKey 不是 users 的列，而是绑定人员的角色：账号没有自己的角色，
+// 它以某个人的身份登录，权限就来自那个人。两件事放在同一个事务里，
+// 避免"人员换成了 A、角色却还是旧角色的"这种半截状态。
+// personID 为空时没有可写角色的人，roleKey 一并忽略——角色必须挂在人身上。
+func (r *Repository) Update(ctx context.Context, id, personID string, isSuperAdmin bool, roleKey string) (Record, error) {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return Record{}, fmt.Errorf("开启账号更新事务失败: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	if _, err := tx.ExecContext(ctx,
 		`UPDATE users SET person_id = NULLIF($2, '')::uuid, is_super_admin = $3 WHERE id = $1`,
 		id, personID, isSuperAdmin); err != nil {
 		return Record{}, fmt.Errorf("更新账号失败: %w", err)
+	}
+
+	if personID != "" {
+		// 查不到行不算错：personID 的合法性已由 users.person_id 的外键保证，
+		// 这里 0 行只意味着该人员刚被别处删掉，账号侧的更新仍应成功。
+		if _, err := tx.ExecContext(ctx,
+			`UPDATE people SET role_key = NULLIF($2, '') WHERE id = $1`, personID, roleKey); err != nil {
+			return Record{}, fmt.Errorf("更新账号角色失败: %w", err)
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return Record{}, fmt.Errorf("提交账号更新失败: %w", err)
 	}
 	return r.FindByID(ctx, id)
 }
@@ -139,11 +171,12 @@ func (r *Repository) SetPassword(ctx context.Context, id, passwordHash string) e
 	return requireAffected(result)
 }
 
-// Delete 物理删除账号。
+// Delete 按 id 与模式双条件物理删除账号：模式不符会命中 0 行并转成 ErrNotFound，
+// 因此「跨模式删账号」在 SQL 层就被挡住，不依赖调用方是否记得先校验。
 // users 没有被任何外键引用（projects/builds 的 owner_user_id 是 TEXT，不是 FK），
-// 因此删除不会级联破坏历史数据；历史上"谁建的包"仍留在审计日志里。
-func (r *Repository) Delete(ctx context.Context, id string) error {
-	result, err := r.db.ExecContext(ctx, `DELETE FROM users WHERE id = $1`, id)
+// 所以删除本身不会级联破坏历史数据；账号在单人分区留下的数据由 service 清理。
+func (r *Repository) Delete(ctx context.Context, id string, mode contract.SessionMode) error {
+	result, err := r.db.ExecContext(ctx, `DELETE FROM users WHERE id = $1 AND mode = $2`, id, mode)
 	if err != nil {
 		return fmt.Errorf("删除账号失败: %w", err)
 	}
@@ -196,14 +229,17 @@ func requireAffected(result sql.Result) error {
 	return nil
 }
 
-// keywordClause 拼关键字条件：登录名或人员姓名模糊匹配。
-func keywordClause(keyword string) (string, []any) {
+// accountFilter 生成账号列表的固定条件：模式是必须的，关键字是可选的。
+// 表必须起别名 u / p：fromClause 已把两张表 JOIN 在一起，列引用一律带前缀。
+func accountFilter(mode contract.SessionMode, keyword string) *repository.Filter {
+	filter := repository.NewFilter(0).Add(`u.mode = ?`, mode)
 	trimmed := strings.TrimSpace(keyword)
 	if trimmed == "" {
-		return "", nil
+		return filter
 	}
+	// 同一个模式串要同时匹配两个列，用 AddMulti 一次加完：分两次 Add 会被 AND 连起来而查不到任何行。
 	pattern := "%" + trimmed + "%"
-	return ` WHERE (u.username ILIKE $1 OR p.name ILIKE $1)`, []any{pattern}
+	return filter.AddMulti(`(u.username ILIKE ? OR p.name ILIKE ?)`, pattern, pattern)
 }
 
 type scanner interface {
@@ -216,9 +252,10 @@ func scanRecord(row scanner) (Record, error) {
 	var createdAt time.Time
 
 	err := row.Scan(
-		&record.User.ID, &record.User.Username, &record.PasswordHash, &record.User.PersonID,
+		&record.User.ID, &record.User.Username, &record.User.Mode, &record.PasswordHash, &record.User.PersonID,
 		&record.User.IsSuperAdmin, &record.User.Status, &record.TokenVersion,
 		&lastLogin, &record.User.LastLoginIP, &createdAt, &record.User.PersonName,
+		&record.User.RoleKey, &record.User.RoleName,
 	)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) || errors.Is(err, pgx.ErrNoRows) {

@@ -178,6 +178,7 @@ func NewRouter(d Deps) http.Handler {
 			// 账号管理对超管全模式开放：单人管理员也需要管理自己的账号与成员入口。
 			admin.Get("/admin/users", middleware.Wrap(d.Users.List))
 			admin.Post("/admin/users", middleware.Wrap(d.Users.Create))
+			admin.Get("/admin/users/{id}", middleware.Wrap(d.Users.Get))
 			admin.Put("/admin/users/{id}", middleware.Wrap(d.Users.Update))
 			admin.Delete("/admin/users/{id}", middleware.Wrap(d.Users.Delete))
 			admin.Post("/admin/users/{id}/reset-password", middleware.Wrap(d.Users.ResetPassword))

@@ -461,9 +461,34 @@ paths:
           description: 非超级管理员
 
   /admin/users/{id}:
+    get:
+      operationId: getUser
+      summary: 账号详情（仅超级管理员；供编辑页回填）
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: 账号详情
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          description: 非超级管理员
+        '404':
+          description: 账号不存在，或不属于当前登录模式
     put:
       operationId: updateUser
-      summary: 改超管标记与绑定人员（登录名不可改）
+      summary: 改绑定人员、角色与超管标记（登录名与模式不可改）
       security:
         - bearerAuth: []
       parameters:
@@ -1493,7 +1518,7 @@ components:
     Me:
       type: object
       description: 当前登录人；没有对应人员记录时 personId 为空、projectKeys 为空
-      required: [username, personId, name, projectKeys, isSuperAdmin, permissions]
+      required: [username, personId, name, roleKey, roleName, projectKeys, isSuperAdmin, permissions]
       properties:
         username:
           type: string
@@ -1501,6 +1526,12 @@ components:
           type: string
         name:
           type: string
+        roleKey:
+          type: string
+          description: 人员在团队里的角色 key；未分配角色时为空串
+        roleName:
+          type: string
+          description: 角色名；为空表示该人员没有角色，前端统一显示「普通用户」
         projectKeys:
           type: array
           description: 该人员关联的项目 key，按项目创建顺序；前端据此决定列表页默认项目
@@ -1518,18 +1549,26 @@ components:
     User:
       type: object
       description: 账号视图（不含任何密码字段）
-      required: [id, username, personId, personName, isSuperAdmin, status, lastLoginAt, lastLoginIp, createdAt]
+      required: [id, username, mode, personId, personName, roleKey, roleName, isSuperAdmin, status, lastLoginAt, lastLoginIp, createdAt]
       properties:
         id:
           type: string
           format: uuid
         username:
           type: string
+        mode:
+          $ref: '#/components/schemas/SessionMode'
         personId:
           type: string
           description: 绑定的人员档案 id，空表示未绑定
         personName:
           type: string
+        roleKey:
+          type: string
+          description: 绑定人员的角色 key；账号本身没有角色，角色挂在人员身上
+        roleName:
+          type: string
+          description: 角色名；为空表示未分配角色，前端显示「普通用户」
         isSuperAdmin:
           type: boolean
         status:
@@ -1546,7 +1585,9 @@ components:
 
     UserInput:
       type: object
-      description: 新建账号
+      description: >-
+        新建账号。没有 mode 字段：账号归属模式由创建者的登录模式决定，
+        登录时已选定模式，页面上只做只读展示。
       additionalProperties: false
       required: [username, password, personId, isSuperAdmin]
       properties:
@@ -1560,17 +1601,24 @@ components:
           maxLength: 64
         personId:
           type: string
+          description: 绑定的人员档案 id，可留空（之后再绑定）
         isSuperAdmin:
           type: boolean
 
     UserUpdate:
       type: object
-      description: 编辑账号（登录名不可改）
+      description: >-
+        编辑账号（登录名与模式都不可改）。roleKey 写的是绑定人员的角色（people.role_key），
+        因此「在这里改角色」与「在人员管理里改角色」是同一件事。
       additionalProperties: false
-      required: [personId, isSuperAdmin]
+      required: [personId, roleKey, isSuperAdmin]
       properties:
         personId:
           type: string
+          description: 绑定的人员档案 id；为空时 roleKey 会被忽略（角色必须挂在人身上）
+        roleKey:
+          type: string
+          description: 绑定人员的角色 key；空串表示不分配角色
         isSuperAdmin:
           type: boolean
 
