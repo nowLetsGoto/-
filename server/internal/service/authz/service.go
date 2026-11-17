@@ -8,12 +8,13 @@
 //
 // 判定顺序（用户明确要求）：
 //  1. 超级管理员 → 全量权限（否则会出现"没人能改配置"的死锁）
-//  2. 项目角色：请求带了项目且该项目配置了角色 → 用它的权限
-//  3. 人员角色：项目没配角色时，回落到人员自身的角色
-//  4. 没有角色 → 只有默认的业务读取权限；不会默认获得任何写权限。
+//  2. 单人模式 → 业务基线（概览 / 应用包 / 应用），不参与角色区分
+//  3. 项目角色：团队模式且请求带了项目、项目配置了角色 → 用它的权限
+//  4. 人员角色：项目没配角色时，回落到人员自身的角色
+//  5. 没有角色 → 只有默认的业务读取权限。
 //
-// 默认能力是独立基线：概览、应用包、应用始终可读，项目列表可供筛选；
-// 项目角色与人员角色仍按覆盖而非取并集计算其余权限。
+// 单人模式是"个人工作台"：上传、发布与查看自己的包不需要管理员分配角色；
+// 平台管理、账号、角色等权限仍不授予，且由路由层的模式中间件单独拦截。
 package authz
 
 import (
@@ -51,6 +52,11 @@ func (s *Service) Permissions(ctx context.Context, identity contract.Identity, p
 	// 1) 超管恒为全量
 	if identity.IsSuperAdmin {
 		return allPermissions(), nil
+	}
+
+	// 单人模式没有角色概念：固定授予三个业务菜单所需能力，不再查角色。
+	if identity.Mode == contract.ModeSolo {
+		return soloPermissions(), nil
 	}
 
 	roleKey, err := s.resolveRoleKey(ctx, identity, projectKey)
@@ -152,6 +158,17 @@ func Sorted(set map[string]struct{}) []string {
 	}
 	sort.Strings(keys)
 	return keys
+}
+
+// soloPermissions 是单人模式的业务能力集合。
+// 单人模式只看自己的数据，因此不需要管理员分配角色；但只覆盖三个业务菜单，
+// 不包含 settings / role / admin 等平台能力，避免"登录即管理员"。
+func soloPermissions() map[string]struct{} {
+	return map[string]struct{}{
+		"build.read":   {},
+		"build.write":  {},
+		"project.read": {},
+	}
 }
 
 // defaultPermissions 是已登录账号的最小读取基线。
