@@ -2,9 +2,10 @@
  * 项目列表与「当前项目」的唯一入口。
  * 职责：一次取回项目列表并缓存；从 URL 的 /p/:key 解析当前项目；记住最近访问的项目；
  *       识别「链接里的项目不存在」供骨架层做友好降级。
- * 输入：react-router 的当前路径；输出：projects / current / loading / error / notFound。
+ * 输入：react-router 的当前路径；输出：projects / current / loading / error / notFound / empty。
  * 边界：不发其他请求、不写业务状态；最近访问只存 key，存的是"上次看的项目"这件事本身；
- *       notFound 只是「列表已就绪但仍然找不到」的事实，不负责展示与跳转（那是 components/ProjectGate 的事）。
+ *       notFound / empty 只是「列表已就绪但仍然解析不出项目」的事实，不负责展示与跳转
+ *       （那是 components/ProjectGate 的事）。
  */
 import { useCallback, useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
@@ -109,8 +110,15 @@ interface CurrentProject {
   key: string;
   project: Project | null;
   loading: boolean;
-  /** 列表已加载完成、列表非空、却按 key 找不到该项目（链接里的项目被删或改名）。 */
+  /**
+   * 列表已就绪、却按 key 解析不出项目。两种成因：
+   * ① 一个项目都没有（首次使用，地址里的 key 必然是失效的）；
+   * ② 有项目但都不叫这个 key（被删或改名）。
+   * 二者对"该给什么引导"是不同的答案，所以下面用 empty 再区分一次。
+   */
   notFound: boolean;
+  /** notFound 的成因是「一个项目都没有」，此时应引导去新建项目而非回到某个项目。 */
+  empty: boolean;
 }
 
 /** 当前项目的完整信息；侧栏切换器、顶栏面包屑与 ProjectGate 都用它。 */
@@ -120,7 +128,10 @@ export function useCurrentProject(): CurrentProject {
 
   const project = projects.find((item) => item.key === key) ?? null;
   // 首屏还在加载时列表为空，此时不能判定"不存在"，否则会先闪一下错误再跳回来。
-  const notFound = !loading && projects.length > 0 && project === null;
+  // 列表为空且已就绪同样算"解析不出项目"：地址里的 key 不可能是有效的，
+  // 若放行就会带着废 key 去请求接口，后端只能回「项目不存在」。
+  const notFound = !loading && project === null;
+  const empty = notFound && projects.length === 0;
 
   // 进到某个项目就把"最近访问"记下来，下次访问 / 时回到它。
   // 只记**真实解析出来的项目**：首帧 loading=true 时 notFound 还是 false，
@@ -134,7 +145,7 @@ export function useCurrentProject(): CurrentProject {
     }
   }, [resolvedKey]);
 
-  return { key, project, loading, notFound };
+  return { key, project, loading, notFound, empty };
 }
 
 /**

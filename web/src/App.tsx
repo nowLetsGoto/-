@@ -14,7 +14,8 @@ import { Navigate, Outlet, Route, Routes, useLocation } from 'react-router-dom';
 import { readSession } from './api/session';
 import { AdminGate } from './components/AdminGate';
 import { Layout } from './components/Layout';
-import { Empty, ErrorState, Loading } from './components/States';
+import { NoProjectYet } from './components/ProjectGate';
+import { ErrorState, Loading } from './components/States';
 import { recentProjectKey, useProjects } from './hooks/useProjects';
 import { useMe } from './hooks/useMe';
 
@@ -152,14 +153,11 @@ function ProjectHome(): JSX.Element {
     projects.find((item) => item.key === recentProjectKey()) ??
     projects[0];
 
-  // 没有项目时留在骨架里，侧栏导航仍可用，去「项目管理」新建即可。
+  // 没有项目时留在骨架里，侧栏导航仍可用；引导文案复用守卫里的同一张卡，避免两处说法不一致。
   if (!target) {
     return (
       <Layout>
-        <Empty
-          title="还没有项目"
-          description="先到「基础资料 → 项目管理」建一个项目，再上传第一个包。"
-        />
+        <NoProjectYet />
       </Layout>
     );
   }
