@@ -74,6 +74,7 @@ const (
 	RouteTeams             = APIPrefix + "/teams"
 	RouteTeamByID          = APIPrefix + "/teams/{id}"
 	RouteMe                = APIPrefix + "/me"
+	RouteMePassword        = APIPrefix + "/me/password"
 	RoutePermissions       = APIPrefix + "/permissions"
 	RouteRoles             = APIPrefix + "/roles"
 	RouteRoleByKey         = APIPrefix + "/roles/{key}"
@@ -129,7 +130,7 @@ var Environments = []string{EnvTest, EnvHotfix, EnvPre, EnvPrd}
 var Platforms = []string{PlatformAndroid, PlatformIOS, PlatformHarmony}
 var MetaSources = []string{MetaParsed, MetaFallback}
 var APIRoutes = []string{
-	RouteLogin, RouteMe,
+	RouteLogin, RouteMe, RouteMePassword,
 	RouteAdminUsers, RouteAdminUserByID, RouteAdminUserPassword, RouteAdminUserStatus,
 	RouteAdminAuditLogs,
 	RouteProjects, RouteProjectByKey,
@@ -532,15 +533,25 @@ type PasswordReset struct {
 	Password string `json:"password"`
 }
 
+// PasswordChange 是「改自己的密码」的请求体：必须带旧密码，
+// 因为带着有效令牌不等于本人操作（手机被人拿起就能改密码是不合格的）。
+type PasswordChange struct {
+	OldPassword string `json:"oldPassword"`
+	NewPassword string `json:"newPassword"`
+}
+
 // ApiKeyResult 承载轮换后的新 Key；明文只在这一个响应里出现。
 type ApiKeyResult struct {
 	ApiKey string `json:"apiKey"`
 }
 
 // AuditLog 是一条审计记录；detail 是 JSON 文本（写入方决定结构），前端格式化展示。
+// Mode 标出这条日志产生于哪个模式的分区——单人、团队各写各的表，所以它属于记录本身，
+// 而不是筛选条件（跨模式互不可见，查谁的表就是谁的模式）。
 type AuditLog struct {
 	ID         int64  `json:"id"`
 	CreatedAt  string `json:"createdAt"`
+	Mode       string `json:"mode"`
 	ActorID    string `json:"actorId"`
 	ActorName  string `json:"actorName"`
 	Action     string `json:"action"`

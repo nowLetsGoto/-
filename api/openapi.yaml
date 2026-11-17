@@ -389,6 +389,26 @@ paths:
         '401':
           $ref: '#/components/responses/Unauthorized'
 
+  /me/password:
+    put:
+      operationId: changeOwnPassword
+      summary: 修改当前登录账号自己的密码（需校验旧密码，成功后旧令牌立即失效）
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PasswordChange'
+      responses:
+        '200':
+          description: 修改成功；旧令牌已失效，需重新登录
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
   /admin/users:
     get:
       operationId: listUsers
@@ -472,6 +492,33 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '403':
           description: 非超级管理员
+    delete:
+      operationId: deleteUser
+      summary: 删除账号（不可恢复；不能删自己，也不能删掉最后一个可用超管）
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: 被删除的账号（前端据此提示"已删除 xxx"）
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          description: 非超级管理员
+        '404':
+          $ref: '#/components/responses/NotFound'
 
   /admin/users/{id}/reset-password:
     post:
@@ -1635,8 +1682,11 @@ components:
 
     AuditLog:
       type: object
-      description: 一条审计记录；detail 是 JSON 文本，由写入方决定结构
-      required: [id, createdAt, actorId, actorName, action, objectType, objectId, result, detail, ip]
+      description: >
+        一条审计记录；detail 是 JSON 文本，由写入方决定结构。
+        mode 标出这条日志产生于哪个模式的分区——单人、团队各写各的表，
+        跨模式互不可见，因此它是记录本身的属性而非筛选条件。
+      required: [id, createdAt, mode, actorId, actorName, action, objectType, objectId, result, detail, ip]
       properties:
         id:
           type: integer
@@ -1644,6 +1694,8 @@ components:
         createdAt:
           type: string
           format: date-time
+        mode:
+          $ref: '#/components/schemas/SessionMode'
         actorId:
           type: string
         actorName:
@@ -1678,6 +1730,21 @@ components:
       properties:
         password:
           type: string
+
+    PasswordChange:
+      type: object
+      description: >
+        修改自己的密码。oldPassword 必填：持有有效令牌不等于本人操作，
+        校验旧密码才能挡住"手机被人拿起就改密码"的情况。
+      additionalProperties: false
+      required: [oldPassword, newPassword]
+      properties:
+        oldPassword:
+          type: string
+          description: 当前密码，用于确认操作者是本人
+        newPassword:
+          type: string
+          description: 新密码，8-64 位，且不得与当前密码相同
 
 
     MetaSource:

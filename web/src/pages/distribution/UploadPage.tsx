@@ -17,7 +17,7 @@ import type {
 } from '../../api/builds';
 import { commitBuild, isShareableUrl, stageBuild } from '../../api/builds';
 import { ApiError, errorMessage } from '../../api/client';
-import { Button, Input, TextArea } from '../../components/Controls';
+import { Button, Input, Segmented, TextArea } from '../../components/Controls';
 import { FileDropzone } from '../../components/FileDropzone';
 import { useEnvironment } from '../../hooks/useEnvironment';
 import { useCurrentProject } from '../../hooks/useProjects';
@@ -253,35 +253,31 @@ export function UploadPage(): JSX.Element {
         <div className="form-section">
           <h2>2. 必填信息</h2>
           <label className="field-label">环境</label>
-          <div className="segmented">
-            {ENVIRONMENTS.map((item) => (
-              <Button
-                key={item.value}
-                type="button"
-                className={form.environment === item.value ? 'segment segment-active' : 'segment'}
-                onClick={() => setField('environment', item.value)}
-                disabled={submitting}
-              >
-                {item.label}
-                <small>{item.value}</small>
-              </Button>
-            ))}
-          </div>
+          <Segmented<Environment>
+            aria-label="环境"
+            value={form.environment}
+            disabled={submitting}
+            options={ENVIRONMENTS.map((item) => ({
+              value: item.value,
+              // 环境名本身就是英文标识，用小字并排显示，比单独一行说明更省空间。
+              label: (
+                <span className="segment-label">
+                  {item.label}
+                  <small>{item.value}</small>
+                </span>
+              ),
+            }))}
+            onChange={(value) => setField('environment', value)}
+          />
 
           <label className="field-label">平台</label>
-          <div className="segmented">
-            {PLATFORMS.map((item) => (
-              <Button
-                key={item.value}
-                type="button"
-                className={form.platform === item.value ? 'segment segment-active' : 'segment'}
-                onClick={() => setField('platform', item.value)}
-                disabled={submitting}
-              >
-                {item.label}
-              </Button>
-            ))}
-          </div>
+          <Segmented<Platform>
+            aria-label="平台"
+            value={form.platform}
+            disabled={submitting}
+            options={PLATFORMS.map((item) => ({ value: item.value, label: item.label }))}
+            onChange={(value) => setField('platform', value)}
+          />
         </div>
 
         <div className="form-section">

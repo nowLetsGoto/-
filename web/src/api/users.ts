@@ -1,11 +1,11 @@
 /**
  * 账号管理接口（仅超级管理员可用）。
- * 职责：列表 / 新建 / 编辑 / 重置密码 / 启用禁用。
+ * 职责：列表 / 新建 / 编辑 / 重置密码 / 启用禁用 / 删除。
  * 输入：契约生成的 User 相关类型；输出：同样的契约类型。
  * 边界：不做缓存（账号变动频繁，且列表页本就分页）；非超管调用会拿到 403。
  */
 import type { components } from './schema';
-import { get, postJSON, putJSON } from './client';
+import { del, get, postJSON, putJSON } from './client';
 import type { PageQuery, PagedList } from './query';
 import { pageQuery } from './query';
 
@@ -41,4 +41,9 @@ export function resetUserPassword(id: string): Promise<{ password: string }> {
 
 export function setUserStatus(id: string, status: 'active' | 'disabled'): Promise<User> {
   return postJSON<User>(`${USERS_PATH}/${id}/status`, { status });
+}
+
+/** 删除账号：不可恢复，调用方必须先做二次确认。返回被删的记录供提示使用。 */
+export function deleteUser(id: string): Promise<User> {
+  return del<User>(`${USERS_PATH}/${id}`);
 }

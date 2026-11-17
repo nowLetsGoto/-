@@ -2,19 +2,20 @@
  * 审计日志（超级管理员 → 审计日志）。
  * 职责：按动作 / 操作者 / 结果筛选，分页展示；点行看详情（detail 的 JSON 原文）。
  * 输入：URL 的 page / pageSize、页面内的筛选条件；输出：只读表格 + 详情抽屉。
- * 边界：只读页面，不提供任何修改/删除入口；日志由服务端在业务动作后自动写入。
+ * 边界：只读页面，不提供任何修改/删除入口；日志由服务端在业务动作后自动写入；
+ *       模式（单人 / 团队）是记录的固有属性，来自日志所处的分区，不可作为筛选条件。
  */
 import { useEffect, useState } from 'react';
 import type { TableColumnsType } from '@seakoi/console-kit';
 import { errorMessage } from '../../api/client';
 import type { AuditLog } from '../../api/audit';
 import { listAuditLogs } from '../../api/audit';
-import { Button, Input } from '../../components/Controls';
+import { Button, Input, Segmented } from '../../components/Controls';
 import { DataTable } from '../../components/DataTable';
 import { DetailDrawer } from '../../components/DetailDrawer';
 import { Empty, ErrorState } from '../../components/States';
 import { usePageState } from '../../hooks/usePageState';
-import { formatDate } from '../../utils/format';
+import { formatDate, modeLabel } from '../../utils/format';
 
 interface PageState {
   items: AuditLog[];
@@ -28,12 +29,18 @@ const ACTION_LABELS: Record<string, string> = {
   'build.created': '发布包',
   'user.created': '新建账号',
   'user.updated': '编辑账号',
+  'user.deleted': '删除账号',
   'user.disabled': '禁用账号',
   'user.enabled': '启用账号',
   'user.password_reset': '重置密码',
+  'user.password_changed': '修改密码',
 };
 
-const RESULT_OPTIONS: ReadonlyArray<{ value: '' | 'success' | 'failure'; label: string }> = [
+/** 模式的中文说明统一由 utils/format 提供，这里不再重复一份映射。 */
+
+type ResultFilter = '' | 'success' | 'failure';
+
+const RESULT_OPTIONS: ReadonlyArray<{ value: ResultFilter; label: string }> = [
   { value: '', label: '全部' },
   { value: 'success', label: '成功' },
   { value: 'failure', label: '失败' },
@@ -45,7 +52,7 @@ export function AuditLogsPage(): JSX.Element {
   const [form, setForm] = useState({
     action: '',
     actor: '',
-    result: '' as '' | 'success' | 'failure',
+    result: '' as ResultFilter,
   });
   const [applied, setApplied] = useState(form);
   const [version, setVersion] = useState(0);
@@ -83,6 +90,14 @@ export function AuditLogsPage(): JSX.Element {
       key: 'createdAt',
       width: 170,
       render: (_, log) => <span className="cell-sub">{formatDate(log.createdAt)}</span>,
+    },
+    {
+      title: '模式',
+      key: 'mode',
+      width: 100,
+      render: (_, log) => (
+        <span className={`mode-tag mode-${log.mode}`}>{modeLabel(log.mode)}</span>
+      ),
     },
     {
       title: '操作者',
@@ -177,18 +192,15 @@ export function AuditLogsPage(): JSX.Element {
               }
             }}
           />
-          <div className="segmented" role="group" aria-label="结果">
-            {RESULT_OPTIONS.map((option) => (
-              <Button
-                key={option.value || 'all'}
-                type="button"
-                className={form.result === option.value ? 'segment segment-active' : 'segment'}
-                onClick={() => setForm({ ...form, result: option.value })}
-              >
-                {option.label}
-              </Button>
-            ))}
-          </div>
+          <Segmented<ResultFilter>
+            aria-label="结果"
+            value={form.result}
+            options={RESULT_OPTIONS.map((option) => ({
+              value: option.value,
+              label: option.label,
+            }))}
+            onChange={(value) => setForm({ ...form, result: value })}
+          />
           <Button
             className="button button-ghost button-small"
             type="button"
@@ -241,6 +253,10 @@ export function AuditLogsPage(): JSX.Element {
               <div>
                 <dt>时间</dt>
                 <dd>{formatDate(detail.createdAt)}</dd>
+              </div>
+              <div>
+                <dt>模式</dt>
+                <dd>{modeLabel(detail.mode)}</dd>
               </div>
               <div>
                 <dt>操作者</dt>

@@ -139,6 +139,17 @@ func (r *Repository) SetPassword(ctx context.Context, id, passwordHash string) e
 	return requireAffected(result)
 }
 
+// Delete 物理删除账号。
+// users 没有被任何外键引用（projects/builds 的 owner_user_id 是 TEXT，不是 FK），
+// 因此删除不会级联破坏历史数据；历史上"谁建的包"仍留在审计日志里。
+func (r *Repository) Delete(ctx context.Context, id string) error {
+	result, err := r.db.ExecContext(ctx, `DELETE FROM users WHERE id = $1`, id)
+	if err != nil {
+		return fmt.Errorf("删除账号失败: %w", err)
+	}
+	return requireAffected(result)
+}
+
 // BumpTokenVersion 强制下线：旧令牌里的版本号会与库里不一致而失效。
 func (r *Repository) BumpTokenVersion(ctx context.Context, id string) error {
 	result, err := r.db.ExecContext(ctx,

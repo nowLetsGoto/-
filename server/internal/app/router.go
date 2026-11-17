@@ -65,6 +65,7 @@ type Deps struct {
 var allowedMethods = map[string]string{
 	contract.RouteLogin:        "POST",
 	contract.RouteMe:           "GET",
+	contract.RouteMePassword:   "PUT",
 	contract.RouteProjects:     "GET, POST",
 	contract.RouteProjectByKey: "GET, PUT",
 	contract.RoutePeople:       "GET, POST",
@@ -92,10 +93,14 @@ func allowedMethodsFor(req *http.Request) string {
 	switch {
 	case path == contract.RouteLogin, path == contract.RouteOpenBuilds, path == contract.RouteWebhookTest:
 		return "POST"
+	// /me/password 必须排在 /me 之前判定：下面那条是精确相等，顺序其实无关，
+	// 但放这里能让人一眼看出 /me 下有两个方法不同的接口。
+	case path == contract.RouteMePassword:
+		return "PUT"
 	case path == contract.RouteMe:
 		return "GET"
 	case strings.HasPrefix(path, contract.RouteAdminUsers):
-		return "GET, POST, PUT"
+		return "GET, POST, PUT, DELETE"
 	case path == contract.RouteProjects, path == contract.RoutePeople, path == contract.RouteTeams, path == contract.RouteRoles:
 		return "GET, POST"
 	case path == contract.RoutePermissions:
@@ -140,6 +145,8 @@ func NewRouter(d Deps) http.Handler {
 			private.With(authzmw.RequireProjectPermission(d.Authz, "build.read")).Get("/builds", middleware.Wrap(d.Builds.List))
 
 			private.Get("/me", middleware.Wrap(d.People.Me))
+			// 改自己的密码只要求登录态：任何账号都该能换自己的密码，与是否超管无关。
+			private.Put("/me/password", middleware.Wrap(d.Users.ChangePassword))
 			// 项目读取是单人模式的基础设施：没有项目列表就无法进入自己的应用包页。
 			private.With(authzmw.RequirePermission(d.Authz, "project.read")).Get("/projects", middleware.Wrap(d.Projects.List))
 			private.With(authzmw.RequirePermission(d.Authz, "project.read")).Get("/projects/{key}", middleware.Wrap(d.Projects.Get))
@@ -172,6 +179,7 @@ func NewRouter(d Deps) http.Handler {
 			admin.Get("/admin/users", middleware.Wrap(d.Users.List))
 			admin.Post("/admin/users", middleware.Wrap(d.Users.Create))
 			admin.Put("/admin/users/{id}", middleware.Wrap(d.Users.Update))
+			admin.Delete("/admin/users/{id}", middleware.Wrap(d.Users.Delete))
 			admin.Post("/admin/users/{id}/reset-password", middleware.Wrap(d.Users.ResetPassword))
 			admin.Post("/admin/users/{id}/status", middleware.Wrap(d.Users.SetStatus))
 			admin.Get("/admin/audit-logs", middleware.Wrap(d.Audit.List))

@@ -126,6 +126,7 @@ main.tsx（挂载） → App
 - 内置角色只在缺失时播种默认权限；用户改过的权限不会被重启覆盖。`super-admin` 权限恒为全量且不可修改。
 - 角色授予（人员的 `role_key`、项目的 `role_key`）只有超管能改，避免普通编辑者自提权。
 - 审计日志只追加，没有 UPDATE / DELETE 接口；`actor_name` 冗余存储，账号改名或删除后历史仍可读。审计写入失败只记日志，不让业务回滚。
+- 审计日志的「模式」列不是新增字段：`solo.audit_logs` / `team.audit_logs` 物理分区本身就是模式来源，`repository.Partition.Mode()` 做逆映射后由仓储回填，零迁移。跨模式查询不存在，因为每次会话只查自己那套分区。
 
 ### 账号、权限与登录模式
 
@@ -144,6 +145,8 @@ main.tsx（挂载） → App
   - `team`：完整平台视图。
 - 前端菜单只是会话投影；服务端 `RequireTeamMode`、`RequireSuperAdmin`、`RequirePermission` 才是安全边界。
 - 禁用账号、重置密码、禁止自己取消超管、禁止禁用自己、禁止丢掉最后一个超管：这些护栏属于业务层，不能只靠 UI。
+- 删除账号：`DELETE /admin/users/{id}`。`users` 表没有被外键引用（`projects` / `builds.owner_user_id` 均为 TEXT 非 FK，只有 `users.person_id → people(id) ON DELETE SET NULL`），因此直接删除无级联障碍，历史构建与审计日志不受影响。禁止删自己；删在用超管前先确保还有别的超管。删除不可撤销，UI 需同时给出「想暂时停用请改用禁用」的替代路径。
+- 修改自己的密码：`PUT /me/password`。`SetPassword` 必然自增 `token_version`，改密成功即等于旧令牌当场失效，所以前端必须清会话回登录页——不要试图换发新令牌把用户留在原地。
 
 ## 6. UI 规范
 
@@ -152,6 +155,7 @@ main.tsx（挂载） → App
 - `antd` 仅保留为 console-kit 的 peer 依赖与 Vite 的 chunk 名；新增组件一律先查 console-kit 根入口，没有合适能力才写自定义组件。
 - 业务页面不直接散用组件库裸控件：Table / Drawer / Modal / Select 仍经 `components/` 的四个封装使用，便于统一主题、空态、分页与安全交互；ConfigProvider / zhCN 只在 `main.tsx` 装配，ThemeConfig 只在 `theme/antd.ts` 映射。
 - 基础按钮/输入控件经 `components/Controls.tsx` 适配：原生 `type` 映射为库按钮的 `htmlType`，输入框 `trim=false`，防止改变表单提交语义或裁剪密码；Checkbox/Radio 用库自带 label，不再外套 label。
+- **筛选/切换类 tab 一律用 `Controls.Segmented`**（泛型封装库的 `Segmented<T extends string>`），class 为 `app-segmented`。历史上手写的 `.segment` / `.env-switch` / `.env-option` 已整组删除，其 `align-items: baseline` 正是「字体没有垂直居中」的根因，禁止再引入等价写法。
 - 文件选择使用 `Upload.Dragger`，`beforeUpload` 返回 false（非法文件返回 `LIST_IGNORE`），禁止库自动上传；页面仍通过唯一 stage 接口上传一次。
 - HTML `form`、路由 `Link`、下载链接及说明性表格保留语义元素，不因引入库而改变提交/导航行为。
 - 二维码统一用 console-kit 的 `QRCode`（`errorLevel` / `color` / `bgColor`），不再使用 `qrcode.react`。
@@ -176,6 +180,7 @@ main.tsx（挂载） → App
 | 新增一级菜单 | `navigation.ts` 加分组/项；`pages/` 新建同名目录；`App.tsx` 加路由；后端权限点同步 |
 | 改权限 | `contract.Permissions` → 内置角色默认权限 → 前端权限文案 → 接口上的 `RequirePermission` → 测试 |
 | 引入 UI 组件 | 从 `@seakoi/console-kit` 根入口按命名导出引入；通用控件放进 `components/` 封装，页面不散用裸控件；禁止直接 import antd / qrcode.react |
+| 新增 tab / 分段筛选 | 用 `Controls.Segmented`，不要手写 `.segment` 一类样式；选项文案与说明放 `utils/format.ts` 统一供多处复用 |
 | 改登录/令牌 | `handler/login`、`service/login`、`middleware/login`、`api/session.ts`、OpenAPI；改载荷格式会让旧令牌失效，需明确告知用户重新登录 |
 
 ## 8. 提交前自检

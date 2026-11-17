@@ -26,6 +26,15 @@ func PartitionFor(mode contract.SessionMode) Partition {
 	return PartitionTeam
 }
 
+// Mode 是 PartitionFor 的逆映射：读出来的数据要知道自己属于哪种会话模式。
+// 与 PartitionFor 保持同一条默认规则——不是 solo 的一律视为 team。
+func (p Partition) Mode() contract.SessionMode {
+	if p == PartitionSolo {
+		return contract.ModeSolo
+	}
+	return contract.ModeTeam
+}
+
 // Table 返回分区内的限定表名，例如 team.builds。
 // 显式写全限定名而不依赖 search_path：同一份查询要能在两个 schema 里跑。
 func (p Partition) Table(name string) string {

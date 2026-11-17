@@ -1,7 +1,9 @@
 // Package user · 账号管理接口（仅超级管理员可访问，由路由分组上的中间件保证）。
-// 职责：列表 / 新建 / 编辑 / 重置密码 / 启用禁用。
+// 职责：列表 / 新建 / 编辑 / 重置密码 / 启用禁用 / 删除，以及「登录人改自己的密码」。
 // 输入：HTTP 请求；输出：统一 JSON 响应。
-// 边界：不做校验与护栏（在 service/user）、不判断超管身份（在 middleware/login）。
+// 边界：不做校验与护栏（在 service/user）、不判断超管身份（在 middleware/login）；
+//
+//	改自己密码只依赖登录态，不要求超管，因此它挂在 private 分组而不是 admin 分组。
 package user
 
 import (
@@ -96,4 +98,32 @@ func (h *Handler) SetStatus(w http.ResponseWriter, r *http.Request) error {
 	h.audit.Record(r.Context(), caller, action, "user", item.ID,
 		map[string]any{"username": item.Username, "status": item.Status}, handler.ClientIP(r))
 	return handler.OK(w, item)
+}
+
+// Delete 物理删除账号；成功返回被删的记录（前端据此提示"已删除 xxx"）。
+func (h *Handler) Delete(w http.ResponseWriter, r *http.Request) error {
+	caller := authctx.From(r.Context())
+	item, err := h.svc.Delete(r.Context(), caller, chi.URLParam(r, "id"))
+	if err != nil {
+		return err
+	}
+	h.audit.Record(r.Context(), caller, "user.deleted", "user", item.ID,
+		map[string]any{"username": item.Username, "isSuperAdmin": item.IsSuperAdmin}, handler.ClientIP(r))
+	return handler.OK(w, item)
+}
+
+// ChangePassword 修改当前登录账号自己的密码；成功后旧令牌立即失效。
+func (h *Handler) ChangePassword(w http.ResponseWriter, r *http.Request) error {
+	var in contract.PasswordChange
+	if err := handler.DecodeJSON(w, r, &in, "oldPassword/newPassword"); err != nil {
+		return err
+	}
+	caller := authctx.From(r.Context())
+	if err := h.svc.ChangeOwnPassword(r.Context(), caller, in); err != nil {
+		return err
+	}
+	// 同样只记"发生了修改"，绝不记录新旧密码本身。
+	h.audit.Record(r.Context(), caller, "user.password_changed", "user", caller.UserID,
+		map[string]any{"self": true}, handler.ClientIP(r))
+	return handler.OK(w, nil)
 }

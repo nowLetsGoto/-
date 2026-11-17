@@ -197,13 +197,43 @@ ul {
   font-weight: 600;
 }
 
-.sidebar-foot {
+/* 侧栏底部账号按钮：整块可点，点击向上弹出账号卡。
+   用 button 而不是 div，是因为它确实改变了可见区域（展开账号卡），语义上就是个开关。 */
+.sidebar-account {
   display: flex;
   align-items: center;
   gap: 8px;
+  width: 100%;
   margin-top: auto;
   padding: 10px 6px 2px;
+  border: none;
   border-top: 1px solid var(--color-border);
+  background: none;
+  color: inherit;
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color 120ms ease;
+}
+
+.sidebar-account:hover,
+.sidebar-account-open {
+  background: rgba(14, 116, 144, 0.06);
+}
+
+.sidebar-account:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+
+/* 展开后箭头掉头，暗示"再点一下会收起" */
+.sidebar-account .icon:last-child {
+  color: var(--color-faint);
+  transition: transform 160ms ease;
+}
+
+.sidebar-account-open .icon:last-child {
+  transform: rotate(180deg);
 }
 
 .avatar {
@@ -226,6 +256,112 @@ ul {
   white-space: nowrap;
   color: var(--color-muted);
   font-size: var(--font-size-sm);
+}
+
+/* ---- 账号卡（点击侧栏头像向上弹出） ---- */
+
+.account-card {
+  width: 240px;
+}
+
+.account-card-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--color-border-soft);
+}
+
+.account-card-avatar {
+  display: grid;
+  place-items: center;
+  flex: 0 0 34px;
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  background: var(--color-primary-soft);
+  color: var(--color-primary-strong);
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.account-card-id {
+  min-width: 0;
+}
+
+.account-card-name {
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13.5px;
+  font-weight: 600;
+}
+
+.account-card-username {
+  margin: 1px 0 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--color-faint);
+  font-size: 12px;
+}
+
+/* 当前模式：标签 + 一句说明，用户自己就能解释"为什么少了个菜单" */
+.account-card-mode {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 0;
+}
+
+.account-card-mode-hint {
+  color: var(--color-muted);
+  font-size: 11.5px;
+  line-height: 1.3;
+}
+
+.account-card-actions {
+  display: flex;
+  flex-direction: column;
+  padding-top: 6px;
+  border-top: 1px solid var(--color-border-soft);
+}
+
+.account-card-action {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--color-text-2);
+  font-family: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color 120ms ease;
+}
+
+.account-card-action:hover {
+  background: rgba(14, 116, 144, 0.08);
+  color: var(--color-primary-strong);
+}
+
+.account-card-action:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 1px;
+}
+
+.account-card-action-quit:hover {
+  background: #fdf2f2;
+  color: var(--color-danger);
+}
+
+/* 改密弹窗：三个字段纵向排列，弹窗内边距由库的 body 提供，这里只管字段间距 */
+.password-form .field:last-of-type {
+  margin-bottom: var(--spacing-sm);
 }
 
 /* ---- 顶栏 ---- */
@@ -264,40 +400,6 @@ ul {
 
 .crumb-last {
   color: var(--color-text);
-  font-weight: 600;
-}
-
-.env-switch {
-  display: inline-flex;
-  gap: 2px;
-  padding: 3px;
-  border-radius: 9px;
-  background: #f2f8fa;
-}
-
-.env-option {
-  padding: 4px 11px;
-  border: none;
-  border-radius: 6px;
-  background: transparent;
-  color: var(--color-muted);
-  font-family: inherit;
-  font-size: var(--font-size-sm);
-  cursor: pointer;
-  white-space: nowrap;
-  transition:
-    background-color 140ms ease,
-    color 140ms ease;
-}
-
-.env-option:hover {
-  color: var(--color-text);
-}
-
-.env-option-active {
-  background: var(--color-surface);
-  box-shadow: var(--shadow-sm);
-  color: var(--color-primary-strong);
   font-weight: 600;
 }
 
@@ -507,6 +609,13 @@ ul {
 .button-quiet:hover:not(:disabled) {
   background: rgba(14, 116, 144, 0.08);
   color: var(--color-primary);
+}
+
+/* 破坏性操作（删除）：常态保持中性，悬停才泛红，
+   避免表格里出现一片刺眼的红按钮，但点下去前能意识到风险。 */
+.button-danger:hover:not(:disabled) {
+  border-color: #e6b3ad;
+  color: var(--color-danger);
 }
 
 .button-small {
@@ -780,54 +889,43 @@ ul {
   flex-wrap: wrap;
 }
 
-.segmented {
-  display: inline-flex;
-  gap: 2px;
-  padding: 3px;
-  border-radius: var(--radius-sm);
+/* 分段控件：外形交给组件库，这里只调整与本站设计令牌一致的部分。
+   不再自绘 tab——手写的 .segment 曾用 align-items: baseline 让文字贴在基线上，
+   视觉上就是"没有垂直居中"。 */
+.app-segmented {
   background: #f2f8fa;
 }
 
-.segment {
+/* 环境 tab 里的英文标识：与主标签并排，基线对齐交给 flex 居中处理。 */
+.segment-label {
   display: inline-flex;
-  align-items: baseline;
+  align-items: center;
   gap: 6px;
-  padding: 4px 12px;
-  border: none;
-  border-radius: 6px;
-  background: transparent;
-  color: var(--color-muted);
-  font-family: inherit;
-  font-size: var(--font-size-sm);
-  cursor: pointer;
-  transition:
-    background-color 140ms ease,
-    color 140ms ease;
 }
 
-.segment small {
+.segment-label small {
   color: var(--color-faint);
   font-size: 11px;
 }
 
-.segment:hover:not(:disabled) {
-  color: var(--color-text);
+/* 审计日志的「模式」标签：单人 / 团队用不同底色，扫一眼就能区分。 */
+.mode-tag {
+  display: inline-block;
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: 12px;
+  line-height: 20px;
+  white-space: nowrap;
 }
 
-.segment-active {
-  background: var(--color-surface);
-  box-shadow: var(--shadow-sm);
-  color: var(--color-primary-strong);
-  font-weight: 600;
+.mode-solo {
+  background: #eef4ff;
+  color: #2f5bd7;
 }
 
-.segment-active small {
-  color: var(--color-primary);
-}
-
-.segment:disabled {
-  opacity: 0.55;
-  cursor: not-allowed;
+.mode-team {
+  background: #edf7f0;
+  color: #237a4a;
 }
 
 .table-scroll {
@@ -2028,10 +2126,11 @@ code {
     box-shadow: inset 0 -2px 0 var(--color-primary);
   }
 
-  .sidebar-foot {
+  .sidebar-account {
     grid-row: 1;
     grid-column: 3;
     position: static;
+    width: auto;
     margin: 0;
     padding: 0;
     border: none;

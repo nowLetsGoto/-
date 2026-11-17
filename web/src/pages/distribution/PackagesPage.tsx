@@ -11,7 +11,7 @@ import type { TableColumnsType } from '@seakoi/console-kit';
 import type { Build, ListBuildsResult, Platform } from '../../api/builds';
 import { listBuilds } from '../../api/builds';
 import { errorMessage } from '../../api/client';
-import { Button } from '../../components/Controls';
+import { Button, Segmented } from '../../components/Controls';
 import { DataTable } from '../../components/DataTable';
 import { ProjectSelect } from '../../components/ProjectSelect';
 import { Empty, ErrorState } from '../../components/States';
@@ -33,11 +33,14 @@ interface PageState {
 
 const ALL_PLATFORMS = 'all';
 
+/** 平台筛选的取值集合：全部 + 契约里的每个平台。 */
+type PlatformFilter = Platform | typeof ALL_PLATFORMS;
+
 /**
  * 平台筛选写进 URL：与旧链接一致，复制出去仍带着筛选条件。
  * 判断依据是 PLATFORMS（契约投影），新增平台时这里自动支持，不会把 harmony 之类静默降级成「全部」。
  */
-function readPlatform(value: string | null): Platform | typeof ALL_PLATFORMS {
+function readPlatform(value: string | null): PlatformFilter {
   return PLATFORMS.some((item) => item.value === value) ? (value as Platform) : ALL_PLATFORMS;
 }
 
@@ -191,25 +194,15 @@ export function PackagesPage(): JSX.Element {
       <div className="card">
         {showToolbar ? (
           <div className="toolbar">
-            <div className="segmented" role="group" aria-label="平台">
-              <Button
-                type="button"
-                className={platform === ALL_PLATFORMS ? 'segment segment-active' : 'segment'}
-                onClick={() => setPlatform(ALL_PLATFORMS)}
-              >
-                全部
-              </Button>
-              {PLATFORMS.map((item) => (
-                <Button
-                  key={item.value}
-                  type="button"
-                  className={platform === item.value ? 'segment segment-active' : 'segment'}
-                  onClick={() => setPlatform(item.value)}
-                >
-                  {item.label}
-                </Button>
-              ))}
-            </div>
+            <Segmented<PlatformFilter>
+              aria-label="平台"
+              value={platform}
+              options={[
+                { value: ALL_PLATFORMS, label: '全部' },
+                ...PLATFORMS.map((item) => ({ value: item.value, label: item.label })),
+              ]}
+              onChange={setPlatform}
+            />
           </div>
         ) : null}
 

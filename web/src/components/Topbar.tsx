@@ -6,10 +6,11 @@
  *       平台级页面（基础资料 / 设置）因此不会因为面包屑而多拉一次项目列表。
  */
 import { Link, useLocation } from 'react-router-dom';
+import type { Environment } from '../api/builds';
 import { useEnvironment } from '../hooks/useEnvironment';
 import { useCurrentProject } from '../hooks/useProjects';
 import { ENVIRONMENTS, environmentLabel } from '../utils/format';
-import { Button } from './Controls';
+import { Segmented } from './Controls';
 import { Icon } from './icons';
 import {
   boardLabel,
@@ -43,19 +44,12 @@ export function Topbar(): JSX.Element {
       </div>
 
       {envScoped ? (
-        <div className="env-switch" role="group" aria-label="环境">
-          {ENVIRONMENTS.map((item) => (
-            <Button
-              key={item.value}
-              type="button"
-              className={item.value === environment ? 'env-option env-option-active' : 'env-option'}
-              aria-pressed={item.value === environment}
-              onClick={() => setEnvironment(item.value)}
-            >
-              {item.label}
-            </Button>
-          ))}
-        </div>
+        <Segmented<Environment>
+          aria-label="环境"
+          value={environment}
+          options={ENVIRONMENTS.map((item) => ({ value: item.value, label: item.label }))}
+          onChange={setEnvironment}
+        />
       ) : null}
 
       {showUpload ? (

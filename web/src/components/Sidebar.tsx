@@ -1,23 +1,22 @@
 /**
  * 左侧板块导航。
- * 职责：渲染品牌区、按配置渲染的一级/二级菜单，以及底部账号与退出。
+ * 职责：渲染品牌区、按配置渲染的一级/二级菜单，以及底部账号区（见 AccountMenu）。
  * 输入：react-router 的当前路径；输出：导航骨架。
  * 边界：不发请求、不做权限判断（能渲染就说明已登录，未登录进不来 Layout）；
- *       项目选择放在各页面的头部筛选里，侧栏不再重复一个全局切换器。
+ *       项目选择放在各页面的头部筛选里，侧栏不再重复一个全局切换器；
+ *       账号卡、改密与退出都收在 AccountMenu 内，本组件只决定它出现的位置。
  */
-import { NavLink, useNavigate } from 'react-router-dom';
-import { clearSession, readSession } from '../api/session';
-import { clearMe, useMe } from '../hooks/useMe';
+import { NavLink } from 'react-router-dom';
+import { readSession } from '../api/session';
+import { useMe } from '../hooks/useMe';
 import { useProjectKey } from '../hooks/useProjects';
-import { Button } from './Controls';
+import { AccountMenu } from './AccountMenu';
 import { Icon } from './icons';
 import { NAV_SECTIONS, navHref } from './navigation';
 
 export function Sidebar(): JSX.Element {
-  const navigate = useNavigate();
-  const session = readSession();
   // 模式来自签名令牌签发时写入的会话，仅用于菜单投影；服务端另有强制边界。
-  const mode = session?.mode ?? 'solo';
+  const mode = readSession()?.mode ?? 'solo';
   // 只读 URL / localStorage：侧栏不为拼链接去拉项目列表（平台级页面因此零额外请求）。
   const projectKey = useProjectKey();
   // /me 有模块级缓存，整页只取一次；它的 isSuperAdmin 决定超管专属菜单是否渲染。
@@ -49,14 +48,6 @@ export function Sidebar(): JSX.Element {
         ? { ...section, title: '管理员工具' }
         : section,
     );
-
-  /** 退出即清空本地会话并回登录页；令牌是无状态的，服务端没有需要调用的登出接口。 */
-  const handleLogout = (): void => {
-    // 权限菜单随会话走：不清缓存会把上一个账号的菜单带到下一个账号
-    clearMe();
-    clearSession();
-    navigate('/login', { replace: true });
-  };
 
   return (
     <aside className="sidebar">
@@ -91,19 +82,7 @@ export function Sidebar(): JSX.Element {
         ))}
       </nav>
 
-      {session ? (
-        <div className="sidebar-foot">
-          <span className="avatar" aria-hidden="true">
-            {session.username.slice(0, 1).toUpperCase()}
-          </span>
-          <span className="account-name" title="当前登录账号">
-            {session.username}
-          </span>
-          <Button className="button button-quiet button-small" type="button" onClick={handleLogout}>
-            退出
-          </Button>
-        </div>
-      ) : null}
+      <AccountMenu />
     </aside>
   );
 }

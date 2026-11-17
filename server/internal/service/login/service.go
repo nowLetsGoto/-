@@ -182,6 +182,11 @@ func HashPassword(password string) (string, error) {
 	return hashPassword(password)
 }
 
+// VerifyPassword 供「修改自己的密码」校验旧密码：派生规则只此一处，不复制第二份。
+func VerifyPassword(stored, password string) bool {
+	return verifyPassword(stored, password)
+}
+
 // hashPassword 生成 pbkdf2-sha256$迭代次数$盐$派生值。
 // 盐随机且随密码一起存，同一密码每次的结果都不同。
 func hashPassword(password string) (string, error) {

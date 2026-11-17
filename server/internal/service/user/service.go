@@ -1,10 +1,11 @@
 // Package user · 账号管理的业务层（仅超级管理员可用）。
-// 职责：列表 / 新建 / 编辑（超管标记与绑定人员）/ 重置密码 / 启用禁用，并守住三条自锁红线。
+// 职责：列表 / 新建 / 编辑（超管标记与绑定人员）/ 重置密码 / 启用禁用 / 删除，
+// 以及「改自己的密码」，并守住四条自锁红线。
 // 输入：repository/user、登录模块的密码派生、调用者身份（由中间件保证已是超管）。
 // 输出：contract.User / UserList，失败给 ValidationError（400）或 ErrForbidden（403）。
 // 边界：不碰 HTTP、不写审计（审计在 P2.2 接）、不判断"是不是超管"——那是中间件的职责；
 //
-//	这里只做业务护栏：不能禁用自己、不能取消自己超管、不能弄丢最后一个超管。
+//	这里只做业务护栏：不能禁用自己、不能取消自己超管、不能弄丢最后一个超管、不能删除自己。
 package user
 
 import (
@@ -163,6 +164,58 @@ func (s *Service) ResetPassword(ctx context.Context, id string) (string, error) 
 		return "", err
 	}
 	return password, nil
+}
+
+// Delete 物理删除账号；返回被删的记录，供 handler 写审计时带上账号名。
+// 账号行删掉后，它在 projects / builds 里作为 owner_user_id 的字符串仍保留
+// （不是外键，只是文本标记），历史数据不会因此丢失归属。
+func (s *Service) Delete(ctx context.Context, caller contract.Identity, id string) (contract.User, error) {
+	current, err := s.repo.FindByID(ctx, id)
+	if err != nil {
+		return contract.User{}, err
+	}
+	// 红线四：不能删自己——删完当场失去登录能力，且没有撤销入口。
+	if current.User.ID == caller.UserID {
+		return contract.User{}, &contract.ValidationError{Message: "不能删除当前登录的账号"}
+	}
+	// 删超管等于"减少一个可用超管"，与降级、禁用走同一条护栏。
+	if current.User.IsSuperAdmin && current.User.Status == statusActive {
+		if err := s.ensureAnotherSuperAdmin(ctx, current.User.ID); err != nil {
+			return contract.User{}, err
+		}
+	}
+
+	if err := s.repo.Delete(ctx, id); err != nil {
+		return contract.User{}, err
+	}
+	return current.User, nil
+}
+
+// ChangeOwnPassword 修改当前登录账号自己的密码：校验旧密码 → 派生新密码 → 落库。
+// 成功后令牌版本自增，当前令牌立即失效，调用方必须回登录页重新登录——
+// 这是刻意的：改密码意味着"我认为旧凭据可能已泄漏"，此时保留任何旧会话都不合理。
+func (s *Service) ChangeOwnPassword(ctx context.Context, caller contract.Identity, in contract.PasswordChange) error {
+	if err := validatePassword(in.NewPassword); err != nil {
+		return err
+	}
+	if in.OldPassword == in.NewPassword {
+		return &contract.ValidationError{Message: "新密码不能与当前密码相同"}
+	}
+
+	current, err := s.repo.FindByID(ctx, caller.UserID)
+	if err != nil {
+		return err
+	}
+	// 旧密码不对与账号不存在返回同一个错误，避免被拿来做密码试探。
+	if !loginsvc.VerifyPassword(current.PasswordHash, in.OldPassword) {
+		return &contract.ValidationError{Message: "当前密码不正确"}
+	}
+
+	hash, err := loginsvc.HashPassword(in.NewPassword)
+	if err != nil {
+		return err
+	}
+	return s.repo.SetPassword(ctx, current.User.ID, hash)
 }
 
 // ensureAnotherSuperAdmin 在「即将减少一个超管」时确认还有别人兜底。

@@ -1,7 +1,7 @@
 /**
  * 账号管理（超级管理员 → 账号管理）。
- * 职责：服务端分页列出账号，支持新建、重置密码、启用/禁用；危险操作一律二次确认并写明影响面。
- * 输入：URL 的 page / pageSize、关键字搜索；输出：DataTable + 确认弹窗 + 临时密码提示条。
+ * 职责：服务端分页列出账号，支持新建、重置密码、启用/禁用、删除；危险操作一律二次确认并写明影响面。
+ * 输入：URL 的 page / pageSize、关键字搜索；输出：DataTable + 确认弹窗 + 临时密码 / 结果提示条。
  * 边界：不内嵌编辑表单（新建走独立路由）；不做权限判断——非超管进不来，接口也会 403。
  */
 import { useEffect, useState } from 'react';
@@ -9,7 +9,7 @@ import { Link } from 'react-router-dom';
 import type { TableColumnsType } from '@seakoi/console-kit';
 import { errorMessage } from '../../api/client';
 import type { User } from '../../api/users';
-import { listUsers, resetUserPassword, setUserStatus } from '../../api/users';
+import { deleteUser, listUsers, resetUserPassword, setUserStatus } from '../../api/users';
 import { Button, Input } from '../../components/Controls';
 import { ConfirmDialog } from '../../components/ConfirmDialog';
 import { DataTable } from '../../components/DataTable';
@@ -27,7 +27,7 @@ interface PageState {
 
 /** 待确认的危险操作；null 表示没有弹窗。 */
 interface PendingAction {
-  kind: 'disable' | 'enable' | 'reset';
+  kind: 'disable' | 'enable' | 'reset' | 'delete';
   user: User;
 }
 
@@ -35,6 +35,15 @@ const ACTION_TITLES: Record<PendingAction['kind'], string> = {
   disable: '禁用该账号？',
   enable: '启用该账号？',
   reset: '重置该账号的密码？',
+  delete: '删除该账号？',
+};
+
+/** 确认按钮文案跟着动作走，避免每个弹窗都写含糊的「确认」。 */
+const ACTION_CONFIRMS: Record<PendingAction['kind'], string> = {
+  disable: '禁用',
+  enable: '启用',
+  reset: '重置',
+  delete: '删除',
 };
 
 export function AccountsPage(): JSX.Element {
@@ -48,6 +57,8 @@ export function AccountsPage(): JSX.Element {
 
   const [pending, setPending] = useState<PendingAction | null>(null);
   const [busy, setBusy] = useState(false);
+  // 一次性成功提示（如"已删除账号 xxx"）：开新的危险操作时就清掉，避免和旧动作混淆
+  const [flash, setFlash] = useState('');
   // 临时密码只展示一次：刷新页面或点关闭就再也看不到
   const [tempPassword, setTempPassword] = useState<{ username: string; password: string } | null>(
     null,
@@ -74,6 +85,12 @@ export function AccountsPage(): JSX.Element {
 
   const reload = (): void => setVersion((value) => value + 1);
 
+  /** 打开二次确认弹窗，同时清掉上一条一次性提示。 */
+  const ask = (action: PendingAction): void => {
+    setFlash('');
+    setPending(action);
+  };
+
   const runPending = async (): Promise<void> => {
     if (!pending || busy) {
       return;
@@ -83,6 +100,14 @@ export function AccountsPage(): JSX.Element {
       if (pending.kind === 'reset') {
         const result = await resetUserPassword(pending.user.id);
         setTempPassword({ username: pending.user.username, password: result.password });
+      } else if (pending.kind === 'delete') {
+        const removed = await deleteUser(pending.user.id);
+        setTempPassword(null);
+        setFlash(`已删除账号 ${removed.username}。`);
+        // 删的是本页最后一条时回退一页，否则列表会停在一个空页上
+        if (state.items.length === 1 && page > 1) {
+          change(page - 1, pageSize);
+        }
       } else {
         await setUserStatus(pending.user.id, pending.kind === 'disable' ? 'disabled' : 'active');
       }
@@ -148,7 +173,7 @@ export function AccountsPage(): JSX.Element {
     {
       title: '',
       key: 'actions',
-      width: 190,
+      width: 270,
       render: (_, user) => {
         const isSelf = user.username === me?.username;
         return (
@@ -156,7 +181,7 @@ export function AccountsPage(): JSX.Element {
             <Button
               className="button button-ghost button-small"
               type="button"
-              onClick={() => setPending({ kind: 'reset', user })}
+              onClick={() => ask({ kind: 'reset', user })}
             >
               重置密码
             </Button>
@@ -166,11 +191,19 @@ export function AccountsPage(): JSX.Element {
               // 自己禁自己会让当前会话立即失效，服务端也会拒绝——这里先禁掉按钮
               disabled={isSelf && user.status === 'active'}
               title={isSelf && user.status === 'active' ? '不能禁用当前登录的账号' : undefined}
-              onClick={() =>
-                setPending({ kind: user.status === 'active' ? 'disable' : 'enable', user })
-              }
+              onClick={() => ask({ kind: user.status === 'active' ? 'disable' : 'enable', user })}
             >
               {user.status === 'active' ? '禁用' : '启用'}
+            </Button>
+            <Button
+              className="button button-ghost button-small button-danger"
+              type="button"
+              // 删掉自己等于当场把当前会话废掉，服务端也会拒绝——按钮同样先禁用
+              disabled={isSelf}
+              title={isSelf ? '不能删除当前登录的账号' : undefined}
+              onClick={() => ask({ kind: 'delete', user })}
+            >
+              删除
             </Button>
           </div>
         );
@@ -218,6 +251,12 @@ export function AccountsPage(): JSX.Element {
           新建账号
         </Link>
       </div>
+
+      {flash ? (
+        <p className="notice notice-ok" role="status">
+          {flash}
+        </p>
+      ) : null}
 
       {tempPassword ? (
         <div className="temp-password" role="status">
@@ -278,9 +317,7 @@ export function AccountsPage(): JSX.Element {
         open={pending !== null}
         title={pending ? ACTION_TITLES[pending.kind] : ''}
         description={describeAction(pending)}
-        confirmText={
-          pending?.kind === 'disable' ? '禁用' : pending?.kind === 'reset' ? '重置' : '启用'
-        }
+        confirmText={pending ? ACTION_CONFIRMS[pending.kind] : '确认'}
         danger={pending?.kind !== 'enable'}
         loading={busy}
         onConfirm={() => void runPending()}
@@ -312,6 +349,23 @@ function describeAction(pending: PendingAction | null): JSX.Element | null {
       <p>
         账号 <strong>{user.username}</strong> 将恢复登录能力。
       </p>
+    );
+  }
+  if (kind === 'delete') {
+    return (
+      <>
+        <p>
+          账号 <strong>{user.username}</strong> 将被<strong>永久删除</strong>
+          ，该账号立即无法登录，已登录的会话随即失效。
+        </p>
+        <p className="settings-hint">
+          删除<strong>不可撤销</strong>
+          ，也无法恢复。若只是想暂时停用，请改用「禁用」——禁用会保留账号与历史记录。
+        </p>
+        <p className="settings-hint">
+          项目、构建记录与审计日志不会随之删除，它们只保留账号 ID，不会因为这个账号消失而丢失。
+        </p>
+      </>
     );
   }
   return (

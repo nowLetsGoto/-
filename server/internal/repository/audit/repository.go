@@ -31,8 +31,9 @@ type Entry struct {
 
 // Repository 是一个分区内 audit_logs 表的唯一 SQL 出入口；分区在构造时固定。
 type Repository struct {
-	db    *sql.DB
-	table string // 全限定表名，如 team.audit_logs；只能来自 repository.Partition.Table
+	db     *sql.DB
+	schema repository.Schema // 分区即模式：读出的每条日志都用它回填 Mode
+	table  string            // 全限定表名，如 team.audit_logs；只能来自 repository.Partition.Table
 }
 
 // NewPartitioned 为 team 与 solo 各建一个访问器，交给上层按会话模式取用。
@@ -44,7 +45,7 @@ func NewPartitioned(db *sql.DB) repository.Partitioned[*Repository] {
 }
 
 func newRepository(db *sql.DB, schema repository.Schema) *Repository {
-	return &Repository{db: db, table: schema.Table("audit_logs")}
+	return &Repository{db: db, schema: schema, table: schema.Table("audit_logs")}
 }
 
 // Create 追加一条审计记录。
@@ -87,6 +88,8 @@ func (r *Repository) List(ctx context.Context, page contract.PageQuery, filters 
 	defer rows.Close()
 
 	items := make([]contract.AuditLog, 0)
+	// 模式在循环外算一次：同一分区的所有行必然同模式（分区即模式）。
+	mode := string(r.schema.Mode())
 	for rows.Next() {
 		var item contract.AuditLog
 		var createdAt time.Time
@@ -95,6 +98,7 @@ func (r *Repository) List(ctx context.Context, page contract.PageQuery, filters 
 			return nil, 0, fmt.Errorf("读取审计日志失败: %w", err)
 		}
 		item.CreatedAt = createdAt.UTC().Format(time.RFC3339)
+		item.Mode = mode
 		items = append(items, item)
 	}
 	if err := rows.Err(); err != nil {

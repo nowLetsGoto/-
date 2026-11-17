@@ -1,12 +1,13 @@
 /**
  * 展示层格式化与契约枚举的展示镜像。
- * 职责：字节 / 时间格式化，环境与平台的中文标签、文件扩展名预检。
+ * 职责：字节 / 时间格式化，环境与平台的中文标签、文件扩展名预检，登录模式的标签与说明。
  * 输入：原始数值、ISO UTC 字符串、契约枚举值、文件名。
  * 输出：可直接上屏的字符串与选项数组。
  * 边界：标签键集合由契约生成的 Environment / Platform 类型约束，改枚举时这里会编译报错；
  *       不生成任何 URL、不发请求。
  */
 import type { Environment, Platform } from '../api/builds';
+import type { SessionMode } from '../api/session';
 
 export interface Option<T extends string> {
   value: T;
@@ -33,6 +34,25 @@ export const PLATFORMS: ReadonlyArray<Option<Platform>> = [
 
 export function environmentLabel(value: string): string {
   return ENVIRONMENTS.find((item) => item.value === value)?.label ?? value;
+}
+
+/**
+ * 登录模式的中文标签。
+ * 侧栏账号卡与审计日志都要展示模式，标签只能有一处定义，否则同一模式会出现两种叫法。
+ */
+export const MODE_LABELS: Record<SessionMode, string> = {
+  solo: '单人模式',
+  team: '团队模式',
+};
+
+/** 模式各自能看到什么，用于账号卡里的一行说明——用户自己就能判断"我为什么看不到某个菜单"。 */
+export const MODE_HINTS: Record<SessionMode, string> = {
+  solo: '只看自己上传的应用包',
+  team: '查看团队全部数据与管理功能',
+};
+
+export function modeLabel(value: string): string {
+  return MODE_LABELS[value as SessionMode] ?? value;
 }
 
 export function platformLabel(value: string): string {

@@ -13,13 +13,16 @@ import { login } from '../../api/auth';
 import { errorMessage } from '../../api/client';
 import type { SessionMode } from '../../api/session';
 import { readSession, saveSession } from '../../api/session';
-import { ENVIRONMENTS } from '../../utils/format';
+import { ENVIRONMENTS, MODE_HINTS, MODE_LABELS } from '../../utils/format';
 import './login.scss';
 
 /** 路由守卫跳转过来时带上来源路径，登录成功后原路返回。 */
 interface LoginLocationState {
   from?: string;
 }
+
+/** 两个模式卡片；标签与说明都取自 utils/format，和侧栏账号卡保持同一套说法。 */
+const MODE_OPTIONS: ReadonlyArray<SessionMode> = ['solo', 'team'];
 
 export function LoginPage(): JSX.Element {
   const navigate = useNavigate();
@@ -111,30 +114,21 @@ export function LoginPage(): JSX.Element {
             <fieldset className="login-mode">
               <legend className="login-label">使用模式</legend>
               <div className="login-mode-options">
-                <Radio
-                  className={
-                    mode === 'solo' ? 'login-mode-option login-mode-active' : 'login-mode-option'
-                  }
-                  name="mode"
-                  value="solo"
-                  checked={mode === 'solo'}
-                  onChange={() => setMode('solo')}
-                >
-                  <span className="login-mode-title">单人模式</span>
-                  <span className="login-mode-desc">只看自己上传的应用包</span>
-                </Radio>
-                <Radio
-                  className={
-                    mode === 'team' ? 'login-mode-option login-mode-active' : 'login-mode-option'
-                  }
-                  name="mode"
-                  value="team"
-                  checked={mode === 'team'}
-                  onChange={() => setMode('team')}
-                >
-                  <span className="login-mode-title">团队模式</span>
-                  <span className="login-mode-desc">查看团队全部数据与管理功能</span>
-                </Radio>
+                {MODE_OPTIONS.map((value) => (
+                  <Radio
+                    key={value}
+                    className={
+                      mode === value ? 'login-mode-option login-mode-active' : 'login-mode-option'
+                    }
+                    name="mode"
+                    value={value}
+                    checked={mode === value}
+                    onChange={() => setMode(value)}
+                  >
+                    <span className="login-mode-title">{MODE_LABELS[value]}</span>
+                    <span className="login-mode-desc">{MODE_HINTS[value]}</span>
+                  </Radio>
+                ))}
               </div>
             </fieldset>
 

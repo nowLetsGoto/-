@@ -135,6 +135,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/me/password": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** 修改当前登录账号自己的密码（需校验旧密码，成功后旧令牌立即失效） */
+        put: operations["changeOwnPassword"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/admin/users": {
         parameters: {
             query?: never;
@@ -164,7 +181,8 @@ export interface paths {
         /** 改超管标记与绑定人员（登录名不可改） */
         put: operations["updateUser"];
         post?: never;
-        delete?: never;
+        /** 删除账号（不可恢复；不能删自己，也不能删掉最后一个可用超管） */
+        delete: operations["deleteUser"];
         options?: never;
         head?: never;
         patch?: never;
@@ -724,12 +742,13 @@ export interface components {
         ApiKeyResult: {
             apiKey: string;
         };
-        /** @description 一条审计记录；detail 是 JSON 文本，由写入方决定结构 */
+        /** @description 一条审计记录；detail 是 JSON 文本，由写入方决定结构。 mode 标出这条日志产生于哪个模式的分区——单人、团队各写各的表， 跨模式互不可见，因此它是记录本身的属性而非筛选条件。 */
         AuditLog: {
             /** Format: int64 */
             id: number;
             /** Format: date-time */
             createdAt: string;
+            mode: components["schemas"]["SessionMode"];
             actorId: string;
             actorName: string;
             action: string;
@@ -747,6 +766,13 @@ export interface components {
         /** @description 一次性临时密码，只在该响应里出现一次 */
         PasswordReset: {
             password: string;
+        };
+        /** @description 修改自己的密码。oldPassword 必填：持有有效令牌不等于本人操作， 校验旧密码才能挡住"手机被人拿起就改密码"的情况。 */
+        PasswordChange: {
+            /** @description 当前密码，用于确认操作者是本人 */
+            oldPassword: string;
+            /** @description 新密码，8-64 位，且不得与当前密码相同 */
+            newPassword: string;
         };
         /**
          * @description 服务端派生的元数据来源内部标注：任一字段发生空值兜底 → fallback，否则 → parsed。 不出现在 CommitBuildRequest 中，前端无法伪造、也不参与请求校验。
@@ -1362,6 +1388,30 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
         };
     };
+    changeOwnPassword: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PasswordChange"];
+            };
+        };
+        responses: {
+            /** @description 修改成功；旧令牌已失效，需重新登录 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+        };
+    };
     listUsers: {
         parameters: {
             query?: {
@@ -1463,6 +1513,38 @@ export interface operations {
                 };
                 content?: never;
             };
+        };
+    };
+    deleteUser: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 被删除的账号（前端据此提示"已删除 xxx"） */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UserResponse"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            /** @description 非超级管理员 */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            404: components["responses"]["NotFound"];
         };
     };
     resetUserPassword: {
