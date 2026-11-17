@@ -26,7 +26,7 @@ export function Sidebar(): JSX.Element {
 
   // 单人模式：只有概览 / 应用包 / 应用；管理员额外保留审计日志与平台集成。
   // 团队模式：沿用完整的角色权限投影。
-  const soloAllowed = new Set(['/overview', '/packages', '/apps']);
+  const soloAllowed = new Set(['/overview', '/packages', '/apps', '/directory/projects']);
   if (mode === 'solo' && isAdmin) {
     soloAllowed.add('/admin/accounts');
     soloAllowed.add('/admin/audit-logs');

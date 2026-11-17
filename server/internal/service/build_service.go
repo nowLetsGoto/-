@@ -24,6 +24,7 @@ import (
 	"dandelion/server/internal/contract"
 	"dandelion/server/internal/parser"
 	"dandelion/server/internal/repository"
+	projectrepo "dandelion/server/internal/repository/project"
 	"dandelion/server/internal/storage"
 )
 
@@ -49,38 +50,34 @@ type BuildNotifier interface {
 	NotifyBuild(ctx context.Context, build contract.Build)
 }
 
-// ProjectLookup 把项目 key 解析成项目实体；由 repository/project 实现。
-// 用接口而不是具体类型，发布流程就不需要认识项目仓储的全部能力。
-type ProjectLookup interface {
-	FindByKey(ctx context.Context, key string) (contract.Project, error)
-}
-
-// BuildService 持有配置、路径、仓储、项目解析与可选的通知旁路，由 main.go 装配层注入。
+// BuildService 持有配置、路径、分仓储与可选的通知旁路，由 main.go 装配层注入。
+// builds 与 projects 都是分区容器：调用方给出会话模式，服务层据此选取对应的表。
 type BuildService struct {
 	cfg      config.Config
 	paths    *storage.Paths
-	repo     *repository.BuildRepository
-	projects ProjectLookup
+	repos    repository.Partitioned[*repository.BuildRepository]
+	projects repository.Partitioned[*projectrepo.Repository]
 	notifier BuildNotifier
 }
 
 func NewBuildService(
 	cfg config.Config,
 	paths *storage.Paths,
-	repo *repository.BuildRepository,
-	projects ProjectLookup,
+	repos repository.Partitioned[*repository.BuildRepository],
+	projects repository.Partitioned[*projectrepo.Repository],
 	notifier BuildNotifier,
 ) *BuildService {
-	return &BuildService{cfg: cfg, paths: paths, repo: repo, projects: projects, notifier: notifier}
+	return &BuildService{cfg: cfg, paths: paths, repos: repos, projects: projects, notifier: notifier}
 }
 
-// resolveProject 把 key 解析成项目；key 为空或不存在都按参数错误处理（400）。
-func (s *BuildService) resolveProject(ctx context.Context, key string) (contract.Project, error) {
+// resolveProject 把 key 解析成分区内的项目；key 为空或不存在都按参数错误处理（400）。
+// 单人分区的项目按创建者隔离，因此必须带上 ownerUserID——否则会解析到别人的项目。
+func (s *BuildService) resolveProject(ctx context.Context, key, ownerUserID string, mode contract.SessionMode) (contract.Project, error) {
 	trimmed := strings.TrimSpace(key)
 	if trimmed == "" {
 		return contract.Project{}, &contract.ValidationError{Message: "请指定项目"}
 	}
-	return s.projects.FindByKey(ctx, trimmed)
+	return s.projects.For(mode).FindByKey(ctx, trimmed, ownerUserID)
 }
 
 // PurgeTmp 启动时清空 tmp：tmp 是纯临时态，进程重启后不存在「进行中的上传」。
@@ -232,9 +229,12 @@ func (s *BuildService) validateStageToken(token string) (stagedLookup, error) {
 }
 
 // Create 是提交的唯一编排：表单即最终真值，提交时不再解析、不再覆盖用户值。
-// Create 发布一个包；ownerUserID 是操作者账号 id，外部 API 传空串。
-func (s *BuildService) Create(ctx context.Context, in contract.CommitInput, ownerUserID string) (contract.Build, error) {
-	project, err := s.resolveProject(ctx, in.Project)
+// Create 发布一个包；identity 决定写入哪个分区（单人写 solo，团队与外部 API 写 team），
+// 它的 UserID 同时作为包的 owner，供单人分区按账号隔离。
+func (s *BuildService) Create(ctx context.Context, in contract.CommitInput, identity contract.Identity) (contract.Build, error) {
+	mode := identity.Mode
+	repo := s.repos.For(mode)
+	project, err := s.resolveProject(ctx, in.Project, identity.UserID, mode)
 	if err != nil {
 		return contract.Build{}, err
 	}
@@ -248,7 +248,7 @@ func (s *BuildService) Create(ctx context.Context, in contract.CommitInput, owne
 	}
 
 	// 文件落盘必须先有 id，故先向 PG 申请一个 UUID，写库时复用同一个 id。
-	id, err := s.repo.NextID(ctx)
+	id, err := repo.NextID(ctx)
 	if err != nil {
 		return contract.Build{}, err
 	}
@@ -306,10 +306,10 @@ func (s *BuildService) Create(ctx context.Context, in contract.CommitInput, owne
 		RelativePath:     s.paths.RelativePath(in.Environment, in.Platform, id, ext),
 		MetaSource:       metaSource,
 		DownloadCount:    0,
-		OwnerUserID:      ownerUserID,
+		OwnerUserID:      identity.UserID,
 	}
 
-	if err := s.repo.Insert(ctx, project.ID, &build); err != nil {
+	if err := repo.Insert(ctx, project.ID, &build); err != nil {
 		// 失败补偿：写库失败必须删除已 move 的正式文件，避免磁盘留下无记录的孤儿包。
 		if removeErr := os.Remove(finalPath); removeErr != nil && !errors.Is(removeErr, os.ErrNotExist) {
 			log.Printf("失败补偿删除正式文件失败 path=%s err=%v", finalPath, removeErr)
@@ -344,12 +344,13 @@ func (s *BuildService) fillURLs(b *contract.Build) {
 }
 
 // List 返回该项目的按时间倒序列表，空结果为空数组；统一填充三个 URL 字段。
-func (s *BuildService) List(ctx context.Context, q contract.ListQuery) (contract.ListResult, error) {
-	project, err := s.resolveProject(ctx, q.Project)
+// 分区由 identity 决定：单人只可能看到自己分区里的包，团队看到团队分区。
+func (s *BuildService) List(ctx context.Context, q contract.ListQuery, identity contract.Identity) (contract.ListResult, error) {
+	project, err := s.resolveProject(ctx, q.Project, identity.UserID, identity.Mode)
 	if err != nil {
 		return contract.ListResult{}, err
 	}
-	items, err := s.repo.List(ctx, project.ID, q)
+	items, err := s.repos.For(identity.Mode).List(ctx, project.ID, q)
 	if err != nil {
 		return contract.ListResult{}, err
 	}
@@ -370,11 +371,9 @@ func (s *BuildService) List(ctx context.Context, q contract.ListQuery) (contract
 
 // Get 返回单个包。id 不是 UUID 时直接按 404 处理：
 // 否则非法字符串会被绑定到 PG 的 uuid 列，报 invalid input syntax 而变成 500。
+// 该接口与下载页一样是公开链路，没有登录态可用，因此两个分区都要找一遍。
 func (s *BuildService) Get(ctx context.Context, id string) (contract.Build, error) {
-	if !contract.IsValidUUID(id) {
-		return contract.Build{}, contract.ErrNotFound
-	}
-	build, err := s.repo.FindByID(ctx, id)
+	build, err := s.findAnyPartition(ctx, id)
 	if err != nil {
 		return contract.Build{}, err
 	}
@@ -384,10 +383,7 @@ func (s *BuildService) Get(ctx context.Context, id string) (contract.Build, erro
 
 // ResolveFile 先校验 id 形式，再查库拿相对路径，经 safeResolve 前缀校验防路径穿越，最后确认文件存在。
 func (s *BuildService) ResolveFile(ctx context.Context, id string) (contract.FileRef, error) {
-	if !contract.IsValidUUID(id) {
-		return contract.FileRef{}, contract.ErrNotFound
-	}
-	build, err := s.repo.FindByID(ctx, id)
+	build, err := s.findAnyPartition(ctx, id)
 	if err != nil {
 		return contract.FileRef{}, err
 	}
@@ -417,12 +413,39 @@ func (s *BuildService) ResolveFile(ctx context.Context, id string) (contract.Fil
 	}, nil
 }
 
+// findAnyPartition 按 id 在两个分区里找包：包 id 全局唯一，先命中即返回。
+// 只给公开链路用——登录态下的读写都必须走 repos.For(mode)，不存在"猜分区"的余地。
+func (s *BuildService) findAnyPartition(ctx context.Context, id string) (contract.Build, error) {
+	if !contract.IsValidUUID(id) {
+		return contract.Build{}, contract.ErrNotFound
+	}
+	for _, repo := range s.repos.All() {
+		build, err := repo.FindByID(ctx, id)
+		if err == nil {
+			return build, nil
+		}
+		if !errors.Is(err, contract.ErrNotFound) {
+			return contract.Build{}, err
+		}
+	}
+	return contract.Build{}, contract.ErrNotFound
+}
+
 // IncrDownloadCount 是旁路：只在流成功完成后由 DownloadFile 调用，2 秒短超时、
 // 失败只记日志，绝不阻断已完成的下载；不做强去重，也不在下载事务内持锁。
+// 包只存在其中一个分区，所以另一个分区必然「找不到」——那不是失败，继续试下一个。
 func (s *BuildService) IncrDownloadCount(id string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	if _, err := s.repo.IncrDownloadCount(ctx, id); err != nil {
+	for _, repo := range s.repos.All() {
+		_, err := repo.IncrDownloadCount(ctx, id)
+		if err == nil {
+			return
+		}
+		// 未命中只说明包不在这张表里，与「真的更新失败」要区分开，否则日志里全是噪音。
+		if errors.Is(err, contract.ErrNotFound) {
+			continue
+		}
 		log.Printf("下载计数旁路失败（不影响本次下载）id=%s err=%v", id, err)
 	}
 }

@@ -1,7 +1,8 @@
 // Package project · 项目接口。
 // 职责：列出项目、查看详情、新建项目、编辑项目。
-// 输入：HTTP 请求（GET / POST / PUT JSON）；输出：统一 JSON 响应。
-// 边界：不做校验（在 service/project）、不做权限判断（P2 的成员体系负责）。
+// 输入：HTTP 请求（GET / POST / PUT JSON）与登录身份；输出：统一 JSON 响应。
+// 边界：不做校验（在 service/project）、不做权限判断（中间件与 service 负责）；
+// 这里只负责把「身份」翻译成「视图」，不做任何 SQL 或分区选择。
 package project
 
 import (
@@ -24,9 +25,10 @@ func NewHandler(svc *projectsvc.Service) *Handler {
 	return &Handler{svc: svc}
 }
 
-// List 返回全部项目；下拉筛选与人员/团队关联选择都用它。
+// List 返回项目：单人模式只有本人的项目，团队模式是全量。
 func (h *Handler) List(w http.ResponseWriter, r *http.Request) error {
-	data, err := h.svc.List(r.Context(), handler.ReadPage(r))
+	identity := authctx.From(r.Context())
+	data, err := h.svc.List(r.Context(), handler.ReadPage(r), projectView(identity))
 	if err != nil {
 		return err
 	}
@@ -36,24 +38,38 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) error {
 // Get 返回项目详情（含关联人员/团队），供基础资料里的项目详情页使用。
 func (h *Handler) Get(w http.ResponseWriter, r *http.Request) error {
 	key := chi.URLParam(r, "key")
-	data, err := h.svc.Detail(r.Context(), key)
+	identity := authctx.From(r.Context())
+	data, err := h.svc.Detail(r.Context(), key, projectView(identity))
 	if err != nil {
 		return err
 	}
 	return handler.OK(w, data)
 }
 
+// projectView 把会话身份翻译成项目视图。
+// 单人模式下 owner 条件恒为当前账号：solo 分区的数据按人隔离，不是可选开关。
+// 团队项目是共享资产，不做 owner 过滤。
+func projectView(identity contract.Identity) projectsvc.View {
+	return projectsvc.View{
+		Solo:        identity.Mode == contract.ModeSolo,
+		Mode:        identity.Mode,
+		OwnerUserID: identity.UserID, // 团队模式下仓储不认这个字段，填了也无影响
+	}
+}
+
 // Create 新建项目；请求体恰好 5 个字段（key / name / description / repoUrl / roleKey）。
+// 单人模式也允许自建：项目是自己上传包的前提，不需要管理员先建好。
 func (h *Handler) Create(w http.ResponseWriter, r *http.Request) error {
 	var in contract.ProjectInput
 	if err := handler.DecodeJSON(w, r, &in, "key/name/description/repoUrl/roleKey"); err != nil {
 		return err
 	}
+	identity := authctx.From(r.Context())
 	// 项目角色决定所有成员的权限；不能随普通项目创建一起授予。
-	if in.RoleKey != "" && !authctx.From(r.Context()).IsSuperAdmin {
+	if in.RoleKey != "" && !identity.IsSuperAdmin {
 		return contract.ErrForbidden
 	}
-	item, err := h.svc.Create(r.Context(), in)
+	item, err := h.svc.Create(r.Context(), in, projectView(identity))
 	if err != nil {
 		return err
 	}
@@ -66,9 +82,11 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) error {
 	if err := handler.DecodeJSON(w, r, &in, "key/name/description/repoUrl/roleKey"); err != nil {
 		return err
 	}
+	identity := authctx.From(r.Context())
 	key := chi.URLParam(r, "key")
-	if !authctx.From(r.Context()).IsSuperAdmin {
-		current, err := h.svc.Detail(r.Context(), key)
+	view := projectView(identity)
+	if !identity.IsSuperAdmin {
+		current, err := h.svc.Detail(r.Context(), key, view)
 		if err != nil {
 			return err
 		}
@@ -77,7 +95,7 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) error {
 			return contract.ErrForbidden
 		}
 	}
-	item, err := h.svc.Update(r.Context(), key, in)
+	item, err := h.svc.Update(r.Context(), key, in, view)
 	if err != nil {
 		return err
 	}

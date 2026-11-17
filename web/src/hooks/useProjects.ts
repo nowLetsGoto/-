@@ -141,12 +141,18 @@ export function useCurrentProject(): CurrentProject {
  * 项目列表（分页）：只给「项目管理」列表页用。
  * 与 useProjects（全量、带缓存）区分开——下拉选项与项目守卫需要完整列表，
  * 列表页需要的是「当前页」，两者混用会让一边拿到错的数据量。
+ * 可见范围由登录模式决定（单人只有自己的项目），前端不需要也不应该传过滤条件。
  */
 export function useProjectsPage(
   page: number,
   pageSize: number,
 ): { projects: Project[]; total: number; loading: boolean; error: string; reload: () => void } {
-  const [state, setState] = useState<{ projects: Project[]; total: number; loading: boolean; error: string }>({
+  const [state, setState] = useState<{
+    projects: Project[];
+    total: number;
+    loading: boolean;
+    error: string;
+  }>({
     projects: [],
     total: 0,
     loading: true,

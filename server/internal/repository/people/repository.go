@@ -34,13 +34,14 @@ coalesce(p.role_key, ''), coalesce(r.name, ''), p.created_at`
 const fromClause = ` FROM people p LEFT JOIN roles r ON r.key = p.role_key`
 
 // 关联查询统一从"人员侧"出发，JOIN 出名字；两张表结构对称，抽成常量避免抄错列顺序。
+// 项目关联只存在于团队分区，因此显式写 team.projects（分表后不再有 public.projects）。
 const (
 	teamLinksSQL = `SELECT tm.person_id::text, t.id::text, t.name
 FROM team_members tm
 JOIN teams t ON t.id = tm.team_id`
 	projectLinksSQL = `SELECT pm.person_id::text, p.id::text, p.name
 FROM project_members pm
-JOIN projects p ON p.id = pm.project_id`
+JOIN team.projects p ON p.id = pm.project_id`
 )
 
 // List 返回指定页的人员，并补齐该页的关联（共三查，不做 N+1）；同时返回总数供分页。
@@ -129,10 +130,11 @@ func (r *Repository) FindByUsername(ctx context.Context, username string) (contr
 }
 
 // ListProjectKeys 返回该人员关联的项目 key（按项目创建顺序），供「默认项目」使用。
+// 同样是团队分区：单人空间没有成员关系。
 func (r *Repository) ListProjectKeys(ctx context.Context, personID string) ([]string, error) {
 	const query = `SELECT p.key
 FROM project_members pm
-JOIN projects p ON p.id = pm.project_id
+JOIN team.projects p ON p.id = pm.project_id
 WHERE pm.person_id = $1
 ORDER BY p.created_at ASC`
 

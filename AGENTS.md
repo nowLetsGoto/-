@@ -94,9 +94,21 @@ main.tsx（挂载） → App
 
 ## 5. 核心领域不变量
 
+### 数据分区（单人 / 团队分表）
+
+- 单人模式与团队模式的业务数据**物理分表**：`team` 与 `solo` 两个 schema，各持一套同构的 `projects` / `builds` / `audit_logs`。分表是隔离的唯一手段——越权在表边界上就不可能发生，不依赖每条 SQL 都记得加 owner 条件。
+- `users` / `roles` / `role_permissions` / `people` / `teams` / `team_members` / `system_settings` 是跨模式的全局事实（登录发生在选模式之前），留在 `public`，不参与分区。
+- `project_members` / `team_projects` 只属于团队分区，外键显式 `REFERENCES team.projects(id) ON DELETE CASCADE`；单人空间没有「成员」与「项目角色」。
+- 唯一性按分区各表各定：`team.projects (key)` 全平台唯一；`solo.projects (owner_user_id, key)` 只在本人空间内唯一——两个人各自拥有一个 `web` 互不冲突。
+- 代码层的唯一投影是 `repository.Partitioned[T]`：装配层为两个分区各建一份同构仓储，上层用 `.For(mode)` 取用，业务代码里**不出现 `if team / else solo`**。公开链路没有登录态，用 `.All()` 跨分区查找。
+- 分区失败安全：`PartitionFor` 只有明确的 `ModeSolo` 才进 solo，其余（含零值）一律 team——宁可给团队数据，也不让人误入单人空间。
+- 单人隔离由「表边界 + `solo.projects.owner_user_id` 过滤」承担，包随项目天然隔离，`builds` 查询不再叠 owner 条件，`ListQuery` 也不带 owner 字段。
+- `schema.sql` 幂等且由 `//go:embed` 打进二进制，启动时 `EnsureSchema` 执行一次；存量 `public` 表通过 `ALTER TABLE ... SET SCHEMA team` 迁入分区（外键引用表 OID，不会被打断）。
+- **部署约束**：`schema.sql` 必须由应用自己的数据库账号执行。分区与表的属主决定访问权，用别的账号手工跑一遍会造出应用连不上的 `solo` 分区。
+
 ### 项目与包
 
-- 项目是一级归属，不是筛选装饰。项目 key 全仓唯一、创建后不可改，并作为 URL 段。
+- 项目是一级归属，不是筛选装饰。项目 key 在所属分区内唯一、创建后不可改，并作为 URL 段。
 - 项目内页面统一使用 `/p/:key/*` 前缀；环境放查询参数；切项目只换前缀、不丢板块。
 - 包列表必须先按项目收敛；`builds.project_id` 必填且有外键与复合索引。
 - 下载页 `/d/:id` 与原始文件下载是公开接口：扫码的人没有账号。
@@ -121,12 +133,14 @@ main.tsx（挂载） → App
 - 密码只存 PBKDF2-HMAC-SHA256 派生值，迭代 10 万次，盐随机；任何日志都不记录密码或临时密码。
 - 令牌载荷：`账号|版本|到期时间戳|模式.HMAC-SHA256签名`。`token_version` 自增可使已发令牌立即失效；模式参与签名，不能由客户端伪造。
 - 权限判定顺序：**超管 → 单人业务基线 → 项目角色 → 人员角色 → 团队默认读取基线**。超管始终全量；团队模式项目角色优先于人员角色。
-- **单人模式没有角色区分**：solo 会话固定拥有 `build.read` / `build.write` / `project.read`，因此普通账号也能完整使用概览、应用包、应用（含上传发布）；不查项目角色或人员角色，但平台设置、角色、账号等权限仍不授予。
-- 团队模式的默认读取基线只有 `build.read` 与 `project.read`；单人模式例外地包含 `build.write`，这是业务菜单的完整能力。
+- **单人模式没有角色区分**：solo 会话固定拥有 `build.read` / `build.write` / `project.read` / `project.write`，因此普通账号也能完整使用概览、应用包、应用（含上传发布）与项目管理（含自建项目）；不查项目角色或人员角色，但平台设置、角色、账号等权限仍不授予。
+- 单人模式可以自建项目：`solo.projects.owner_user_id` 记创建者，项目 key 只需在本人空间内唯一。界面按模式裁掉「项目角色」列与表单字段，其余与团队一致。
+- 团队模式的默认读取基线只有 `build.read` 与 `project.read`；单人模式例外地包含 `build.write` 与 `project.write`，这是业务菜单的完整能力。
 - 平台接口刻意忽略 `?project=`，只能用人员角色判定；项目内接口才按 `project` 取项目角色。提交发布时项目在请求体里，因此在 handler 内显式判定 `build.write`。
 - 登录模式：`solo`（默认）/`team`，写进签名令牌。
-  - `solo`：菜单为概览 / 应用包 / 应用；只看到自己上传的包与自己的审计记录；**上传发布不依赖角色**。
-  - `solo` + 超管：额外看到账号管理、审计日志、平台集成；账号接口完整可操作；`system` 来源（外部 API / 历史）的包也可见。
+  - `solo`：菜单为概览 / 应用包 / 应用 / 项目管理；只看到自己产生的数据；**上传发布不依赖角色**。
+  - `solo` 的项目管理：列表与详情都只涵盖本人的项目（分区 + owner 过滤天然隔离，不靠请求参数），不返回项目角色、关联人员/团队。
+  - `solo` + 超管：额外看到账号管理、审计日志、平台集成；账号接口完整可操作。
   - `team`：完整平台视图。
 - 前端菜单只是会话投影；服务端 `RequireTeamMode`、`RequireSuperAdmin`、`RequirePermission` 才是安全边界。
 - 禁用账号、重置密码、禁止自己取消超管、禁止禁用自己、禁止丢掉最后一个超管：这些护栏属于业务层，不能只靠 UI。
@@ -157,6 +171,7 @@ main.tsx（挂载） → App
 | 给 DTO 加字段 | OpenAPI → `contract` → repository 行映射 → service 赋值 → 前端页面/API → 必要时 DDL |
 | 新增环境变量 | `internal/config/config.go` → `.env.example` → `README` / `deploy` 三处 |
 | 新增数据库表/列 | `internal/repository/schema.sql`（幂等 DDL）→ repository → service；DDL 不写入 `deploy/` |
+| 新增分区业务表 | 在 `schema.sql` 的 `FOREACH s IN ARRAY ARRAY['team','solo']` 里写一次（两分区同构）；`Partitioned` 装配两份仓储；确认 `project_members` 类关联表显式指向 `team.` |
 | 新增项目内板块 | 后端按层建同名功能目录；前端 `navigation.ts` 加 `scope:'project'` 项；`App.tsx` 加到 `/p/:key/*` 下；接口带 `project` |
 | 新增一级菜单 | `navigation.ts` 加分组/项；`pages/` 新建同名目录；`App.tsx` 加路由；后端权限点同步 |
 | 改权限 | `contract.Permissions` → 内置角色默认权限 → 前端权限文案 → 接口上的 `RequirePermission` → 测试 |

@@ -11,7 +11,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** 列出全部项目（项目切换器与新建项目用） */
+        /**
+         * 项目列表
+         * @description 返回范围由登录模式决定，不由参数决定：团队模式返回全量项目（项目切换器、 项目守卫都用它）；单人模式只返回当前账号自己的项目——solo 分区的数据按人隔离， 没有「看全部」这种可能。
+         */
         get: operations["listProjects"];
         put?: never;
         /**

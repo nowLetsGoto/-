@@ -1,8 +1,9 @@
 // Package audit · 审计日志的业务层。
 // 职责：把「谁、从哪、对什么、做了什么、结果如何」组装成一条记录；提供分页查询。
-// 输入：repository/audit、调用者身份、请求来源 IP。
+// 输入：repository/audit 的分区读写能力、调用者身份、请求来源 IP。
 // 输出：写入无返回（失败只记日志，绝不影响主流程）；查询返回列表与总数。
-// 边界：不做权限判断（/admin/audit-logs 由中间件守）；不改历史记录。
+// 边界：不做权限判断（/admin/audit-logs 由中间件守）；不改历史记录；
+// 分区由调用者身份决定——单人操作只进 solo.audit_logs，不会混入团队审计。
 package audit
 
 import (
@@ -11,6 +12,7 @@ import (
 	"log"
 
 	"dandelion/server/internal/contract"
+	"dandelion/server/internal/repository"
 	auditrepo "dandelion/server/internal/repository/audit"
 )
 
@@ -22,11 +24,11 @@ const (
 
 // Service 是审计模块的唯一入口。
 type Service struct {
-	repo *auditrepo.Repository
+	repos repository.Partitioned[*auditrepo.Repository]
 }
 
-func NewService(repo *auditrepo.Repository) *Service {
-	return &Service{repo: repo}
+func NewService(repos repository.Partitioned[*auditrepo.Repository]) *Service {
+	return &Service{repos: repos}
 }
 
 // Record 写一条审计。**永远不返回错误**：审计失败不该让业务操作回滚或报错，
@@ -37,7 +39,7 @@ func (s *Service) Record(ctx context.Context, actor contract.Identity, action, o
 		log.Printf("[audit] 序列化 detail 失败 action=%s err=%v", action, err)
 		payload = []byte("{}")
 	}
-	if err := s.repo.Create(ctx, auditrepo.Entry{
+	if err := s.repos.For(actor.Mode).Create(ctx, auditrepo.Entry{
 		ActorID:    actor.UserID,
 		ActorName:  actor.Username,
 		Action:     action,
@@ -51,9 +53,9 @@ func (s *Service) Record(ctx context.Context, actor contract.Identity, action, o
 	}
 }
 
-// List 分页查询审计日志。
-func (s *Service) List(ctx context.Context, page contract.PageQuery, filters contract.AuditQuery) (contract.AuditLogList, error) {
-	items, total, err := s.repo.List(ctx, page, filters)
+// List 分页查询审计日志；mode 决定查哪个分区（单人管理员只看得到单人区的日志）。
+func (s *Service) List(ctx context.Context, page contract.PageQuery, filters contract.AuditQuery, mode contract.SessionMode) (contract.AuditLogList, error) {
+	items, total, err := s.repos.For(mode).List(ctx, page, filters)
 	if err != nil {
 		return contract.AuditLogList{}, err
 	}

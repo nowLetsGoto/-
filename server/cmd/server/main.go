@@ -20,9 +20,12 @@ import (
 	"syscall"
 	"time"
 
+	_ "github.com/jackc/pgx/v5/stdlib" // 注册 database/sql 的 "pgx" 驱动
+
 	staticfs "dandelion/server"
 	"dandelion/server/internal/app"
 	"dandelion/server/internal/config"
+	"dandelion/server/internal/contract"
 	"dandelion/server/internal/handler"
 	audithandler "dandelion/server/internal/handler/audit"
 	"dandelion/server/internal/handler/login"
@@ -77,6 +80,8 @@ func run() error {
 		}
 	}
 
+	// 数据库：pgx 的 database/sql 适配层没有默认注册，必须靠副作用导入把 "pgx" 驱动挂上去，
+	// 否则 sql.Open("pgx") 会在运行时才报 unknown driver。全仓只有这一处打开连接，放这里最省心。
 	db, err := sql.Open("pgx", cfg.DatabaseURL)
 	if err != nil {
 		return fmt.Errorf("打开数据库连接失败: %w", err)
@@ -92,16 +97,19 @@ func run() error {
 		return fmt.Errorf("PostgreSQL 不可用，请先启动数据库: %w", err)
 	}
 
-	repo := repository.NewBuildRepository(db)
-	// DDL 由 repository 包 embed 进二进制，启动时幂等执行：不依赖当前工作目录，
-	// 容器里由 initdb 先建表，应用启动再执行一次作为双保险。
-	if err := repo.EnsureSchema(startupCtx); err != nil {
+	// 建表：DDL 由 repository 包 embed 进二进制，启动时幂等执行（含公开表迁入 team 分区）。
+	// 不依赖当前工作目录；容器里由 initdb 先建表，应用启动再执行一次作为双保险。
+	if err := repository.EnsureSchema(startupCtx, db); err != nil {
 		return err
 	}
 
+	// 业务数据分两个分区：单人写 solo、团队写 team，各有一套 projects / builds / audit_logs。
+	// 装配层为每个分区各建一份同构仓储，上层只按会话模式取用，不出现 if team / else solo。
+	buildRepos := repository.NewBuildPartitioned(db)
+
 	// 项目是业务数据的一级归属：发布与查询都要先按 key 解析出项目。
-	projectRepo := projectrepo.NewRepository(db)
-	projectService := projectsvc.NewService(projectRepo)
+	projectRepos := projectrepo.NewPartitioned(db)
+	projectService := projectsvc.NewService(projectRepos)
 
 	// 基础资料：人员与团队各自持有主表，三张关联表由两侧仓储分别维护。
 	peopleRepository := peopleRepo.NewRepository(db)
@@ -115,7 +123,7 @@ func run() error {
 	settingsService := settingssvc.NewService(settingsRepo)
 	webhookService := webhooksvc.NewService(settingsRepo)
 
-	svc := service.NewBuildService(cfg, paths, repo, projectRepo, webhookService)
+	svc := service.NewBuildService(cfg, paths, buildRepos, projectRepos, webhookService)
 	if err := svc.PurgeTmp(); err != nil {
 		return err
 	}
@@ -129,14 +137,15 @@ func run() error {
 	}
 
 	// 审计：只追加不修改，写失败只记日志、绝不影响业务操作。
-	auditRepository := auditrepo.NewRepository(db)
-	auditService := auditsvc.NewService(auditRepository)
+	// 单人 / 团队各写各的分区，单人操作不会混进团队审计。
+	auditRepos := auditrepo.NewPartitioned(db)
+	auditService := auditsvc.NewService(auditRepos)
 
 	usersRepository := userRepo.NewRepository(db)
 	userService := usersvc.NewService(usersRepository)
 
-	// 权限判定：超管全量 → 项目角色 → 人员角色 → 空集
-	authzService := authzsvc.NewService(usersRepository, peopleRepository, projectRepo, roleRepository)
+	// 权限判定：超管全量 → 单人业务基线 → 项目角色 → 人员角色 → 空集
+	authzService := authzsvc.NewService(usersRepository, peopleRepository, projectRepos, roleRepository)
 	loginService := loginsvc.NewService(cfg, usersRepository)
 	if err := loginService.EnsureAdmin(context.Background()); err != nil {
 		return err
@@ -151,7 +160,7 @@ func run() error {
 	auditHandler := audithandler.NewHandler(auditService)
 	roleHandler := rolehandler.NewHandler(roleService, auditService)
 	settingsHandler := settingshandler.NewHandler(settingsService, webhookService, auditService)
-	health := handler.NewHealthHandler(repo, paths)
+	health := handler.NewHealthHandler(buildRepos.For(contract.ModeTeam), paths)
 	public, err := fs.Sub(staticfs.PublicFiles, "public")
 	if err != nil {
 		return fmt.Errorf("读取内嵌静态资源失败: %w", err)

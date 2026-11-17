@@ -29,13 +29,14 @@ func NewRepository(db *sql.DB) *Repository {
 const columns = `id::text, name, description, created_at`
 
 // 关联查询统一从"团队侧"出发，JOIN 出名字。
+// 项目关联只存在于团队分区，因此显式写 team.projects（分表后不再有 public.projects）。
 const (
 	personLinksSQL = `SELECT tm.team_id::text, p.id::text, p.name
 FROM team_members tm
 JOIN people p ON p.id = tm.person_id`
 	projectLinksSQL = `SELECT tp.team_id::text, p.id::text, p.name
 FROM team_projects tp
-JOIN projects p ON p.id = tp.project_id`
+JOIN team.projects p ON p.id = tp.project_id`
 )
 
 // List 返回指定页的团队，并补齐该页的关联（共三查，不做 N+1）；同时返回总数供分页。

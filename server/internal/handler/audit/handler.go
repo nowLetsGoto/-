@@ -24,16 +24,17 @@ func NewHandler(svc *auditsvc.Service) *Handler {
 
 // List 分页查询审计日志：action / actor / result 三个条件都可省略。
 func (h *Handler) List(w http.ResponseWriter, r *http.Request) error {
+	identity := authctx.From(r.Context())
 	query := contract.AuditQuery{
 		Action:    r.URL.Query().Get("action"),
 		ActorName: r.URL.Query().Get("actor"),
 		Result:    r.URL.Query().Get("result"),
 	}
-	// 单人管理员只能追溯自己的操作；团队模式保留跨账号审计能力。
-	if authctx.From(r.Context()).Mode == contract.ModeSolo {
-		query.ActorName = authctx.From(r.Context()).Username
+	// 单人管理员只能追溯自己的操作；他的日志本来也只在 solo 分区里，跨账号的日志看不到。
+	if identity.Mode == contract.ModeSolo {
+		query.ActorName = identity.Username
 	}
-	data, err := h.svc.List(r.Context(), handler.ReadPage(r), query)
+	data, err := h.svc.List(r.Context(), handler.ReadPage(r), query, identity.Mode)
 	if err != nil {
 		return err
 	}

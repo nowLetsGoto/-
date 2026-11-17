@@ -68,16 +68,16 @@ func (h *BuildHandler) Commit(w http.ResponseWriter, r *http.Request) error {
 	AttachLogFields(r, fmt.Sprintf("environment=%s platform=%s stageToken=%s", in.Environment, in.Platform, in.StageToken))
 
 	// 项目在请求体里，中间件判定不了；这里按「项目角色 → 人员角色」判定发布权限。
-	if err := h.authz.Check(r.Context(), authctx.From(r.Context()), in.Project, "build.write"); err != nil {
+	identity := authctx.From(r.Context())
+	if err := h.authz.Check(r.Context(), identity, in.Project, "build.write"); err != nil {
 		return err
 	}
 
-	build, err := h.svc.Create(r.Context(), in, authctx.From(r.Context()).UserID)
+	build, err := h.svc.Create(r.Context(), in, identity)
 	if err != nil {
 		return err
 	}
 	// 发布是最值得追溯的动作：谁在什么时候往哪个环境发了哪个版本。
-	identity := authctx.From(r.Context())
 	h.audit.Record(r.Context(), identity, "build.created", "build", build.ID,
 		map[string]any{
 			"project": in.Project, "environment": build.Environment, "platform": build.Platform,
@@ -105,13 +105,9 @@ func (h *BuildHandler) List(w http.ResponseWriter, r *http.Request) error {
 		Environment: environment,
 		Platform:    platform,
 	}
-	// 单人模式只返回本人上传的包；团队模式不传 owner，保持全量视图。
-	if identity.Mode == contract.ModeSolo {
-		query.OwnerUserID = identity.UserID
-		// 外部 API 没有登录人，记为 system；平台管理员单人视图需要能看到这类包。
-		query.IncludeSystem = identity.IsSuperAdmin
-	}
-	result, err := h.svc.List(r.Context(), query)
+	// 单人模式只可能看到自己分区里的包（solo.projects 按 owner 隔离，包随项目），
+	// 不需要再加 owner 条件；团队模式看团队分区的全量。
+	result, err := h.svc.List(r.Context(), query, identity)
 	if err != nil {
 		return err
 	}

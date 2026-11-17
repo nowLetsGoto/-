@@ -23,6 +23,7 @@ import (
 	"sort"
 
 	"dandelion/server/internal/contract"
+	"dandelion/server/internal/repository"
 	peoplerepo "dandelion/server/internal/repository/people"
 	projectrepo "dandelion/server/internal/repository/project"
 	rolerepo "dandelion/server/internal/repository/role"
@@ -33,14 +34,14 @@ import (
 type Service struct {
 	users    *userrepo.Repository
 	people   *peoplerepo.Repository
-	projects *projectrepo.Repository
+	projects repository.Partitioned[*projectrepo.Repository]
 	roles    *rolerepo.Repository
 }
 
 func NewService(
 	users *userrepo.Repository,
 	people *peoplerepo.Repository,
-	projects *projectrepo.Repository,
+	projects repository.Partitioned[*projectrepo.Repository],
 	roles *rolerepo.Repository,
 ) *Service {
 	return &Service{users: users, people: people, projects: projects, roles: roles}
@@ -123,10 +124,12 @@ func (s *Service) PersonID(ctx context.Context, identity contract.Identity) (str
 }
 
 // resolveRoleKey 按「项目角色 → 人员角色」的顺序找出该用的角色。
+// 只有团队模式会走到这里（单人模式在上面已提前返回），因此固定查团队分区：
+// 单人空间的项目没有角色，查它没有意义。
 func (s *Service) resolveRoleKey(ctx context.Context, identity contract.Identity, projectKey string) (string, error) {
 	// 2) 项目角色优先
 	if projectKey != "" {
-		project, err := s.projects.FindByKey(ctx, projectKey)
+		project, err := s.projects.For(contract.ModeTeam).FindByKey(ctx, projectKey, "")
 		if err != nil {
 			return "", err
 		}
@@ -163,11 +166,13 @@ func Sorted(set map[string]struct{}) []string {
 // soloPermissions 是单人模式的业务能力集合。
 // 单人模式只看自己的数据，因此不需要管理员分配角色；但只覆盖三个业务菜单，
 // 不包含 settings / role / admin 等平台能力，避免"登录即管理员"。
+// project.write 也在内：单人空间里项目由本人自建，不需要管理员先建好。
 func soloPermissions() map[string]struct{} {
 	return map[string]struct{}{
-		"build.read":   {},
-		"build.write":  {},
-		"project.read": {},
+		"build.read":    {},
+		"build.write":   {},
+		"project.read":  {},
+		"project.write": {},
 	}
 }
 

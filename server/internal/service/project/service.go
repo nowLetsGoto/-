@@ -1,8 +1,9 @@
 // Package project · 项目的业务层。
 // 职责：列出项目、查看详情（含关联人员/团队）、新建与编辑项目（含库地址）。
-// 输入：repository/project 的读写能力、contract 的字段上限与 URL 校验。
+// 输入：repository/project 的分区读写能力、contract 的字段上限与 URL 校验。
 // 输出：contract.ProjectList / Project / ProjectDetail。
-// 边界：不碰 HTTP、不做权限判断（P2 再做成员角色）、不拼 SQL。
+// 边界：不碰 HTTP、不做权限判断（P2 再做成员角色）、不拼 SQL；
+// 分表由仓储层承担，这里只负责"用哪个分区"与"单人视图该裁掉什么"。
 package project
 
 import (
@@ -15,20 +16,33 @@ import (
 	projectrepo "dandelion/server/internal/repository/project"
 )
 
-// Service 是项目模块的唯一业务入口。
-type Service struct {
-	repo *projectrepo.Repository
+// View 描述调用者的项目视图。
+// Solo 为真时隐藏角色与成员信息（单人模式没有角色区分）；
+// OwnerUserID 非空时只看该账号自己的项目，非空与 Solo 同时成立是常态。
+type View struct {
+	Solo        bool
+	OwnerUserID string
+	Mode        contract.SessionMode
 }
 
-func NewService(repo *projectrepo.Repository) *Service {
-	return &Service{repo: repo}
+// Service 是项目模块的唯一业务入口。
+type Service struct {
+	repos repository.Partitioned[*projectrepo.Repository]
+}
+
+func NewService(repos repository.Partitioned[*projectrepo.Repository]) *Service {
+	return &Service{repos: repos}
 }
 
 // List 返回指定页的项目与总数；下拉筛选传 pageSize=0 取全量。
-func (s *Service) List(ctx context.Context, page contract.PageQuery) (contract.ProjectList, error) {
-	items, total, err := s.repo.List(ctx, page)
+// 单人视图会清空角色字段；团队视图保持全量（含角色名）。
+func (s *Service) List(ctx context.Context, page contract.PageQuery, view View) (contract.ProjectList, error) {
+	items, total, err := s.repos.For(view.Mode).List(ctx, page, view.OwnerUserID)
 	if err != nil {
 		return contract.ProjectList{}, err
+	}
+	if view.Solo {
+		hideProjectMeta(items)
 	}
 	return contract.ProjectList{
 		Items: items,
@@ -36,30 +50,42 @@ func (s *Service) List(ctx context.Context, page contract.PageQuery) (contract.P
 	}, nil
 }
 
-// Detail 返回项目详情：项目本身 + 关联的人员与团队（带名字）。
-func (s *Service) Detail(ctx context.Context, key string) (contract.ProjectDetail, error) {
-	item, err := s.repo.FindByKey(ctx, key)
+// Detail 返回项目详情：团队视图带关联人员/团队；单人视图只返回项目基础信息。
+func (s *Service) Detail(ctx context.Context, key string, view View) (contract.ProjectDetail, error) {
+	repo := s.repos.For(view.Mode)
+	// 单人分区的 owner 过滤由仓储层强制执行：查不到别人的项目，天然就是 404。
+	item, err := repo.FindByKey(ctx, key, view.OwnerUserID)
 	if err != nil {
 		return contract.ProjectDetail{}, err
 	}
-	persons, err := s.repo.ListPersons(ctx, item.ID)
+	if view.Solo {
+		item.RoleKey = ""
+		item.RoleName = ""
+		return contract.ProjectDetail{Project: item, Persons: []contract.RelationRef{}, Teams: []contract.RelationRef{}}, nil
+	}
+	persons, err := repo.ListPersons(ctx, item.ID)
 	if err != nil {
 		return contract.ProjectDetail{}, err
 	}
-	teams, err := s.repo.ListTeams(ctx, item.ID)
+	teams, err := repo.ListTeams(ctx, item.ID)
 	if err != nil {
 		return contract.ProjectDetail{}, err
 	}
 	return contract.ProjectDetail{Project: item, Persons: persons, Teams: teams}, nil
 }
 
-// Create 新建项目：key 全仓唯一且创建后不可改（它是 URL 段）。
-func (s *Service) Create(ctx context.Context, in contract.ProjectInput) (contract.Project, error) {
+// Create 新建项目：key 在所属分区内唯一且创建后不可改（它是 URL 段）。
+// 单人模式允许自建：owner 记为自己，key 只需在本人空间内唯一。
+func (s *Service) Create(ctx context.Context, in contract.ProjectInput, view View) (contract.Project, error) {
 	normalized, err := normalize(in, true)
 	if err != nil {
 		return contract.Project{}, err
 	}
-	item, err := s.repo.Create(ctx, normalized)
+	// 单人模式没有项目角色，强制清空：避免表单残留值触发角色外键或越权。
+	if view.Solo {
+		normalized.RoleKey = ""
+	}
+	item, err := s.repos.For(view.Mode).Create(ctx, normalized, view.OwnerUserID)
 	if err != nil {
 		if repository.IsUniqueViolation(err) {
 			return contract.Project{}, &contract.ValidationError{Message: "项目标识已被占用，换一个试试"}
@@ -73,12 +99,15 @@ func (s *Service) Create(ctx context.Context, in contract.ProjectInput) (contrac
 }
 
 // Update 按 key 编辑名称 / 描述 / 库地址；key 不在可编辑范围内。
-func (s *Service) Update(ctx context.Context, key string, in contract.ProjectInput) (contract.Project, error) {
+func (s *Service) Update(ctx context.Context, key string, in contract.ProjectInput, view View) (contract.Project, error) {
 	normalized, err := normalize(in, false)
 	if err != nil {
 		return contract.Project{}, err
 	}
-	item, updateErr := s.repo.Update(ctx, key, normalized)
+	if view.Solo {
+		normalized.RoleKey = ""
+	}
+	item, updateErr := s.repos.For(view.Mode).Update(ctx, key, view.OwnerUserID, normalized)
 	if updateErr != nil {
 		if repository.IsForeignKeyViolation(updateErr) {
 			return contract.Project{}, &contract.ValidationError{Message: "项目角色不存在，请刷新后重试"}
@@ -86,6 +115,14 @@ func (s *Service) Update(ctx context.Context, key string, in contract.ProjectInp
 		return contract.Project{}, updateErr
 	}
 	return item, nil
+}
+
+// hideProjectMeta 清空单人视图不应展示的角色字段，避免列表响应里仍带着敏感配置。
+func hideProjectMeta(items []contract.Project) {
+	for i := range items {
+		items[i].RoleKey = ""
+		items[i].RoleName = ""
+	}
 }
 
 // normalize 收敛字段并校验；withKey 为 false 时忽略 key（编辑场景）。

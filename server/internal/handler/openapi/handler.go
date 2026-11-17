@@ -55,7 +55,9 @@ func (h *Handler) Upload(w http.ResponseWriter, r *http.Request) error {
 	}
 	handler.AttachLogFields(r, "source=openapi project="+in.Project+" environment="+in.Environment+" platform="+in.Platform)
 
-	build, err := h.svc.Create(r.Context(), in, "")
+	// 外部系统没有登录态：按团队模式的匿名身份处理（UserID 为空 → 包记为 system），
+	// 因此只写 team 分区，永远进不了任何人的单人空间。
+	build, err := h.svc.Create(r.Context(), in, contract.Identity{Mode: contract.ModeTeam})
 	if err != nil {
 		return err
 	}

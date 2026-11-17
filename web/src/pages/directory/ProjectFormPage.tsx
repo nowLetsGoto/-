@@ -2,7 +2,7 @@
  * 项目新增 / 编辑页（/directory/projects/new 与 /directory/projects/:key/edit）。
  * 职责：无 key 走新增；有 key 先取详情回填再走编辑；提交成功后回列表。
  * 输入：URL 参数 key、useProjects。
- * 输出：FormPage 包裹的四个字段。
+ * 输出：FormPage 包裹的字段集合——团队模式有「项目角色」，单人模式没有。
  * 边界：项目标识是 URL 段，创建后只读；列表与表单是两个独立路由。
  */
 import { useEffect, useState } from 'react';
@@ -12,6 +12,7 @@ import { createProject, getProject, updateProject } from '../../api/projects';
 import type { Role } from '../../api/roles';
 import { listRoles } from '../../api/roles';
 import { errorMessage } from '../../api/client';
+import { readSession } from '../../api/session';
 import { Input } from '../../components/Controls';
 import { FormPage } from '../../components/FormPage';
 import { Select } from '../../components/Select';
@@ -26,6 +27,8 @@ export function ProjectFormPage(): JSX.Element {
   const { key } = useParams<{ key: string }>();
   const editing = Boolean(key);
   const navigate = useNavigate();
+  // 单人模式没有角色区分：不展示角色字段，也不请求角色列表（单人无 role.read 权限）。
+  const solo = (readSession()?.mode ?? 'solo') === 'solo';
 
   const [form, setForm] = useState<ProjectInput>(EMPTY_FORM);
   const [roles, setRoles] = useState<Role[]>([]);
@@ -35,6 +38,9 @@ export function ProjectFormPage(): JSX.Element {
   const [notice, setNotice] = useState('');
 
   useEffect(() => {
+    if (solo) {
+      return;
+    }
     let cancelled = false;
     listRoles()
       .then((result) => {
@@ -51,7 +57,7 @@ export function ProjectFormPage(): JSX.Element {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [solo]);
 
   useEffect(() => {
     if (!key) {
@@ -165,17 +171,19 @@ export function ProjectFormPage(): JSX.Element {
             onChange={(event) => setForm({ ...form, repoUrl: event.target.value })}
           />
         </label>
-        <label className="field">
-          <span>项目角色</span>
-          <Select
-            value={form.roleKey}
-            options={[
-              { value: '', label: '沿用人员角色' },
-              ...roles.map((role) => ({ value: role.key, label: role.name })),
-            ]}
-            onChange={(roleKey) => setForm({ ...form, roleKey })}
-          />
-        </label>
+        {solo ? null : (
+          <label className="field">
+            <span>项目角色</span>
+            <Select
+              value={form.roleKey}
+              options={[
+                { value: '', label: '沿用人员角色' },
+                ...roles.map((role) => ({ value: role.key, label: role.name })),
+              ]}
+              onChange={(roleKey) => setForm({ ...form, roleKey })}
+            />
+          </label>
+        )}
         <label className="field">
           <span>描述</span>
           <Input
@@ -187,9 +195,15 @@ export function ProjectFormPage(): JSX.Element {
         </label>
       </div>
 
-      <p className="settings-hint">
-        项目角色优先级高于人员角色：设置后，所有人访问本项目都按此角色的权限判定（超级管理员除外）。
-      </p>
+      {solo ? (
+        <p className="settings-hint">
+          项目创建后即可上传包；单人模式不区分角色，所有项目都由你自己管理。
+        </p>
+      ) : (
+        <p className="settings-hint">
+          项目角色优先级高于人员角色：设置后，所有人访问本项目都按此角色的权限判定（超级管理员除外）。
+        </p>
+      )}
     </FormPage>
   );
 }

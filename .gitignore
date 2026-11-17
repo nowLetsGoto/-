@@ -10,3 +10,6 @@ server/public/*
 
 # 运行时数据目录（含 tmp 暂存与 uploads 正式包），不入库。
 storage/
+
+# 迁移前的数据库快照：含真实用户数据，只留本地，绝不入库。
+.backup/

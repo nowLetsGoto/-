@@ -644,13 +644,12 @@ type CommitInput struct {
 }
 
 // ListQuery 是列表查询条件；Platform 为空表示不筛，Project 是项目 key。
+// 不带 owner 条件：单人隔离由「项目属于谁」在分区与项目表边界上完成，
+// 列表只需按项目 + 环境（+平台）查，不必再叠一层 owner 过滤。
 type ListQuery struct {
 	Project     string
 	Environment string
 	Platform    string
-	// OwnerUserID 非空时按单人模式过滤；IncludeSystem 允许超管同时看到外部 API 的 system 包。
-	OwnerUserID   string
-	IncludeSystem bool
 }
 
 // ListResult 是列表响应体；空结果 Items 为空数组而不是 nil，避免前端拿到 null。

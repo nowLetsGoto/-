@@ -21,8 +21,10 @@ const PROJECTS_PATH = '/api/v1/projects';
 
 export type ProjectPage = PagedList<Project>;
 
-/** 传 { pageSize: 0 } 取全量（下拉与守卫用）；不传则按服务端默认 10 条分页。 */
-export function listProjects(query: PageQuery = {}): Promise<ProjectPage> {
+/** 项目列表只需分页：可见范围由登录模式决定，前端不传任何过滤条件。 */
+export type ProjectListQuery = PageQuery;
+
+export function listProjects(query: ProjectListQuery = {}): Promise<ProjectPage> {
   return get<ProjectPage>(`${PROJECTS_PATH}${pageQuery(query)}`);
 }
 

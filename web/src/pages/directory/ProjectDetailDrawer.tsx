@@ -15,6 +15,8 @@ import { formatDate } from '../../utils/format';
 interface ProjectDetailDrawerProps {
   /** null 表示抽屉关闭 */
   projectKey: string | null;
+  /** 单人视图只展示项目基础信息，不展示角色、关联人员与团队 */
+  solo?: boolean;
   onClose: () => void;
 }
 
@@ -26,7 +28,11 @@ interface DrawerState {
 
 const EMPTY: DrawerState = { loading: false, data: null, error: '' };
 
-export function ProjectDetailDrawer({ projectKey, onClose }: ProjectDetailDrawerProps): JSX.Element {
+export function ProjectDetailDrawer({
+  projectKey,
+  solo = false,
+  onClose,
+}: ProjectDetailDrawerProps): JSX.Element {
   const [state, setState] = useState<DrawerState>(EMPTY);
 
   useEffect(() => {
@@ -94,36 +100,43 @@ export function ProjectDetailDrawer({ projectKey, onClose }: ProjectDetailDrawer
             </div>
           </dl>
 
-          <section className="drawer-section">
-            <h3>关联人员（{project.persons.length}）</h3>
-            {project.persons.length === 0 ? (
-              <p className="settings-hint">还没有关联人员，可在「人员管理」里给成员勾选本项目。</p>
-            ) : (
-              <div className="chip-row">
-                {project.persons.map((person) => (
-                  <span className="chip" key={person.id}>
-                    {person.name}
-                  </span>
-                ))}
-              </div>
-            )}
-          </section>
+          {solo ? null : (
+            <>
+              <section className="drawer-section">
+                <h3>关联人员（{project.persons.length}）</h3>
+                {project.persons.length === 0 ? (
+                  <p className="settings-hint">
+                    还没有关联人员，可在「人员管理」里给成员勾选本项目。
+                  </p>
+                ) : (
+                  <div className="chip-row">
+                    {project.persons.map((person) => (
+                      <span className="chip" key={person.id}>
+                        {person.name}
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </section>
 
-          <section className="drawer-section">
-            <h3>关联团队（{project.teams.length}）</h3>
-            {project.teams.length === 0 ? (
-              <p className="settings-hint">还没有关联团队，可在「团队管理」里给团队勾选本项目。</p>
-            ) : (
-              <div className="chip-row">
-                {project.teams.map((team) => (
-                  <span className="chip" key={team.id}>
-                    {team.name}
-                  </span>
-                ))}
-              </div>
-            )}
-          </section>
-
+              <section className="drawer-section">
+                <h3>关联团队（{project.teams.length}）</h3>
+                {project.teams.length === 0 ? (
+                  <p className="settings-hint">
+                    还没有关联团队，可在「团队管理」里给团队勾选本项目。
+                  </p>
+                ) : (
+                  <div className="chip-row">
+                    {project.teams.map((team) => (
+                      <span className="chip" key={team.id}>
+                        {team.name}
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </section>
+            </>
+          )}
         </div>
       ) : null}
     </DetailDrawer>
