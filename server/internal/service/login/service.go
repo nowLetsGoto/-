@@ -72,6 +72,14 @@ func (s *Service) EnsureAdmin(ctx context.Context) error {
 	if _, err := s.users.AlignSuperAdminLevel(ctx); err != nil {
 		return err
 	}
+	// 顺手禁用历史遗留的「无公司平台管理员」：曾经的账号接口漏洞产物，
+	// 能登录但读不到任何数据（scope 落到 1 = 0），留着只会在账号列表里制造困惑。
+	// 只禁用不删除，理由见仓储里该方法上的说明。
+	if count, err := s.users.DisableOrphanPlatformAdmins(ctx); err != nil {
+		return err
+	} else if count > 0 {
+		log.Printf("已禁用 %d 个无公司归属的平台管理员账号（历史遗留，无可用数据范围）", count)
+	}
 
 	total, err := s.users.Count(ctx)
 	if err != nil {

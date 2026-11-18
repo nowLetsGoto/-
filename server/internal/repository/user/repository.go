@@ -289,6 +289,30 @@ func (r *Repository) CountSuperAdmins(ctx context.Context) (int, error) {
 	return count, nil
 }
 
+// DisableOrphanPlatformAdmins 禁用「platform_admin 但没有公司归属」的账号，返回处理行数。
+//
+// 这类账号是一个曾经的漏洞产物：账号接口允许超管建 platform_admin，而归属取 caller.TenantID
+// （超管恒为空），于是建出能登录、带管理权限点、却因 scope 落到「无公司 → 1 = 0」
+// 而任何数据都读不到的账号。写入路径已封（见 service/user 的 resolveCreateLevel）。
+//
+// 这里只**禁用**不删除：删除账号不可逆，且这类账号可能承载过真实操作历史；
+// 禁用让它无法登录，同时保留记录可追溯。幂等，启动时执行一次。
+//
+// 不禁用超管：超管本来就没有公司，tenant_id 为空是正常的。
+func (r *Repository) DisableOrphanPlatformAdmins(ctx context.Context) (int, error) {
+	result, err := r.db.ExecContext(ctx,
+		`UPDATE users SET status = 'disabled'
+		 WHERE account_level = 'platform_admin' AND tenant_id IS NULL AND status = 'active'`)
+	if err != nil {
+		return 0, fmt.Errorf("禁用孤儿平台管理员失败: %w", err)
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("读取处理行数失败: %w", err)
+	}
+	return int(affected), nil
+}
+
 // AlignSuperAdminLevel 把「is_super_admin 为真但 account_level 不是 super_admin」的存量账号
 // 的层级对齐，返回修正行数。
 //

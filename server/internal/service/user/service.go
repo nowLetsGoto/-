@@ -85,9 +85,17 @@ func resolveCreateLevel(caller contract.Identity, requested string, teamIDs []st
 	if level == contract.AccountLevelSuperAdmin {
 		return "", nil, contract.ErrForbidden
 	}
-	// 平台管理员随公司创建，不能单独建——否则会出现没有公司的平台管理员。
-	if level == contract.AccountLevelPlatformAdmin && callerLevel != contract.AccountLevelSuperAdmin {
-		return "", nil, contract.ErrForbidden
+	// 平台管理员**只能随公司创建**（POST /platform/tenants，见 repository/tenant.CreateWithAdmin），
+	// 任何路径都不许经账号接口单独建——包括超管。
+	//
+	// 为什么超管也要拦：本函数下面给账号定归属用的是 caller.TenantID，而超管的 TenantID 恒为空。
+	// 放行超管会建出「platform_admin 但 tenant_id 为空」的孤儿账号：它能登录、带 9 项权限点，
+	// 但 scope 推导落到「无公司 → 1 = 0」，任何数据都读不到，且没有公司归属、除了超管谁都管不了它。
+	// 这种账号没有任何合法用途，只会在账号列表里留下无法解释的一行。
+	if level == contract.AccountLevelPlatformAdmin {
+		return "", nil, &contract.ValidationError{
+			Message: "平台管理员需随公司一起创建（公司管理 → 新建公司）",
+		}
 	}
 
 	switch callerLevel {
