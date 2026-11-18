@@ -409,7 +409,7 @@ export interface paths {
         put?: never;
         /**
          * 管理员登录，换取访问令牌
-         * @description 单管理员账号模型：凭据由部署配置（ADMIN_USERNAME / ADMIN_PASSWORD）提供，不落库。 成功返回无状态 HMAC 令牌（到期时间戳 + 签名），服务端不存会话； 前端以 Authorization: Bearer <token> 访问受保护接口。 凭据错误返回 400（与全站错误码口径一致）；401 专用于「未携带令牌或令牌失效」。
+         * @description 单管理员账号模型：凭据由部署配置（ADMIN_USERNAME / ADMIN_PASSWORD）提供，不落库。 成功返回无状态 HMAC 令牌（到期时间戳 + 签名），服务端不存会话； 前端以 Authorization: Bearer <token> 访问受保护接口。 凭据错误返回 400（与全站错误码口径一致）；401 专用于「未携带令牌或令牌失效」。 同一「账号 + 来源 IP」连续失败 5 次后锁定 15 分钟，期间一律返回 429。 不存在的账号同样计数，因此 429 不构成「账号是否存在」的信息泄露。
          */
         post: operations["login"];
         delete?: never;
@@ -539,8 +539,8 @@ export interface components {
         };
         Settings: {
             webhook: components["schemas"]["WebhookConfig"];
-            /** @description 外部上传接口的 Key，只在此接口返回，仅管理员可见 */
-            apiKey: string;
+            /** @description 是否已生成过外部上传接口的 Key。Key 本身只存 SHA-256 摘要， 本接口不返回明文；要拿明文请调用轮换接口（一次性返回）。 */
+            apiKeyConfigured: boolean;
             availableFields: components["schemas"]["WebhookFieldOption"][];
         };
         /** @description 测试投递结果；目标不可达也是 200，用 delivered=false 表达 */
@@ -2192,6 +2192,15 @@ export interface operations {
             };
             400: components["responses"]["BadRequest"];
             405: components["responses"]["MethodNotAllowed"];
+            /** @description 登录失败次数超限，临时锁定（同一账号 + IP 连续失败 5 次后锁定 15 分钟） */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
             500: components["responses"]["InternalError"];
         };
     };

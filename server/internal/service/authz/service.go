@@ -24,6 +24,7 @@ import (
 	"context"
 	"errors"
 	"sort"
+	"strings"
 
 	"dandelion/server/internal/contract"
 	"dandelion/server/internal/repository"
@@ -247,8 +248,14 @@ func (s *Service) PersonID(ctx context.Context, identity contract.Identity) (str
 		return record.User.PersonID, nil
 	}
 	// 兼容存量：账号尚未绑定人员时，按登录名找一个同名档案。
-	// 用 All：这是身份解析（账号 → 档案），发生在 scope 推导之前，不能反过来依赖 scope。
-	person, err := s.people.FindByUsername(ctx, identity.Username, contract.Scope{All: true})
+	//
+	// 这里**必须**按账号所属公司限定，不能用 All：
+	// people.username 现在是「公司内唯一」，两家公司可以各有一个 zhangsan。
+	// 用 All 会随机命中其中一条——如果命中的是别家公司的人，后续 scope 推导就会
+	// 按那个人所属的团队算，等于让一个公司的成员看到另一家公司/团队的数据。
+	// 账号本身有 TenantID（超管为空），照它取即可；超管没有业务人员档案，找不到也无所谓。
+	person, err := s.people.FindByUsername(ctx, identity.Username,
+		contract.Scope{TenantID: identity.TenantID})
 	if err != nil {
 		if errors.Is(err, contract.ErrNotFound) {
 			return "", nil
@@ -346,4 +353,59 @@ func allPermissions() map[string]struct{} {
 		permissions[key] = struct{}{}
 	}
 	return permissions
+}
+
+// ValidateRoleAssignable 校验「调用者能否把某个角色分配给人员」。
+//
+// 这是一条**防提权**边界，不只是可见性检查。要求同时满足：
+//
+//  1. 角色对调用者可见：平台内置（tenant_id 为空）或调用者所属公司的自定义角色。
+//     否则团队管理员能给别人挂一个猜到的、别家公司的角色键。
+//  2. 角色的权限不超出调用者自身的权限：否则可以把一个权限更宽的角色挂到别人身上，
+//     再借那个人的账号拿到自己本来没有的能力——典型的纵向提权。
+//     超管天然满足第 2 条（它是全量），所以只需检查可见性。
+//
+// 空 roleKey 表示「不分配角色」，直接放行（清空角色是降权，不是提权）。
+//
+// 返回 contract.ErrForbidden 而不是 ValidationError：调用者本来就不该做这件事，
+// 不是请求格式有问题。
+func (s *Service) ValidateRoleAssignable(ctx context.Context, identity contract.Identity, roleKey string) error {
+	roleKey = strings.TrimSpace(roleKey)
+	if roleKey == "" {
+		return nil
+	}
+
+	// 用 FindByKeyAny 而不是带 scope 的 FindByKey：这里要区分「不存在」与「越权」，
+	// 两者都拒绝，但只有存在时才需要做权限比较；且判定本身不应依赖业务 scope
+	// （团队管理员的 scope 是团队边界，与「这个角色属于哪家公司」是两个维度）。
+	role, err := s.roles.FindByKeyAny(ctx, roleKey)
+	if err != nil {
+		if errors.Is(err, contract.ErrNotFound) {
+			return &contract.ValidationError{Message: "角色不存在：" + roleKey}
+		}
+		return err
+	}
+
+	// 1) 可见性：内置角色所有公司可用；自定义角色只能在本公司内部分配。
+	if role.TenantID != "" && role.TenantID != identity.TenantID {
+		return contract.ErrForbidden
+	}
+
+	// 2) 防提权：超管全量，无需比较；其余身份逐点比较。
+	if identity.IsSuperAdmin {
+		return nil
+	}
+	mine, err := s.Permissions(ctx, identity, "")
+	if err != nil {
+		return err
+	}
+	for _, permission := range role.Permissions {
+		if _, ok := mine[permission]; !ok {
+			// 不透露角色具体有哪些权限，只说明"超出你的权限范围"。
+			return &contract.ValidationError{
+				Message: "不能分配权限超出自己范围的角色：" + role.Name,
+			}
+		}
+	}
+	return nil
 }

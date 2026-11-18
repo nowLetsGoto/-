@@ -959,6 +959,8 @@ paths:
         成功返回无状态 HMAC 令牌（到期时间戳 + 签名），服务端不存会话；
         前端以 Authorization: Bearer <token> 访问受保护接口。
         凭据错误返回 400（与全站错误码口径一致）；401 专用于「未携带令牌或令牌失效」。
+        同一「账号 + 来源 IP」连续失败 5 次后锁定 15 分钟，期间一律返回 429。
+        不存在的账号同样计数，因此 429 不构成「账号是否存在」的信息泄露。
       requestBody:
         required: true
         content:
@@ -974,6 +976,12 @@ paths:
                 $ref: '#/components/schemas/LoginResponse'
         '400':
           $ref: '#/components/responses/BadRequest'
+        '429':
+          description: 登录失败次数超限，临时锁定（同一账号 + IP 连续失败 5 次后锁定 15 分钟）
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         '405':
           $ref: '#/components/responses/MethodNotAllowed'
         '500':
@@ -1280,13 +1288,15 @@ components:
 
     Settings:
       type: object
-      required: [webhook, apiKey, availableFields]
+      required: [webhook, apiKeyConfigured, availableFields]
       properties:
         webhook:
           $ref: '#/components/schemas/WebhookConfig'
-        apiKey:
-          type: string
-          description: 外部上传接口的 Key，只在此接口返回，仅管理员可见
+        apiKeyConfigured:
+          type: boolean
+          description: >-
+            是否已生成过外部上传接口的 Key。Key 本身只存 SHA-256 摘要，
+            本接口不返回明文；要拿明文请调用轮换接口（一次性返回）。
         availableFields:
           type: array
           items:

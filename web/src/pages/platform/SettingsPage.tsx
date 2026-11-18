@@ -187,10 +187,9 @@ export function SettingsPage(): JSX.Element {
         />
       ) : (
         <ApiPanel
-          apiKey={data.apiKey}
+          configured={data.apiKeyConfigured}
           projectKey={project?.key ?? 'default'}
           onCopy={(text, message) => void copy(text, message)}
-          onRotated={(nextKey) => setData((prev) => (prev ? { ...prev, apiKey: nextKey } : prev))}
         />
       )}
     </section>
@@ -310,27 +309,27 @@ function WebhookPanel(props: WebhookPanelProps): JSX.Element {
 
 /** 外部 API 面板：把接口、Key 与可复制的 curl 放在一页，免去翻文档。 */
 function ApiPanel({
-  apiKey,
+  configured,
   projectKey,
   onCopy,
-  onRotated,
 }: {
-  apiKey: string;
+  configured: boolean;
   projectKey: string;
   onCopy: (text: string, message: string) => void;
-  /** 轮换成功后把新 Key 回传给页面，保证输入框与 curl 示例立刻同步 */
-  onRotated: (apiKey: string) => void;
 }): JSX.Element {
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [rotating, setRotating] = useState(false);
   const [rotateError, setRotateError] = useState('');
+  // 明文只存在于「刚轮换完」这一份组件状态里：库中只有摘要，刷新页面就再也看不到。
+  // 这跟一次性密码是同一套产品约定。
+  const [plainKey, setPlainKey] = useState('');
 
   const handleRotate = async (): Promise<void> => {
     setRotating(true);
     setRotateError('');
     try {
       const result = await rotateApiKey();
-      onRotated(result.apiKey);
+      setPlainKey(result.apiKey);
       setConfirmOpen(false);
     } catch (err) {
       setRotateError(errorMessage(err));
@@ -343,7 +342,7 @@ function ApiPanel({
   const origin = window.location.origin;
   const curl = [
     `curl -X POST ${origin}/api/v1/open/builds \\`,
-    `  -H "X-API-Key: ${apiKey}" \\`,
+    `  -H "X-API-Key: ${plainKey || '<你的 API Key>'}" \\`,
     `  -F "project=${projectKey}" \\`,
     '  -F "file=@./app-release.apk" \\',
     '  -F "environment=test" \\',
@@ -383,11 +382,17 @@ function ApiPanel({
       <div className="settings-block">
         <h2>API Key</h2>
         <div className="copy-row">
-          <Input className="text-input mono" readOnly value={apiKey} aria-label="API Key" />
+          <Input
+            className="text-input mono"
+            readOnly
+            value={plainKey || (configured ? '（已配置 · 明文不再展示）' : '（尚未生成）')}
+            aria-label="API Key"
+          />
           <Button
             className="button button-ghost"
             type="button"
-            onClick={() => onCopy(apiKey, 'API Key 已复制')}
+            disabled={!plainKey}
+            onClick={() => onCopy(plainKey, 'API Key 已复制')}
           >
             复制
           </Button>
@@ -400,8 +405,17 @@ function ApiPanel({
           </Button>
         </div>
         <p className="settings-hint">
-          仅超级管理员可见与轮换。轮换后旧 Key <strong>立即失效</strong>，请同步更新所有外部系统。
+          服务端只保存 Key 的 SHA-256 摘要，明文仅在轮换成功时显示这一次，之后无法再取回。
+          确认没有保存的话，重新轮换一把即可。
         </p>
+        <p className="settings-hint">
+          轮换后旧 Key <strong>立即失效</strong>，请同步更新所有外部系统。
+        </p>
+        {plainKey ? (
+          <p className="temp-password-hint">
+            新 Key 已生成：请立即复制并写入外部系统，离开本页后无法再次查看。
+          </p>
+        ) : null}
         {rotateError ? <p className="field-error">{rotateError}</p> : null}
 
         <ConfirmDialog

@@ -11,7 +11,9 @@ package settings
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -119,12 +121,15 @@ func (r *Repository) EnsureRow(ctx context.Context, tenantID string) (Config, er
 	// 用 INSERT ... SELECT WHERE NOT EXISTS 而不是 ON CONFLICT：
 	// 冲突目标是部分唯一索引，ON CONFLICT 需要写索引谓词，可读性差且易写错。
 	//
+	// 初始 api_key 留空串 = 「尚未生成」：库里只存摘要，自动生成一把却没有明文交付路径，
+	// 那把它填给用户必然 401。让管理员主动点「轮换」拿一次性明文，是唯一自洽的做法。
+	// 空 Key 在反查时会被 TenantByAPIKey 直接判为无效（见那里的空串判断）。
+	//
 	// 并发下仍可能有两个请求同时通过 NOT EXISTS 判断，只有一个能插成功；
 	// 后到的会撞唯一索引。这不是错误——对方刚替我们建好了行，重读即可。
-	// （不重读的话，设置页第一次打开会偶发 500。）
 	_, insertErr := r.db.ExecContext(ctx,
 		`INSERT INTO system_settings (tenant_id, api_key)
-		 SELECT NULLIF($1, '')::uuid, replace(gen_random_uuid()::text, '-', '')
+		 SELECT NULLIF($1, '')::uuid, ''
 		 WHERE NOT EXISTS (SELECT 1 FROM system_settings WHERE `+where+`)`, args...)
 	if insertErr != nil {
 		// 落库失败后仍尝试重读：若对方已建好，本次请求照样能拿到配置。
@@ -160,16 +165,22 @@ WHERE ` + rebasePlaceholders(where, 4)
 }
 
 // RotateAPIKey 生成并保存新的 API Key，返回明文供管理员一次性查看。
-// 生成交给数据库（gen_random_uuid 去横线，32 位十六进制），避免应用层再引一个随机源。
+//
+// 库里只落 SHA-256 摘要，明文在这条 return 之后再无任何途径可取回——
+// 这样即使数据库被导出，也拿不到能直接用的 Key。
 func (r *Repository) RotateAPIKey(ctx context.Context, tenantID string) (string, error) {
 	if _, err := r.EnsureRow(ctx, tenantID); err != nil {
 		return "", err
 	}
 	where, args := tenantPredicate(tenantID)
-	query := `UPDATE system_settings
-SET api_key = replace(gen_random_uuid()::text, '-', ''), updated_at = now()
+	// 明文由数据库生成一份用于返回，落库的是它的摘要。两处用同一个表达式，避免各算一次。
+	query := `WITH generated AS (
+  SELECT replace(gen_random_uuid()::text, '-', '') AS plain
+)
+UPDATE system_settings
+SET api_key = (SELECT encode(sha256(plain::bytea), 'hex') FROM generated), updated_at = now()
 WHERE ` + where + `
-RETURNING api_key`
+RETURNING (SELECT plain FROM generated)`
 
 	var key string
 	if err := r.db.QueryRowContext(ctx, query, args...).Scan(&key); err != nil {
@@ -178,23 +189,30 @@ RETURNING api_key`
 	return key, nil
 }
 
+// hashAPIKey 把调用方提供的明文折算成库里存的摘要。
+// 用 SHA-256 而不是 bcrypt/argon2：Key 是 128 位随机串，本身就没有"弱口令"问题，
+// 不需要抗暴力破解的慢哈希；而外部上传是热路径，慢哈希会直接把上传延迟抬上去。
+func hashAPIKey(plain string) string {
+	sum := sha256.Sum256([]byte(plain))
+	return hex.EncodeToString(sum[:])
+}
+
 // TenantByAPIKey 用调用方提供的 Key 反查它属于哪家公司（空串表示平台兜底 Key）。
 // 找不到返回 ErrNotFound，中间件据此回 401——Key 无效与"没有这家公司的配置"同口径。
 //
 // 这是「外部上传的包该落到哪家公司」的唯一依据：不信任请求体里的任何公司标识。
 //
-// 关于时序攻击：这里用数据库等值比较，而非应用层 subtle.ConstantTimeCompare。
-// 可以接受的依据：Key 是 32 位十六进制随机串（128 位熵），猜中前缀毫无意义；
-// 且 api_key 上有唯一索引（idx_settings_api_key），等值查找走索引不会全表扫。
-// 改造前用定长比较是因为「全局只有一把 Key、比较在应用内存里做」；
-// 现在每公司一把 Key、必须落库查，等值查询是唯一可行方案。
+// 比对方式：先对收到的明文算摘要，再用摘要做等值查询。
+// 这样库里没有明文，而已发出的旧 Key 依旧可用（见 schema.sql 的迁移说明）。
+// 等值查询走 idx_settings_api_key 唯一索引，不会全表扫。
 func (r *Repository) TenantByAPIKey(ctx context.Context, apiKey string) (string, error) {
 	if apiKey == "" {
 		return "", ErrNotFound
 	}
 	var tenantID string
 	err := r.db.QueryRowContext(ctx,
-		`SELECT coalesce(tenant_id::text, '') FROM system_settings WHERE api_key = $1`, apiKey).Scan(&tenantID)
+		`SELECT coalesce(tenant_id::text, '') FROM system_settings WHERE api_key = $1`,
+		hashAPIKey(apiKey)).Scan(&tenantID)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) || errors.Is(err, pgx.ErrNoRows) {
 			return "", ErrNotFound

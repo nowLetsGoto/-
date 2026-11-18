@@ -112,6 +112,9 @@ func WriteError(w http.ResponseWriter, r *http.Request, err error) {
 			appErr = &AppError{Status: 400, Code: 400, Message: contract.ErrPlatformMismatch.Error()}
 		case errors.Is(err, contract.ErrInvalidCredentials):
 			appErr = &AppError{Status: 400, Code: 400, Message: contract.ErrInvalidCredentials.Error()}
+		case errors.Is(err, contract.ErrTooManyAttempts):
+			// 429 而不是 400：让外部监控能一眼区分「输错密码」与「被限流」。
+			appErr = &AppError{Status: 429, Code: 429, Message: contract.ErrTooManyAttempts.Error()}
 		case errors.Is(err, contract.ErrUnauthorized):
 			appErr = &AppError{Status: 401, Code: 401, Message: contract.ErrUnauthorized.Error()}
 		case errors.Is(err, contract.ErrAPIKeyInvalid):

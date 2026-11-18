@@ -118,9 +118,17 @@ func run() error {
 	// 公司表只提供 /me 需要的名字；归属由身份推导，不由请求参数决定。
 	tenantRepository := tenantRepo.NewRepository(db)
 	peopleRepository := peopleRepo.NewRepository(db)
-	peopleService := peoplesvc.NewService(peopleRepository, tenantRepository)
 	teamsRepository := teamsRepo.NewRepository(db)
 	teamsService := teamssvc.NewService(teamsRepository)
+	roleRepository := rolerepo.NewRepository(db)
+
+	// 权限判定：超管全量 → 单人业务基线 → 项目角色 → 人员角色 → 空集。
+	// scope 由同一个服务推导：team_admin 查 team_admins，member 查 team_members。
+	// 提前到这里装配，是因为 peopleService 要用它校验「角色能不能分配给这个人」（防提权）。
+	usersRepository := userRepo.NewRepository(db)
+	authzService := authzsvc.NewService(usersRepository, peopleRepository, projectRepos, roleRepository, teamsRepository)
+
+	peopleService := peoplesvc.NewService(peopleRepository, tenantRepository, authzService)
 
 	// 系统设置与 Webhook：配置读写归 settings，投递归 webhook；
 	// 发布流程只依赖 service.BuildNotifier 接口，因此不需要认识 webhook 的实现。
@@ -135,7 +143,6 @@ func run() error {
 
 	// 账号：users 表是唯一真相，环境变量只做首次种子。
 	// 角色：权限点目录在 contract，库里只存"角色拥有哪些"；内置角色只在缺失时播种。
-	roleRepository := rolerepo.NewRepository(db)
 	roleService := rolesvc.NewService(roleRepository)
 	if err := roleService.EnsureBuiltin(context.Background()); err != nil {
 		return err
@@ -151,7 +158,6 @@ func run() error {
 	auditRepos := auditrepo.NewPartitioned(db)
 	auditService := auditsvc.NewService(auditRepos)
 
-	usersRepository := userRepo.NewRepository(db)
 	// 删账号要顺带清掉它在单人分区的项目与文件，因此账号服务依赖清理器与存储路径。
 	// teams 仓储用于校验团队管理员的团队归属，防止跨公司/跨团队授权。
 	userService := usersvc.NewService(usersRepository, repository.NewAccountCleanup(db), paths, teamsRepository)
@@ -159,9 +165,6 @@ func run() error {
 	// 公司管理：建公司时原子地建其平台管理员；只有超管可达（路由层把关）。
 	tenantService := tenantsvc.NewService(tenantRepository)
 
-	// 权限判定：超管全量 → 单人业务基线 → 项目角色 → 人员角色 → 空集。
-	// scope 由同一个服务推导：team_admin 查 team_admins，member 查 team_members。
-	authzService := authzsvc.NewService(usersRepository, peopleRepository, projectRepos, roleRepository, teamsRepository)
 	loginService := loginsvc.NewService(cfg, usersRepository)
 	if err := loginService.EnsureAdmin(context.Background()); err != nil {
 		return err

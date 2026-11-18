@@ -23,6 +23,12 @@ var (
 	ErrPlatformMismatch = errors.New("所选平台与文件类型不一致")
 	// ErrInvalidCredentials 登录凭据错误 → 400：与全站「业务参数不合法」同一口径，不占用 401。
 	ErrInvalidCredentials = errors.New("用户名或密码错误")
+	// ErrTooManyAttempts 登录失败次数超限，临时锁定 → 429。
+	//
+	// 为什么可以明确告知（不像凭据错误那样含糊）：不存在的账号同样会被计数并锁定，
+	// 所以「被锁定」不能用来判断账号是否存在。反过来，含糊其辞会让真实用户
+	// 以为密码记错了而反复重试，把 15 分钟锁死得更彻底——这是安全与可用性的正确取舍。
+	ErrTooManyAttempts = errors.New("登录尝试过于频繁，请稍后再试")
 	// ErrUnauthorized 未携带令牌或令牌失效 → 401：前端据此清空会话并回到登录页。
 	ErrUnauthorized = errors.New("登录状态已失效，请重新登录")
 	// ErrAPIKeyInvalid 外部接口的 Key 缺失 / 未配置 / 不匹配 → 401。
@@ -356,10 +362,13 @@ type WebhookFieldOption struct {
 	Label string `json:"label"`
 }
 
-// Settings 是系统设置页的全部数据；APIKey 只在此接口返回。
+// Settings 是系统设置页的全部数据。
+//
+// 这里**不再返回 API Key 明文**：库里只存 SHA-256 摘要，明文只在「轮换」的那一次响应里出现。
+// 设置页需要的只是「有没有配过」，所以用 APIKeyConfigured 这个布尔表达。
 type Settings struct {
 	Webhook         WebhookConfig        `json:"webhook"`
-	APIKey          string               `json:"apiKey"`
+	APIKeyConfigured bool                `json:"apiKeyConfigured"`
 	AvailableFields []WebhookFieldOption `json:"availableFields"`
 }
 

@@ -61,8 +61,10 @@ func (s *Service) Get(ctx context.Context, scope contract.Scope) (contract.Setti
 			Secret:  cfg.Secret,
 			Fields:  cfg.Fields,
 		},
-		APIKey:          cfg.APIKey,
-		AvailableFields: fieldOptions(),
+		// 只告诉前端「配没配过」，不返回 Key 本身：库里是摘要，也还原不出明文。
+		// 要拿明文只能走轮换（一次性）。
+		APIKeyConfigured: cfg.APIKey != "",
+		AvailableFields:  fieldOptions(),
 	}, nil
 }
 

@@ -142,16 +142,30 @@ END $$;
 
 -- ---------------------------------------------------------------------------
 -- 三 · 分区各自的唯一性
--- 团队项目 key 全平台唯一（URL 段 /p/{key} 在团队视图里必须能唯一定位）；
+-- 团队项目 key 的全局唯一索引这里先删掉，改成「公司内唯一」。
+-- 新索引必须在 tenant_id 列存在之后才能建（见本文档下方"项目两张分区表同构加列"之后），
+-- 因为这段 DDL 执行时 tenant_id 还没加。
+--
+-- 为什么改：key 是项目短名（mall / web / default），两家公司各有一个 mall 完全正常，
+-- 全平台唯一会让第二家建项目时直接撞库。
+-- URL 段 /p/{key} 仍然能唯一定位：FindByKey 始终带 scope（公司 + 团队边界），
+-- 同一个 key 在不同公司解析出各自的项目。代价是 URL 本身不再全局唯一，
+-- 但那本来就不该是它的职责——归属由登录身份决定，不由 URL 决定。
+--
 -- 单人项目的 key 只需在本人空间内唯一：两个人各自拥有一个 "app" 互不冲突。
 -- ---------------------------------------------------------------------------
-CREATE UNIQUE INDEX IF NOT EXISTS projects_key_key ON team.projects (key);
+DROP INDEX IF EXISTS projects_key_key;
+-- 老库里它是唯一约束（contype='u'）而不是独立索引，DROP INDEX 对它无效，必须同时清约束。
+-- 两种形态都处理，保证新老库都能收敛。
+ALTER TABLE team.projects DROP CONSTRAINT IF EXISTS projects_key_key;
 CREATE UNIQUE INDEX IF NOT EXISTS projects_owner_key ON solo.projects (owner_user_id, key);
 
 -- 团队分区的默认项目：项目化之前的存量包都归到这里；单人分区不播种，由本人自建。
+-- 注意这里还不能引用 tenant_id（那座列在本段之后才加），所以只按 key 判重。
+-- 默认项目全平台只有一个、且属于默认公司，因此在 key 上的判重是充分的。
 INSERT INTO team.projects (key, name, description)
-VALUES ('default', '默认项目', '项目化迁移时生成的默认项目')
-ON CONFLICT (key) DO NOTHING;
+SELECT 'default', '默认项目', '项目化迁移时生成的默认项目'
+WHERE NOT EXISTS (SELECT 1 FROM team.projects WHERE key = 'default');
 
 -- ---------------------------------------------------------------------------
 -- 四 · 全局表（跨模式共享的事实）
@@ -184,6 +198,9 @@ CREATE TABLE IF NOT EXISTS system_settings (
   webhook_secret  TEXT        NOT NULL DEFAULT '',
   webhook_fields  TEXT        NOT NULL
                   DEFAULT '["appName","version","buildNumber","environment","platform","downloadPageUrl"]',
+  -- api_key 存 SHA-256 十六进制摘要，不存明文。
+  -- 明文只在「轮换」响应的那一次出现，之后无法从库里还原——
+  -- 数据库泄露不等于 Key 泄露，这是 Key 类凭据的最低要求。
   api_key         TEXT        NOT NULL,
   updated_at      TIMESTAMPTZ NOT NULL DEFAULT now()
 );
@@ -215,6 +232,16 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_settings_platform_fallback
 -- API Key 反查归属走唯一索引：外部上传每次请求都要按 Key 找公司，不能全表扫。
 -- 唯一约束同时保证一把 Key 不会对应两家公司（否则包会落到哪家就不确定了）。
 CREATE UNIQUE INDEX IF NOT EXISTS idx_settings_api_key ON system_settings (api_key);
+
+-- 把存量明文 Key 迁移成 SHA-256 摘要。
+--
+-- 迁移不会让现有 CI 断掉：调用方仍然发原来的明文，服务端对「收到的值」算同样的 SHA-256
+-- 再与库里比对，结果一致。也就是说 —— 用户手里那把 Key 完全不变，只是库里不再存明文。
+--
+-- 判据用长度而不是「是否含非十六进制字符」：明文是 32 位、摘要固定 64 位。
+-- 幂等：已经是 64 位的行不会被二次哈希（否则第二次启动就会把所有 Key 弄失效）。
+UPDATE system_settings SET api_key = encode(sha256(api_key::bytea), 'hex')
+WHERE length(api_key) <> 64;
 
 -- 播种平台兜底行：只在还没有兜底配置时插入，已有则原样保留（含存量 Key）。
 -- 显式指定 id=1：改 identity 后序列还没推进，直接 INSERT 会生成 id=1 撞上存量行。
@@ -266,13 +293,23 @@ ON CONFLICT DO NOTHING;
 CREATE TABLE IF NOT EXISTS people (
   id         UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
   name       TEXT        NOT NULL,
-  username   TEXT        UNIQUE,
+  -- username 不再全局唯一：见下方 idx_people_tenant_username。
+  -- 两家公司各有一个 zhangsan 是完全正常的，全局唯一会让第二家建不了人。
+  username   TEXT,
   email      TEXT        NOT NULL DEFAULT '',
   phone      TEXT        NOT NULL DEFAULT '',
   title      TEXT        NOT NULL DEFAULT '',
   role_key   TEXT        REFERENCES roles(key) ON DELETE SET NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- 存量库去掉 people.username 的全局唯一约束，改为「公司内唯一」。
+-- 注意 users.username 仍然全局唯一——那是登录标识，必须全局唯一，
+-- 否则按用户名登录会随机命中另一个账号。两者是不同的语义，不能一起改。
+--
+-- 新索引要等 tenant_id 列加上之后才能建（见下方"团队 / 人员 / 角色归属公司"那段）。
+ALTER TABLE people DROP CONSTRAINT IF EXISTS people_username_key;
+DROP INDEX IF EXISTS people_username_key;
 
 -- 存量库补列：早期 people 表没有 role_key，缺了外键就补一个。
 ALTER TABLE people ADD COLUMN IF NOT EXISTS role_key TEXT;
@@ -350,6 +387,12 @@ ALTER TABLE teams ADD COLUMN IF NOT EXISTS tenant_id UUID REFERENCES tenants(id)
 CREATE INDEX IF NOT EXISTS idx_teams_tenant ON teams (tenant_id);
 ALTER TABLE people ADD COLUMN IF NOT EXISTS tenant_id UUID REFERENCES tenants(id);
 CREATE INDEX IF NOT EXISTS idx_people_tenant ON people (tenant_id);
+-- 人员登录名的公司内唯一索引：必须在加完 tenant_id 之后建。
+-- 条件 username IS NOT NULL AND <> ''：允许任意多个「没填登录名」的人员。
+-- coalesce 把 tenant_id 为空的存量档案归到同一个"无公司"分组，保证它们之间仍不重名。
+CREATE UNIQUE INDEX IF NOT EXISTS idx_people_tenant_username
+  ON people (coalesce(tenant_id, '00000000-0000-0000-0000-000000000000'::uuid), username)
+  WHERE username IS NOT NULL AND username <> '';
 -- roles.tenant_id 为空表示平台内置（所有公司可见），非空表示公司自定义。
 ALTER TABLE roles ADD COLUMN IF NOT EXISTS tenant_id UUID REFERENCES tenants(id);
 CREATE INDEX IF NOT EXISTS idx_roles_tenant ON roles (tenant_id);
@@ -367,6 +410,12 @@ BEGIN
     EXECUTE format('CREATE INDEX IF NOT EXISTS idx_projects_tenant ON %I.projects (tenant_id)', s);
   END LOOP;
 END $$;
+
+-- 团队项目 key 的公司内唯一索引：必须在上面这段加完 tenant_id 之后建。
+-- coalesce 把 tenant_id 为空的存量项目归到同一个"无公司"分组，
+-- 保证它们之间仍互不重名（P1 回填前的旧数据都在默认公司下，实际不会撞）。
+CREATE UNIQUE INDEX IF NOT EXISTS idx_team_projects_tenant_key
+  ON team.projects (coalesce(tenant_id, '00000000-0000-0000-0000-000000000000'::uuid), key);
 
 -- 审计日志只有团队分区需要归属维度：单人分区天然以物理表隔离，没有公司/团队概念。
 -- team_id 不加外键——日志的归属是"当时"的事实，团队删除后历史仍要可读。

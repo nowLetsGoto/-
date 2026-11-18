@@ -90,7 +90,7 @@ func (s *Service) Create(ctx context.Context, in contract.ProjectInput, view Vie
 	item, err := s.repos.For(view.Mode).Create(ctx, normalized, view.OwnerUserID, authctx.ScopeFrom(ctx))
 	if err != nil {
 		if repository.IsUniqueViolation(err) {
-			return contract.Project{}, &contract.ValidationError{Message: "项目标识已被占用，换一个试试"}
+			return contract.Project{}, &contract.ValidationError{Message: "本公司内已有相同标识的项目，换一个试试"}
 		}
 		if repository.IsForeignKeyViolation(err) {
 			return contract.Project{}, &contract.ValidationError{Message: "项目角色不存在，请刷新后重试"}

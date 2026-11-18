@@ -18,14 +18,22 @@ import (
 	tenantrepo "dandelion/server/internal/repository/tenant"
 )
 
+// RoleAssigner 校验「调用者能否把某个角色分配出去」。
+// 声明成窄接口而不是直接依赖 authz.Service：本包只用到这一个能力，
+// 窄接口让单测可以注入假实现，也不必为它拉起整套权限判定的依赖。
+type RoleAssigner interface {
+	ValidateRoleAssignable(ctx context.Context, identity contract.Identity, roleKey string) error
+}
+
 // Service 是人员模块的唯一业务入口。
 type Service struct {
 	repo    *peoplerepo.Repository
 	tenants *tenantrepo.Repository
+	roles   RoleAssigner
 }
 
-func NewService(repo *peoplerepo.Repository, tenants *tenantrepo.Repository) *Service {
-	return &Service{repo: repo, tenants: tenants}
+func NewService(repo *peoplerepo.Repository, tenants *tenantrepo.Repository, roles RoleAssigner) *Service {
+	return &Service{repo: repo, tenants: tenants, roles: roles}
 }
 
 // List 返回指定页的人员（含关联名字）与总数；page.PageSize=0 时返回全量。
@@ -51,9 +59,16 @@ func (s *Service) Get(ctx context.Context, id string) (contract.Person, error) {
 }
 
 // Create 新建人员。
+//
+// 分配角色在这里过一道防提权校验：handler 只保证「调用者有管理层级」，
+// 「这个角色他有没有资格分配」必须在业务层判——否则团队管理员给人员挂上
+// super-admin，那个账号就拿到全量权限（实测确认过这个链路能通）。
 func (s *Service) Create(ctx context.Context, in contract.PersonInput) (contract.Person, error) {
 	normalized, err := normalize(in)
 	if err != nil {
+		return contract.Person{}, err
+	}
+	if err := s.roles.ValidateRoleAssignable(ctx, authctx.From(ctx), normalized.RoleKey); err != nil {
 		return contract.Person{}, err
 	}
 	item, err := s.repo.Create(ctx, normalized, authctx.ScopeFrom(ctx))
@@ -64,9 +79,16 @@ func (s *Service) Create(ctx context.Context, in contract.PersonInput) (contract
 }
 
 // Update 全量覆盖人员字段与关联。
+// 同 Create：改角色也要过防提权校验（把某人从 developer 改成 super-admin 是同一类越权）。
 func (s *Service) Update(ctx context.Context, id string, in contract.PersonInput) (contract.Person, error) {
+	if !contract.IsValidUUID(id) {
+		return contract.Person{}, contract.ErrNotFound
+	}
 	normalized, err := normalize(in)
 	if err != nil {
+		return contract.Person{}, err
+	}
+	if err := s.roles.ValidateRoleAssignable(ctx, authctx.From(ctx), normalized.RoleKey); err != nil {
 		return contract.Person{}, err
 	}
 	item, err := s.repo.Update(ctx, id, normalized, authctx.ScopeFrom(ctx))
@@ -129,7 +151,7 @@ func (s *Service) Me(ctx context.Context, identity contract.Identity, personID s
 func translate(err error) error {
 	switch {
 	case repository.IsUniqueViolation(err):
-		return &contract.ValidationError{Message: "登录名已被其他人员占用"}
+		return &contract.ValidationError{Message: "本公司内已有相同登录名的人员，换一个试试"}
 	case repository.IsForeignKeyViolation(err):
 		return &contract.ValidationError{Message: "关联的团队、项目或角色不存在，请刷新后重试"}
 	default:

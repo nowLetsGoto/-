@@ -20,6 +20,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"log"
 	"strconv"
 	"strings"
 	"time"
@@ -44,6 +45,8 @@ type Service struct {
 	ttl          time.Duration
 	seedUsername string
 	seedPassword string
+	// limiter 记账登录失败，防在线爆破。单实例内存实现，见 ratelimit.go 的边界说明。
+	limiter *Limiter
 }
 
 // NewService 从配置与账号仓储构造；种子凭据只在首次启动建号时使用。
@@ -54,6 +57,7 @@ func NewService(cfg config.Config, users *userrepo.Repository) *Service {
 		ttl:          contract.AuthTokenTTLSeconds * time.Second,
 		seedUsername: cfg.AdminUsername,
 		seedPassword: cfg.AdminPassword,
+		limiter:      NewLimiter(),
 	}
 }
 
@@ -91,10 +95,26 @@ func (s *Service) EnsureAdmin(ctx context.Context) error {
 
 // Authenticate 校验凭据并签发令牌。
 // 账号不存在与密码错误返回同一个错误，避免被用来枚举账号。
+//
+// 失败限流：同一「账号 + IP」连续失败 5 次后锁定 15 分钟。
+// 锁定检查放在密码校验之前——否则爆破者至少能通过响应时间差判断账号是否存在。
+// 锁定时返回的错误与凭据错误完全相同，不告诉攻击者「你被锁了」，
+// 只在服务端日志里能看到（运维需要知道有人在爆破）。
 func (s *Service) Authenticate(ctx context.Context, username, password, ip string, mode contract.SessionMode) (contract.LoginResult, error) {
+	if allowed, wait := s.limiter.Allowed(username, ip); !allowed {
+		// 明确返回「被限流」而不是含糊的「密码错误」：不存在的账号同样会被计数，
+		// 所以这个回答不泄漏账号是否存在；而含糊其辞会让真实用户以为密码记错了，
+		// 反复重试只会把锁定时间续下去。
+		log.Printf("登录被限流：username=%s ip=%s 剩余锁定 %s",
+			strings.TrimSpace(username), ip, wait.Round(time.Second))
+		return contract.LoginResult{}, contract.ErrTooManyAttempts
+	}
+
 	record, err := s.users.FindByUsername(ctx, strings.TrimSpace(username))
 	if err != nil {
 		if errors.Is(err, contract.ErrNotFound) {
+			// 账号不存在也记账：否则攻击者可以靠「这个账号不锁」识别出哪些账号真实存在。
+			s.limiter.Fail(username, ip)
 			return contract.LoginResult{}, contract.ErrInvalidCredentials
 		}
 		return contract.LoginResult{}, err
@@ -103,8 +123,13 @@ func (s *Service) Authenticate(ctx context.Context, username, password, ip strin
 		return contract.LoginResult{}, contract.ErrInvalidCredentials
 	}
 	if !verifyPassword(record.PasswordHash, password) {
+		if locked := s.limiter.Fail(username, ip); locked {
+			log.Printf("登录失败次数超限，已临时锁定 username=%s ip=%s", strings.TrimSpace(username), ip)
+		}
 		return contract.LoginResult{}, contract.ErrInvalidCredentials
 	}
+	// 密码正确：清掉该组合的失败记录。
+	s.limiter.Succeed(username, ip)
 
 	mode, err = contract.NormalizeMode(mode)
 	if err != nil {
