@@ -20,6 +20,7 @@ import (
 	"strings"
 	"time"
 
+	"dandelion/server/internal/authctx"
 	"dandelion/server/internal/config"
 	"dandelion/server/internal/contract"
 	"dandelion/server/internal/parser"
@@ -72,12 +73,14 @@ func NewBuildService(
 
 // resolveProject 把 key 解析成分区内的项目；key 为空或不存在都按参数错误处理（400）。
 // 单人分区的项目按创建者隔离，因此必须带上 ownerUserID——否则会解析到别人的项目。
+// 团队分区叠加 scope：包列表与发布的隔离点就在这里——解析不到别公司的项目，
+// 后续按 project.ID 查包自然不会串。scope 从 ctx 取（登录态已由 InjectScope 注入）。
 func (s *BuildService) resolveProject(ctx context.Context, key, ownerUserID string, mode contract.SessionMode) (contract.Project, error) {
 	trimmed := strings.TrimSpace(key)
 	if trimmed == "" {
 		return contract.Project{}, &contract.ValidationError{Message: "请指定项目"}
 	}
-	return s.projects.For(mode).FindByKey(ctx, trimmed, ownerUserID)
+	return s.projects.For(mode).FindByKey(ctx, trimmed, ownerUserID, authctx.ScopeFrom(ctx))
 }
 
 // PurgeTmp 启动时清空 tmp：tmp 是纯临时态，进程重启后不存在「进行中的上传」。

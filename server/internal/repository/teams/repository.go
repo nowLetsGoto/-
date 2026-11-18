@@ -15,6 +15,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"dandelion/server/internal/contract"
+	"dandelion/server/internal/repository"
 )
 
 // Repository 是 teams 的唯一 SQL 出入口。
@@ -76,15 +77,20 @@ func (r *Repository) teamIDs(ctx context.Context, query, arg string) ([]string, 
 }
 
 // List 返回指定页的团队，并补齐该页的关联（共三查，不做 N+1）；同时返回总数供分页。
-func (r *Repository) List(ctx context.Context, page contract.PageQuery) ([]contract.Team, int, error) {
+// scope 是可见性边界：公司账号只看本公司的团队，超管（All）看全部。
+func (r *Repository) List(ctx context.Context, page contract.PageQuery, scope contract.Scope) ([]contract.Team, int, error) {
+	filter := repository.ScopeFilter(0, "t", scope)
+
 	var total int
-	if err := r.db.QueryRowContext(ctx, `SELECT count(*) FROM teams`).Scan(&total); err != nil {
+	countSQL := `SELECT count(*) FROM teams t` + filter.Where()
+	if err := r.db.QueryRowContext(ctx, countSQL, filter.Args()...).Scan(&total); err != nil {
 		return nil, 0, fmt.Errorf("统计团队数量失败: %w", err)
 	}
 
-	rows, err := r.db.QueryContext(ctx,
-		`SELECT `+columns+` FROM teams ORDER BY created_at ASC LIMIT $1 OFFSET $2`,
-		page.Limit(), page.Offset())
+	args := append(filter.Args(), page.Limit(), page.Offset())
+	query := `SELECT id::text, name, description, created_at FROM teams t` + filter.Where() +
+		fmt.Sprintf(` ORDER BY t.created_at ASC LIMIT %s OFFSET %s`, filter.Next(0), filter.Next(1))
+	rows, err := r.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, 0, fmt.Errorf("查询团队列表失败: %w", err)
 	}
@@ -122,8 +128,11 @@ func (r *Repository) List(ctx context.Context, page contract.PageQuery) ([]contr
 }
 
 // FindByID 按 id 查团队（含关联）；无记录统一转 contract.ErrNotFound。
-func (r *Repository) FindByID(ctx context.Context, id string) (contract.Team, error) {
-	row := r.db.QueryRowContext(ctx, `SELECT `+columns+` FROM teams WHERE id = $1`, id)
+// scope 限定可见范围：查本公司之外的团队与「不存在」同口径。
+func (r *Repository) FindByID(ctx context.Context, id string, scope contract.Scope) (contract.Team, error) {
+	filter := repository.ScopeFilter(0, "t", scope).Add(`t.id = ?`, id)
+	row := r.db.QueryRowContext(ctx,
+		`SELECT `+columns+` FROM teams t`+filter.Where(), filter.Args()...)
 	team, err := scan(row)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) || errors.Is(err, pgx.ErrNoRows) {
@@ -140,17 +149,21 @@ func (r *Repository) FindByID(ctx context.Context, id string) (contract.Team, er
 	return team, nil
 }
 
-// Create 新建团队并写入关联；关联与主记录在同一个事务里。
-func (r *Repository) Create(ctx context.Context, in contract.TeamInput) (contract.Team, error) {
-	return r.save(ctx, "", in)
+// Create 新建团队并写入关联；归属公司从 scope 取。
+func (r *Repository) Create(ctx context.Context, in contract.TeamInput, scope contract.Scope) (contract.Team, error) {
+	return r.save(ctx, "", in, scope)
 }
 
-// Update 全量覆盖团队字段与关联（前端每次提交完整的多选结果）。
-func (r *Repository) Update(ctx context.Context, id string, in contract.TeamInput) (contract.Team, error) {
-	return r.save(ctx, id, in)
+// Update 全量覆盖团队字段与关联；scope 限定只能改本公司的团队。
+func (r *Repository) Update(ctx context.Context, id string, in contract.TeamInput, scope contract.Scope) (contract.Team, error) {
+	return r.save(ctx, id, in, scope)
 }
 
-func (r *Repository) save(ctx context.Context, id string, in contract.TeamInput) (contract.Team, error) {
+func (r *Repository) save(ctx context.Context, id string, in contract.TeamInput, scope contract.Scope) (contract.Team, error) {
+	if scope.TenantID == "" {
+		return contract.Team{}, contract.ErrForbidden
+	}
+
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
 		return contract.Team{}, fmt.Errorf("开启事务失败: %w", err)
@@ -159,13 +172,16 @@ func (r *Repository) save(ctx context.Context, id string, in contract.TeamInput)
 
 	var row *sql.Row
 	if id == "" {
+		// tenant_id 从 scope 取，请求体不接受该字段。
 		row = tx.QueryRowContext(ctx,
-			`INSERT INTO teams (name, description) VALUES ($1, $2) RETURNING `+columns,
-			in.Name, in.Description)
+			`INSERT INTO teams (name, description, tenant_id) VALUES ($1, $2, $3) RETURNING `+columns,
+			in.Name, in.Description, scope.TenantID)
 	} else {
+		// SET 占 $1..$2，filter 从 base=2 起算：$3=tenant_id、$4=id。
+		filter := repository.ScopeFilter(2, "teams", scope).Add(`teams.id = ?`, id)
 		row = tx.QueryRowContext(ctx,
-			`UPDATE teams SET name = $2, description = $3 WHERE id = $1 RETURNING `+columns,
-			id, in.Name, in.Description)
+			`UPDATE teams SET name = $1, description = $2 WHERE `+filter.Cond()+` RETURNING `+columns,
+			in.Name, in.Description, scope.TenantID, id)
 	}
 
 	team, err := scan(row)
@@ -175,7 +191,7 @@ func (r *Repository) save(ctx context.Context, id string, in contract.TeamInput)
 		}
 		return contract.Team{}, err
 	}
-	if err := replaceLinks(ctx, tx, team.ID, in.PersonIDs, in.ProjectIDs); err != nil {
+	if err := replaceLinks(ctx, tx, team.ID, in.PersonIDs, in.ProjectIDs, scope); err != nil {
 		return contract.Team{}, err
 	}
 	if err := tx.Commit(); err != nil {
@@ -183,11 +199,13 @@ func (r *Repository) save(ctx context.Context, id string, in contract.TeamInput)
 	}
 
 	// 关联要带名字返回，所以提交后按 id 重查一次（只在写路径发生）。
-	return r.FindByID(ctx, team.ID)
+	return r.FindByID(ctx, team.ID, scope)
 }
 
 // replaceLinks 先清后写，语义是「以本次提交为准」。
-func replaceLinks(ctx context.Context, tx *sql.Tx, teamID string, personIDs, projectIDs []string) error {
+// 关联对象必须同属一个租户：人员按 tenant_id、项目按 tenant_id 过滤；
+// team_admin 账号（user_id）本身不带 tenant 列，其归属由上层账号管理保证（P2）。
+func replaceLinks(ctx context.Context, tx *sql.Tx, teamID string, personIDs, projectIDs []string, scope contract.Scope) error {
 	if _, err := tx.ExecContext(ctx, `DELETE FROM team_members WHERE team_id = $1`, teamID); err != nil {
 		return fmt.Errorf("清理团队成员关联失败: %w", err)
 	}
@@ -196,15 +214,19 @@ func replaceLinks(ctx context.Context, tx *sql.Tx, teamID string, personIDs, pro
 	}
 	for _, personID := range personIDs {
 		if _, err := tx.ExecContext(ctx,
-			`INSERT INTO team_members (team_id, person_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`,
-			teamID, personID); err != nil {
+			`INSERT INTO team_members (team_id, person_id)
+			 SELECT $1::uuid, id FROM people WHERE id = $2::uuid AND tenant_id = $3::uuid
+			 ON CONFLICT DO NOTHING`,
+			teamID, personID, scope.TenantID); err != nil {
 			return fmt.Errorf("写入团队成员关联失败: %w", err)
 		}
 	}
 	for _, projectID := range projectIDs {
 		if _, err := tx.ExecContext(ctx,
-			`INSERT INTO team_projects (team_id, project_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`,
-			teamID, projectID); err != nil {
+			`INSERT INTO team_projects (team_id, project_id)
+			 SELECT $1::uuid, id FROM team.projects WHERE id = $2::uuid AND tenant_id = $3::uuid
+			 ON CONFLICT DO NOTHING`,
+			teamID, projectID, scope.TenantID); err != nil {
 			return fmt.Errorf("写入团队项目关联失败: %w", err)
 		}
 	}

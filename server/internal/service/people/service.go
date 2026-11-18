@@ -12,6 +12,7 @@ import (
 	"unicode/utf8"
 
 	"dandelion/server/internal/contract"
+	"dandelion/server/internal/authctx"
 	"dandelion/server/internal/repository"
 	peoplerepo "dandelion/server/internal/repository/people"
 	tenantrepo "dandelion/server/internal/repository/tenant"
@@ -28,8 +29,9 @@ func NewService(repo *peoplerepo.Repository, tenants *tenantrepo.Repository) *Se
 }
 
 // List 返回指定页的人员（含关联名字）与总数；page.PageSize=0 时返回全量。
+// scope 从 ctx 取（由 InjectScope 注入），本层不重新推导、不接受调用方指定。
 func (s *Service) List(ctx context.Context, page contract.PageQuery) (contract.PersonList, error) {
-	items, total, err := s.repo.List(ctx, page)
+	items, total, err := s.repo.List(ctx, page, authctx.ScopeFrom(ctx))
 	if err != nil {
 		return contract.PersonList{}, err
 	}
@@ -45,7 +47,7 @@ func (s *Service) Get(ctx context.Context, id string) (contract.Person, error) {
 	if !contract.IsValidUUID(id) {
 		return contract.Person{}, contract.ErrNotFound
 	}
-	return s.repo.FindByID(ctx, id)
+	return s.repo.FindByID(ctx, id, authctx.ScopeFrom(ctx))
 }
 
 // Create 新建人员。
@@ -54,7 +56,7 @@ func (s *Service) Create(ctx context.Context, in contract.PersonInput) (contract
 	if err != nil {
 		return contract.Person{}, err
 	}
-	item, err := s.repo.Create(ctx, normalized)
+	item, err := s.repo.Create(ctx, normalized, authctx.ScopeFrom(ctx))
 	if err != nil {
 		return contract.Person{}, translate(err)
 	}
@@ -67,7 +69,7 @@ func (s *Service) Update(ctx context.Context, id string, in contract.PersonInput
 	if err != nil {
 		return contract.Person{}, err
 	}
-	item, err := s.repo.Update(ctx, id, normalized)
+	item, err := s.repo.Update(ctx, id, normalized, authctx.ScopeFrom(ctx))
 	if err != nil {
 		return contract.Person{}, translate(err)
 	}
@@ -100,7 +102,10 @@ func (s *Service) Me(ctx context.Context, identity contract.Identity, personID s
 	if personID == "" {
 		return me, nil
 	}
-	person, err := s.repo.FindByID(ctx, personID)
+	// 用调用者的 scope 查自己的档案与项目：超管看全部、公司账号看本公司，
+	// 自己的记录必然落在自己的可见范围内。
+	scope := authctx.ScopeFrom(ctx)
+	person, err := s.repo.FindByID(ctx, personID, scope)
 	if errors.Is(err, contract.ErrNotFound) {
 		return me, nil
 	}

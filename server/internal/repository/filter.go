@@ -8,6 +8,8 @@ package repository
 import (
 	"fmt"
 	"strings"
+
+	"dandelion/server/internal/contract"
 )
 
 // Filter 累积一组 AND 条件，让"写条件"与"分配占位符"成为同一件事。
@@ -40,6 +42,42 @@ func (f *Filter) AddMulti(template string, args ...any) *Filter {
 	}
 	f.conditions = append(f.conditions, template)
 	return f
+}
+
+// AddRaw 追加一个不带参数的 AND 条件（如 `1 = 0`）。
+// 与 Add 的区别：Add 会绑定一个参数并分配占位符，AddRaw 只拼字面条件。
+// 失败关闭时用得上——需要「恒假」但没有任何值可绑定。
+func (f *Filter) AddRaw(condition string) *Filter {
+	f.conditions = append(f.conditions, condition)
+	return f
+}
+
+// ScopeFilter 生成数据范围条件：把 scope 翻译成第一条 WHERE 子句， caller 再 Add 业务条件。
+// 这是「隔离是仓储性质」的落地点——所有跨公司的表查询都必须先经过它。
+//
+// 三条规则（顺序即优先级）：
+//   - scope.All（超管平台视角 / 系统内部解析）：不加条件，看全部；
+//   - 非 All 且有 TenantID：追加 `alias.tenant_id = ?`，只看本公司；
+//   - 非 All 且 TenantID 为空：追加 `1 = 0` 失败关闭。宁可返回空，
+//     也不能在「忘了注入 scope」时退化成全量——那是租户隔离最危险的漏洞。
+//
+// base 语义同 NewFilter：SELECT 传 0，UPDATE 传 SET 已占用的参数个数。
+// alias 是主表别名（如 `p`），列名固定为 tenant_id（所有业务表同名）。
+func ScopeFilter(base int, alias string, scope contract.Scope) *Filter {
+	return ApplyTenant(NewFilter(base), alias, scope)
+}
+
+// ApplyTenant 在已有 Filter 上追加租户条件，语义与 ScopeFilter 完全一致。
+// 供「先按 owner 过滤、再叠加租户」的分区仓储使用——它不能新建 Filter，
+// 否则会把已经加好的 owner 条件丢掉。
+func ApplyTenant(filter *Filter, alias string, scope contract.Scope) *Filter {
+	if scope.All {
+		return filter
+	}
+	if scope.TenantID == "" {
+		return filter.AddRaw(`1 = 0`)
+	}
+	return filter.Add(alias+`.tenant_id = ?`, scope.TenantID)
 }
 
 // AddIf 仅在 ok 为真时追加条件，省掉调用点的 if 包裹（可选筛选条件用）。

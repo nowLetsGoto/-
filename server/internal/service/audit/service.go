@@ -12,6 +12,7 @@ import (
 	"log"
 
 	"dandelion/server/internal/contract"
+	"dandelion/server/internal/authctx"
 	"dandelion/server/internal/repository"
 	auditrepo "dandelion/server/internal/repository/audit"
 )
@@ -48,6 +49,8 @@ func (s *Service) Record(ctx context.Context, actor contract.Identity, action, o
 		Result:     ResultSuccess,
 		DetailJSON: string(payload),
 		IP:         ip,
+		// 归属取自操作者身份，不接受请求参数；审计落在自己的公司分区视野内。
+		TenantID: actor.TenantID,
 	}); err != nil {
 		log.Printf("[audit] 写入失败 action=%s actor=%s err=%v", action, actor.Username, err)
 	}
@@ -55,7 +58,7 @@ func (s *Service) Record(ctx context.Context, actor contract.Identity, action, o
 
 // List 分页查询审计日志；mode 决定查哪个分区（单人管理员只看得到单人区的日志）。
 func (s *Service) List(ctx context.Context, page contract.PageQuery, filters contract.AuditQuery, mode contract.SessionMode) (contract.AuditLogList, error) {
-	items, total, err := s.repos.For(mode).List(ctx, page, filters)
+	items, total, err := s.repos.For(mode).List(ctx, page, filters, authctx.ScopeFrom(ctx))
 	if err != nil {
 		return contract.AuditLogList{}, err
 	}

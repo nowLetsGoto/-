@@ -27,6 +27,8 @@ type Entry struct {
 	Result     string
 	DetailJSON string
 	IP         string
+	// TenantID 是操作者所属公司，供审计按租户过滤；超管与企业尚未归属时为空。
+	TenantID string
 }
 
 // Repository 是一个分区内 audit_logs 表的唯一 SQL 出入口；分区在构造时固定。
@@ -50,15 +52,15 @@ func newRepository(db *sql.DB, schema repository.Schema) *Repository {
 
 // Create 追加一条审计记录。
 func (r *Repository) Create(ctx context.Context, entry Entry) error {
-	query := `INSERT INTO ` + r.table + ` (actor_id, actor_name, action, object_type, object_id, result, detail, ip)
-VALUES (NULLIF($1, '')::uuid, $2, $3, $4, $5, $6, $7::jsonb, $8)`
+	query := `INSERT INTO ` + r.table + ` (actor_id, actor_name, action, object_type, object_id, result, detail, ip, tenant_id)
+VALUES (NULLIF($1, '')::uuid, $2, $3, $4, $5, $6, $7::jsonb, $8, NULLIF($9, '')::uuid)`
 
 	if entry.DetailJSON == "" {
 		entry.DetailJSON = "{}"
 	}
 	if _, err := r.db.ExecContext(ctx, query,
 		entry.ActorID, entry.ActorName, entry.Action, entry.ObjectType,
-		entry.ObjectID, entry.Result, entry.DetailJSON, entry.IP); err != nil {
+		entry.ObjectID, entry.Result, entry.DetailJSON, entry.IP, entry.TenantID); err != nil {
 		return fmt.Errorf("写入审计日志失败: %w", err)
 	}
 	return nil
@@ -68,17 +70,22 @@ const columns = `id, created_at, coalesce(actor_id::text, ''), actor_name,
 action, object_type, object_id, result, detail::text, ip`
 
 // List 按条件分页查询；filters 全部为空时等于"查本分区全部"。
-func (r *Repository) List(ctx context.Context, page contract.PageQuery, filters contract.AuditQuery) ([]contract.AuditLog, int, error) {
+// scope 是可见性边界：公司账号只看本公司的审计，超管（All）看全部平台审计。
+func (r *Repository) List(ctx context.Context, page contract.PageQuery, filters contract.AuditQuery, scope contract.Scope) ([]contract.AuditLog, int, error) {
+	// solo 分区的审计没有租户概念（个人工作台），不加 tenant 条件。
 	filter := buildFilter(filters)
+	if r.schema.Mode() != contract.ModeSolo {
+		repository.ApplyTenant(filter, "l", scope)
+	}
 
 	var total int
-	countSQL := `SELECT count(*) FROM ` + r.table + filter.Where()
+	countSQL := `SELECT count(*) FROM ` + r.table + ` l` + filter.Where()
 	if err := r.db.QueryRowContext(ctx, countSQL, filter.Args()...).Scan(&total); err != nil {
 		return nil, 0, fmt.Errorf("统计审计日志失败: %w", err)
 	}
 
 	args := append(filter.Args(), page.Limit(), page.Offset())
-	query := `SELECT ` + columns + ` FROM ` + r.table + filter.Where() +
+	query := `SELECT ` + columns + ` FROM ` + r.table + ` l` + filter.Where() +
 		fmt.Sprintf(` ORDER BY created_at DESC, id DESC LIMIT %s OFFSET %s`, filter.Next(0), filter.Next(1))
 
 	rows, err := r.db.QueryContext(ctx, query, args...)

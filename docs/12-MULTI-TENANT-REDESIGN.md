@@ -1,6 +1,6 @@
 # 12 · 多公司租户化重构设计（团队模式重新设计）
 
-> 日期：2026-11-18 ｜ 状态：**设计定稿，待实施**
+> 日期：2026-11-18 ｜ 状态：**P0 + P1 已实施并通过端到端验证**（P2–P6 待实施）
 > 上游：`docs/10-PROJECTS-AND-RBAC.md`（权限模型）、`docs/11-SUPERADMIN-MENU.md`（超管专区）、本轮主理人四项裁决
 > 效力：本文定义目标形态与实施顺序。与旧文档冲突处**以本文为准**；旧文档未提及部分继续有效。
 > 一句话结论：**把「管理身份」与「业务角色」彻底拆开，用「公司 → 团队」两级数据归属做隔离，三级管理身份决定「能管谁」，业务角色只决定「能做什么」。**
@@ -473,7 +473,7 @@ type Me = {
 | 阶段 | 内容 | 验收标准 |
 | --- | --- | --- |
 | **P0 身份地基** | `tenants` / `team_admins` 表；`account_level` / `tenant_id` 列；`Identity` / `Scope` 类型；`ScopeOf` 推导；中间件 | `go build/vet/test` 全绿；`/me` 返回新字段；四级账号各自 scope 正确 |
-| **P1 数据隔离** | people / teams / projects / builds / audit 全加 tenant_id；仓储统一 scope 参数 | 两家公司交叉访问测试：A 公司任意账号查不到 B 公司任何数据 |
+| **P1 数据隔离** ✅ 已实施 | people / teams / projects / builds / audit 全加 tenant_id；仓储统一 scope 参数 | 两家公司交叉访问测试：A 公司任意账号查不到 B 公司任何数据 —— **已通过**（见下方实施记录） |
 | **P2 三级账号体系** | 超管建公司+平台管理员；平台管理员建团队/团队管理员/普通账号；团队管理员建本团队账号 | 完整创建链路端到端通过；§7.5 防越权清单 8 条全绿 |
 | **P3 角色与权限下放** | 权限目录精简；角色 tenant 隔离；管理权限走身份层级；废弃 project-owner | 平台管理员能改本公司角色、改不了平台内置；团队管理员只能分配角色 |
 | **P4 集成公司化** | `system_settings` 租户化；Webhook payload 带公司信息；API Key 反查租户 | 两公司 Webhook 互不串；API Key 上传的包归属正确公司 |
@@ -483,3 +483,31 @@ type Me = {
 ### 建议的下一步
 
 从 **P0** 开始。P0 只动数据模型与身份推导，不碰业务接口，风险可控，且是后面所有阶段的地基。每完成一阶段我会跑四道门禁（`go build/vet/test`、`tsc --noEmit`、`eslint+stylelint`、`make build`）并做端到端复验，再进入下一阶段。
+
+---
+
+## §11 P1 实施记录（2026-11-18）
+
+### 落地方式（对 §7.3 的具体化）
+- `repository/filter.go` 新增 `ScopeFilter` / `ApplyTenant` / `AddRaw`：把 scope 翻译成第一条 WHERE 条件。三条规则见代码注释：超管不加条件、公司账号限定 `tenant_id`、无公司且非超管追加 `1 = 0` 失败关闭。
+- **service 从 ctx 取 scope**（`authctx.ScopeFrom`）传给仓储，handler 零改动；scope 的解析仍然只有 `authz.Service.ScopeOf` 一个出口。
+- **身份解析路径显式传 `Scope{All:true}`**：`PersonID`、`resolveRoleKey` 里查人员/角色是在 scope 推导链路中，不能反过来依赖 scope。
+- 写入路径的 `tenant_id` 一律从 scope 取，请求体白名单不接受该字段；关联表用 `INSERT ... SELECT ... WHERE tenant_id = $3::uuid` 挡住跨租户关联。
+- 公开下载接口 `/builds/{id}`、`/file` 不加 scope（无登录态）；包列表的隔离点在 `BuildService.resolveProject` → `project.FindByKey` 带 scope。
+
+### 对设计的偏离（均已确认合理）
+1. **P1 只做公司级隔离，未做团队级**。原因：存量成员没有团队关联，若按 `team_ids` 过滤会查不到任何数据。团队级隔离留到 P2（团队管理员账号上线时）。
+2. **存量回填提前到 P1**（原计划 P6）。原因：不回填则现有 member 账号 `tenant_id` 为空、命中 `1=0`，功能直接坏掉。已建「默认公司」`11111111-...`，存量账号/人员/团队/项目/角色全部归入；admin 作为超管保持无公司。
+3. **审计写 `tenant_id`、查按 tenant 过滤**，但 `/admin/audit-logs` 仍挂 `RequireSuperAdmin`——平台管理员进入审计是 P3/P5 的工作，P1 只把数据层隔离做好。
+
+### 端到端验证结果
+两家公司（A/B）各建账号、人员、团队、项目后交叉访问：
+- 列表：A 只见 A 的人员/团队/项目，B 只见 B 的 ✅
+- 越权 id 查询（B 的人员/团队 id）：HTTP 404 ✅
+- 跨公司项目 key 查包列表：400「项目不存在」✅
+- 写入带 `tenantId` 伪装：400 白名单拒绝 ✅
+- 编辑人员把 `teamIds` 指向 B 团队：返回成功但关联被丢弃，库里 0 条跨租户关联 ✅
+- 测试数据已全部清理，存量数据完好
+
+### 已知遗留（非 P1 范围）
+- 404 错误文案是全局兜底「包不存在或已被移除」，人员/团队查不到时也显示这个，文案不准。属既有问题，未在本轮改动。

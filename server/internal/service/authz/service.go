@@ -44,8 +44,10 @@ type userLookup interface {
 }
 
 type peopleLookup interface {
-	FindByID(ctx context.Context, id string) (contract.Person, error)
-	FindByUsername(ctx context.Context, username string) (contract.Person, error)
+	// 身份解析必须能跨租户找到「账号名对应的人」，因此显式接收 scope：
+	// PersonID / ScopeOf 传 All（登录时 scope 未算出），业务路径传调用者 scope。
+	FindByID(ctx context.Context, id string, scope contract.Scope) (contract.Person, error)
+	FindByUsername(ctx context.Context, username string, scope contract.Scope) (contract.Person, error)
 }
 
 type teamScopeLookup interface {
@@ -195,7 +197,8 @@ func (s *Service) PersonID(ctx context.Context, identity contract.Identity) (str
 		return record.User.PersonID, nil
 	}
 	// 兼容存量：账号尚未绑定人员时，按登录名找一个同名档案。
-	person, err := s.people.FindByUsername(ctx, identity.Username)
+	// 用 All：这是身份解析（账号 → 档案），发生在 scope 推导之前，不能反过来依赖 scope。
+	person, err := s.people.FindByUsername(ctx, identity.Username, contract.Scope{All: true})
 	if err != nil {
 		if errors.Is(err, contract.ErrNotFound) {
 			return "", nil
@@ -211,7 +214,11 @@ func (s *Service) PersonID(ctx context.Context, identity contract.Identity) (str
 func (s *Service) resolveRoleKey(ctx context.Context, identity contract.Identity, projectKey string) (string, error) {
 	// 2) 项目角色优先
 	if projectKey != "" {
-		project, err := s.projects.For(contract.ModeTeam).FindByKey(ctx, projectKey, "")
+		// 项目角色按调用者所属公司过滤：借别公司的项目 key 查角色会落空，
+		// 而不是拿到它的角色配置。超管在业务链路里也走 identity.TenantID（通常为空），
+		// 因此这里用 All 放行平台视角——项目访问本身另有 RequireProjectPermission 把关。
+		roleScope := contract.Scope{All: identity.IsSuperAdmin, TenantID: identity.TenantID}
+		project, err := s.projects.For(contract.ModeTeam).FindByKey(ctx, projectKey, "", roleScope)
 		if err != nil {
 			return "", err
 		}
@@ -225,7 +232,8 @@ func (s *Service) resolveRoleKey(ctx context.Context, identity contract.Identity
 	if err != nil || personID == "" {
 		return "", err
 	}
-	person, err := s.people.FindByID(ctx, personID)
+	// 人员角色 key 是身份属性，解析发生在 scope 推导链路中，显式传 All 避免循环依赖。
+	person, err := s.people.FindByID(ctx, personID, contract.Scope{All: true})
 	if err != nil {
 		if errors.Is(err, contract.ErrNotFound) {
 			return "", nil

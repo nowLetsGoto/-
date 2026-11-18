@@ -12,6 +12,7 @@ import (
 	"unicode/utf8"
 
 	"dandelion/server/internal/contract"
+	"dandelion/server/internal/authctx"
 	"dandelion/server/internal/repository"
 	projectrepo "dandelion/server/internal/repository/project"
 )
@@ -37,7 +38,8 @@ func NewService(repos repository.Partitioned[*projectrepo.Repository]) *Service 
 // List 返回指定页的项目与总数；下拉筛选传 pageSize=0 取全量。
 // 单人视图会清空角色字段；团队视图保持全量（含角色名）。
 func (s *Service) List(ctx context.Context, page contract.PageQuery, view View) (contract.ProjectList, error) {
-	items, total, err := s.repos.For(view.Mode).List(ctx, page, view.OwnerUserID)
+	scope := authctx.ScopeFrom(ctx)
+	items, total, err := s.repos.For(view.Mode).List(ctx, page, view.OwnerUserID, scope)
 	if err != nil {
 		return contract.ProjectList{}, err
 	}
@@ -54,7 +56,7 @@ func (s *Service) List(ctx context.Context, page contract.PageQuery, view View) 
 func (s *Service) Detail(ctx context.Context, key string, view View) (contract.ProjectDetail, error) {
 	repo := s.repos.For(view.Mode)
 	// 单人分区的 owner 过滤由仓储层强制执行：查不到别人的项目，天然就是 404。
-	item, err := repo.FindByKey(ctx, key, view.OwnerUserID)
+	item, err := repo.FindByKey(ctx, key, view.OwnerUserID, authctx.ScopeFrom(ctx))
 	if err != nil {
 		return contract.ProjectDetail{}, err
 	}
@@ -85,7 +87,7 @@ func (s *Service) Create(ctx context.Context, in contract.ProjectInput, view Vie
 	if view.Solo {
 		normalized.RoleKey = ""
 	}
-	item, err := s.repos.For(view.Mode).Create(ctx, normalized, view.OwnerUserID)
+	item, err := s.repos.For(view.Mode).Create(ctx, normalized, view.OwnerUserID, authctx.ScopeFrom(ctx))
 	if err != nil {
 		if repository.IsUniqueViolation(err) {
 			return contract.Project{}, &contract.ValidationError{Message: "项目标识已被占用，换一个试试"}
@@ -107,7 +109,7 @@ func (s *Service) Update(ctx context.Context, key string, in contract.ProjectInp
 	if view.Solo {
 		normalized.RoleKey = ""
 	}
-	item, updateErr := s.repos.For(view.Mode).Update(ctx, key, view.OwnerUserID, normalized)
+	item, updateErr := s.repos.For(view.Mode).Update(ctx, key, view.OwnerUserID, normalized, authctx.ScopeFrom(ctx))
 	if updateErr != nil {
 		if repository.IsForeignKeyViolation(updateErr) {
 			return contract.Project{}, &contract.ValidationError{Message: "项目角色不存在，请刷新后重试"}

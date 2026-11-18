@@ -42,7 +42,7 @@ type fakePeople struct {
 	byName map[string]contract.Person
 }
 
-func (f *fakePeople) FindByID(_ context.Context, id string) (contract.Person, error) {
+func (f *fakePeople) FindByID(_ context.Context, id string, _ contract.Scope) (contract.Person, error) {
 	person, ok := f.byID[id]
 	if !ok {
 		return contract.Person{}, contract.ErrNotFound
@@ -50,7 +50,7 @@ func (f *fakePeople) FindByID(_ context.Context, id string) (contract.Person, er
 	return person, nil
 }
 
-func (f *fakePeople) FindByUsername(_ context.Context, username string) (contract.Person, error) {
+func (f *fakePeople) FindByUsername(_ context.Context, username string, _ contract.Scope) (contract.Person, error) {
 	person, ok := f.byName[username]
 	if !ok {
 		return contract.Person{}, contract.ErrNotFound

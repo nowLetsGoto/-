@@ -11,6 +11,7 @@ import (
 	"unicode/utf8"
 
 	"dandelion/server/internal/contract"
+	"dandelion/server/internal/authctx"
 	"dandelion/server/internal/repository"
 	teamsrepo "dandelion/server/internal/repository/teams"
 )
@@ -25,8 +26,9 @@ func NewService(repo *teamsrepo.Repository) *Service {
 }
 
 // List 返回指定页的团队（含关联名字）与总数；page.PageSize=0 时返回全量。
+// scope 从 ctx 取（InjectScope 注入），仓储据此只返回本公司团队。
 func (s *Service) List(ctx context.Context, page contract.PageQuery) (contract.TeamList, error) {
-	items, total, err := s.repo.List(ctx, page)
+	items, total, err := s.repo.List(ctx, page, authctx.ScopeFrom(ctx))
 	if err != nil {
 		return contract.TeamList{}, err
 	}
@@ -42,7 +44,7 @@ func (s *Service) Get(ctx context.Context, id string) (contract.Team, error) {
 	if !contract.IsValidUUID(id) {
 		return contract.Team{}, contract.ErrNotFound
 	}
-	return s.repo.FindByID(ctx, id)
+	return s.repo.FindByID(ctx, id, authctx.ScopeFrom(ctx))
 }
 
 // Create 新建团队。
@@ -51,7 +53,7 @@ func (s *Service) Create(ctx context.Context, in contract.TeamInput) (contract.T
 	if err != nil {
 		return contract.Team{}, err
 	}
-	item, err := s.repo.Create(ctx, normalized)
+	item, err := s.repo.Create(ctx, normalized, authctx.ScopeFrom(ctx))
 	if err != nil {
 		return contract.Team{}, translate(err)
 	}
@@ -64,7 +66,7 @@ func (s *Service) Update(ctx context.Context, id string, in contract.TeamInput) 
 	if err != nil {
 		return contract.Team{}, err
 	}
-	item, err := s.repo.Update(ctx, id, normalized)
+	item, err := s.repo.Update(ctx, id, normalized, authctx.ScopeFrom(ctx))
 	if err != nil {
 		return contract.Team{}, translate(err)
 	}
