@@ -8,6 +8,7 @@ package role
 
 import (
 	"context"
+	"errors"
 	"regexp"
 	"strings"
 	"unicode/utf8"
@@ -101,10 +102,21 @@ func (s *Service) Create(ctx context.Context, in contract.RoleInput, scope contr
 	if err != nil {
 		return contract.Role{}, err
 	}
+	// 内置角色的标识对所有公司是保留字：数据库索引把内置（tenant_id 为空）与各公司
+	// 分在不同分组，技术上允许重名，但业务上不能允许——
+	// 角色列表里会出现两个 developer，而权限解析按 key 查时也不确定命中哪个。
+	// 先查一次内置里有没有，有就直接拒。
+	if builtin, err := s.repo.FindByKeyAny(ctx, normalized.Key, ""); err == nil && builtin.Key != "" {
+		return contract.Role{}, &contract.ValidationError{
+			Message: "「" + normalized.Key + "」是平台内置角色的标识，换一个试试",
+		}
+	} else if err != nil && !errors.Is(err, contract.ErrNotFound) {
+		return contract.Role{}, err
+	}
 	item, err := s.repo.Create(ctx, normalized, scope)
 	if err != nil {
 		if repository.IsUniqueViolation(err) {
-			return contract.Role{}, &contract.ValidationError{Message: "该角色标识已存在，请在标识里带上公司前缀"}
+			return contract.Role{}, &contract.ValidationError{Message: "本公司内已有相同标识的角色，换一个试试"}
 		}
 		return contract.Role{}, err
 	}
@@ -129,12 +141,10 @@ func (s *Service) Update(ctx context.Context, key string, in contract.RoleInput,
 
 // normalize 去空白、校验格式与权限点合法性；withKey 为 false 时忽略 key（编辑场景）。
 //
-// tenantID 非空时（新建自定义角色）要求 key 带公司前缀：
-// roles.key 是全局唯一的，并且 people.role_key / projects.role_key 都按 key 引用它，
-// 如果允许两家公司各建一个 "developer"，第二个会被唯一约束拒绝。
-// 强制前缀既避免冲突，也让"这是哪家的角色"一眼可见。
-// 前缀取公司 id 的前 8 位（UUID 天然唯一，且长度可接受）。
-func normalize(in contract.RoleInput, withKey bool, tenantID string) (contract.RoleInput, error) {
+// 关于 key 的唯一性：roles.key 现在是「公司内唯一」（见 schema.sql 的 idx_roles_tenant_key），
+// 角色与人员/项目的关联已改为引用 roles.id，因此两家公司各有一个 developer 互不冲突。
+// 早期这里是强制「公司 UUID 前 8 位 -」前缀来绕过全局唯一，那个限制已随本次重构移除。
+func normalize(in contract.RoleInput, withKey bool, _ string) (contract.RoleInput, error) {
 	out := contract.RoleInput{
 		Key:         strings.ToLower(strings.TrimSpace(in.Key)),
 		Name:        strings.TrimSpace(in.Name),
@@ -145,11 +155,6 @@ func normalize(in contract.RoleInput, withKey bool, tenantID string) (contract.R
 	if withKey && !roleKeyPattern.MatchString(out.Key) {
 		return contract.RoleInput{}, &contract.ValidationError{
 			Message: "角色标识只能用小写字母、数字与短横线，2-32 位且以字母开头",
-		}
-	}
-	if withKey && tenantID != "" && !strings.HasPrefix(out.Key, tenantPrefix(tenantID)) {
-		return contract.RoleInput{}, &contract.ValidationError{
-			Message: "自定义角色标识需以 " + tenantPrefix(tenantID) + "- 开头（避免与其他公司冲突）",
 		}
 	}
 	if out.Name == "" {
@@ -167,14 +172,6 @@ func normalize(in contract.RoleInput, withKey bool, tenantID string) (contract.R
 		}
 	}
 	return out, nil
-}
-
-// tenantPrefix 取公司 id 的前 8 位作为角色 key 前缀。
-func tenantPrefix(tenantID string) string {
-	if len(tenantID) < 8 {
-		return tenantID
-	}
-	return tenantID[:8]
 }
 
 func dedupe(values []string) []string {

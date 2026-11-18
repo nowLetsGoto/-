@@ -43,14 +43,15 @@ func NewRepository(db *sql.DB) *Repository {
 // columns 带 LEFT JOIN 取人员姓名与角色名：列表页要显示"绑定的人是谁、什么角色"，一次查完不做 N+1。
 const columns = `u.id::text, u.username, u.mode, u.password_hash, coalesce(u.person_id::text, ''),
 u.is_super_admin, u.status, u.token_version, u.last_login_at, u.last_login_ip,
-u.created_at, coalesce(p.name, ''), coalesce(p.role_key, ''), coalesce(r.name, ''),
+u.created_at, coalesce(p.name, ''), coalesce(r.key, ''), coalesce(r.name, ''),
 coalesce(u.tenant_id::text, ''), u.account_level`
 
 // fromClause 两次 LEFT JOIN 都是"可空"的：账号可以先建、之后再绑定人员；
 // 人员也可以没有角色。两种情况都要让账号本身仍能被查出来。
+// 角色按 roles.id 关联（people.role_id），key 可公司内重名，因此不能再按 key JOIN。
 const fromClause = ` FROM users u
 LEFT JOIN people p ON p.id = u.person_id
-LEFT JOIN roles r ON r.key = p.role_key`
+LEFT JOIN roles r ON r.id = p.role_id`
 
 // FindByUsername 按登录名查账号；无记录转 contract.ErrNotFound（调用方自行决定是否暴露）。
 func (r *Repository) FindByUsername(ctx context.Context, username string) (Record, error) {
@@ -198,8 +199,14 @@ func (r *Repository) Update(ctx context.Context, id, personID string, isSuperAdm
 	if personID != "" {
 		// 查不到行不算错：personID 的合法性已由 users.person_id 的外键保证，
 		// 这里 0 行只意味着该人员刚被别处删掉，账号侧的更新仍应成功。
+		//
+		// 角色标识在 SQL 内解析成 roles.id，并按该人员所属公司过滤：
+		// 只能挂本公司自定义角色或平台内置角色，解析不到就是 NULL（无角色）。
 		if _, err := tx.ExecContext(ctx,
-			`UPDATE people SET role_key = NULLIF($2, '') WHERE id = $1`, personID, roleKey); err != nil {
+			`UPDATE people SET role_id = (
+			   SELECT ro.id FROM roles ro
+			   WHERE ro.key = $2 AND (ro.tenant_id IS NULL OR ro.tenant_id = people.tenant_id)
+			 ) WHERE id = $1`, personID, roleKey); err != nil {
 			return Record{}, fmt.Errorf("更新账号角色失败: %w", err)
 		}
 	}

@@ -905,3 +905,77 @@ P0–P6 全部实施完成。核心不变量已经成立：**任何请求都能�
 `roles.key` 仍是全局唯一。目前靠「自定义角色 key 必须带公司 UUID 前 8 位前缀」绕过，
 不是根治。改它要动 `people.role_key` / `projects.role_key` 两个外键（都指向 `roles(key)`），
 成本明显高于本次两个字段，单独评估后再做。
+
+---
+
+## §19 roles.key 根治：外键改指 roles.id（2026-11-18）
+
+§18 遗留的技术债。当时的做法是「自定义角色 key 必须带公司 UUID 前 8 位前缀」，
+那是绕过而不是解决——用户看到的角色标识变成 `a1b2c3d4-devops`。
+
+### 根因
+`roles.key` 不只是展示字段，它是**两个外键的目标**：
+
+```
+people.role_key        → roles(key)  ON DELETE SET NULL
+team.projects.role_key → roles(key)  ON DELETE SET NULL
+```
+
+外键指向文本 key，key 就必须全平台唯一。根治的唯一办法是**让外键指向主键**，
+key 才能退化成纯业务字段、按公司划分。
+
+### 为什么不用「复合外键 (tenant_id, key)」
+看起来更省事，但有个致命问题：`roles.tenant_id` 对平台内置角色是 **NULL**，
+而 PostgreSQL 外键默认 `MATCH SIMPLE` 下 NULL 不参与匹配——内置角色无法被引用，
+而现存所有人挂的都是内置角色。要走这条路必须把内置角色每公司复制一份（5×N 行），
+「改内置权限」也要改 N 份。成本更高且引入新的同步问题。**否决。**
+
+### 改动
+1. **新增 `role_id UUID REFERENCES roles(id)`** 到 `people` / `team.projects` / `solo.projects`，
+   回填已有值后**删除 `role_key` 列**。
+   保留旧列会形成"第二份真相"，写入路径一旦漏同步就会不一致——比没有更容易出错。
+2. **`roles.key` 改为公司内唯一**：`(coalesce(tenant_id, 零UUID), key)`。
+   内置角色 tenant_id 为空、归同一分组，因此内置之间仍互不重名。
+3. **写入侧在 SQL 内解析**：API 仍收 `roleKey`（前端零改动），
+   SQL 里用子查询 `(SELECT id FROM roles WHERE key=$n AND (tenant_id IS NULL OR tenant_id=$m))`
+   原子地解析成 role_id。解析与写入同一语句，避免"查到但写进去是空"的窗口期。
+4. **`authz.FindByKeyAny` 增加 tenantID 参数**：key 公司内唯一之后，
+   不带公司过滤会随机命中——甲成员可能被套上乙公司 devops 的权限。这是本次最危险的连带点。
+5. 权限判定里保留「角色不存在 vs 属于别家」的区分：先按可见范围解析，
+   解析不到再无条件查一次，只为给出正确提示（前者 400「不存在」，后者 403）。
+6. 移除前缀强制与 `tenantPrefix`；前端 placeholder 从 `a1b2c3d4-devops` 改回 `如 devops`。
+
+### 修掉的四个 bug（都是本次引入或暴露的）
+1. **`ON CONFLICT (key)` 启动即崩**：`CreateBuiltinIfMissing` 依赖 key 的唯一索引，
+   改成表达式索引后报 `no unique or exclusion constraint matching`。
+   改为 `INSERT ... WHERE NOT EXISTS`（播种只在启动时跑，不是热路径）。
+2. **自定义角色可以占用内置 key**：索引把内置（tenant_id 空）与各公司分在不同分组，
+   技术上允许重名。结果角色列表出现**两个 developer**，且权限解析不确定命中哪个。
+   加业务校验：内置角色标识是保留字，创建前先查内置里有没有。
+3. **项目创建 500（uuid/text 类型推断打架）**：同一占位符 $7 既写入 `tenant_id`（uuid）
+   又在子查询里比较，PG 报 `column tenant_id is of type uuid but expression is of type text`。
+   拆成 $7 / $8 两个参数。
+4. **单人分区建项目 500（`invalid input syntax for type uuid: ""`）**：
+   单人项目 `tenant_id` 是空串，`::uuid` 直接转换失败。两处都改用 `NULLIF($x,'')::uuid`。
+
+### 验证（26 项全过）
+**同名角色（10/10）**：甲、乙两公司各建 `devops`（**无任何前缀**）均成功；
+同公司内重复 400；占用内置 `developer` 被 400 拒；角色列表无重复项。
+
+**权限真隔离（5/5，核心）**：乙给自己的 `devops` 加 `build.delete`，
+甲的 `devops` 权限完全不变；甲成员 `/me` 无 `build.delete`、乙成员有——
+**两家同名角色真正各自独立**，这是根治的目标。
+
+**项目与单人（11/11）**：跨公司同名项目 `shared` 两条独立记录；
+项目角色可挂自定义/内置/清空；单人分区（tenant_id 为空）建改查全通。
+
+**历史无回归（11/11）**：存量 2 个人员的角色关联未丢（`guest` 正确解析出角色名）；
+超管改内置角色、设置读取、API Key 轮换均正常。
+
+四道门禁全绿（10 个包）；测试数据已清理；未 git commit。
+
+### 副产品：发现一处设计不一致（未改，记录在此）
+`projects.role_key` 的设置**仍只有超管可以做**（`handler/project` 里 `!identity.IsSuperAdmin` 直接 403），
+而 `people` 的角色在 P3 已开放给团队管理员并加了防提权校验。
+两者不一致，但项目角色影响该项目下所有成员的权限，比人员角色更敏感——
+**收归超管是更保守的选择，倾向保留现状**，等有明确需求再放开（届时套用 `ValidateRoleAssignable`）。

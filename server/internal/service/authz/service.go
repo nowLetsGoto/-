@@ -150,8 +150,9 @@ func (s *Service) permissionsOf(ctx context.Context, identity contract.Identity,
 	}
 
 	// 用 FindByKeyAny：这一步是「这个人挂着什么角色」的身份解析，发生在 scope 推导链路中，
-	// 不能反过来依赖 scope。角色的可见性由角色管理接口单独把关，不影响权限判定。
-	role, err := s.roles.FindByKeyAny(ctx, roleKey)
+	// 不能反过来依赖 scope。传 identity.TenantID 是为了在「key 公司内唯一」之后
+	// 只解析出本公司（或平台内置）的角色——否则甲成员可能被套上乙公司 devops 的权限。
+	role, err := s.roles.FindByKeyAny(ctx, roleKey, identity.TenantID)
 	if err != nil {
 		// 角色已删除时只保留默认读取能力，绝不回退到另一个可能更高权限的角色。
 		if errors.Is(err, contract.ErrNotFound) {
@@ -375,20 +376,19 @@ func (s *Service) ValidateRoleAssignable(ctx context.Context, identity contract.
 		return nil
 	}
 
-	// 用 FindByKeyAny 而不是带 scope 的 FindByKey：这里要区分「不存在」与「越权」，
-	// 两者都拒绝，但只有存在时才需要做权限比较；且判定本身不应依赖业务 scope
-	// （团队管理员的 scope 是团队边界，与「这个角色属于哪家公司」是两个维度）。
-	role, err := s.roles.FindByKeyAny(ctx, roleKey)
+	// 先按调用者可见范围解析（内置 + 本公司）；解析不到时再无条件查一次，
+	// 只为区分「这个角色根本不存在」与「它属于别家公司」——
+	// 两种都拒绝，但提示不同：前者是填错了，后者是越权。
+	role, err := s.roles.FindByKeyAny(ctx, roleKey, identity.TenantID)
 	if err != nil {
-		if errors.Is(err, contract.ErrNotFound) {
-			return &contract.ValidationError{Message: "角色不存在：" + roleKey}
+		if !errors.Is(err, contract.ErrNotFound) {
+			return err
 		}
-		return err
-	}
-
-	// 1) 可见性：内置角色所有公司可用；自定义角色只能在本公司内部分配。
-	if role.TenantID != "" && role.TenantID != identity.TenantID {
-		return contract.ErrForbidden
+		if _, anyErr := s.roles.FindByKeyAny(ctx, roleKey, ""); anyErr == nil {
+			// 角色存在但不属于本公司。不透露是哪家公司的。
+			return contract.ErrForbidden
+		}
+		return &contract.ValidationError{Message: "角色不存在：" + roleKey}
 	}
 
 	// 2) 防提权：超管全量，无需比较；其余身份逐点比较。

@@ -41,11 +41,13 @@ func newRepository(db *sql.DB, schema repository.Schema, ownerScoped bool) *Repo
 }
 
 // selectColumns 带 LEFT JOIN 取角色名：列表要显示"项目角色"，一次查完不做 N+1。
-// solo.projects 也有 role_key 列（表同构），因此两套表共用同一份查询。
+// 角色关联按 roles.id：key 不再是外键目标，允许公司内重名。
+// solo.projects 也加了 role_id 列（恒为 NULL，单人模式不需要项目角色），
+// 保留同构列是为了两套表共用同一份查询 SQL。
 const selectColumns = `p.id::text, p.key, p.name, p.description, p.repo_url,
-coalesce(p.role_key, ''), coalesce(r.name, ''), coalesce(p.tenant_id::text, ''), p.created_at`
+coalesce(r.key, ''), coalesce(r.name, ''), coalesce(p.tenant_id::text, ''), p.created_at`
 
-const fromClause = ` LEFT JOIN roles r ON r.key = p.role_key`
+const fromClause = ` LEFT JOIN roles r ON r.id = p.role_id`
 
 // List 返回指定页的项目与总数；page.PageSize=0 表示全量（下拉选项、守卫回退用）。
 // ownerUserID 非空时只返回该账号创建的项目，用于单人视图的项目管理。
@@ -119,13 +121,23 @@ func (r *Repository) Create(ctx context.Context, in contract.ProjectInput, owner
 		}
 		tenantID = scope.TenantID
 	}
-	query := `INSERT INTO ` + r.table + ` (key, name, description, repo_url, role_key, owner_user_id, tenant_id)
-	VALUES ($1, $2, $3, $4, NULLIF($5, ''), $6, $7)
+	// role_id 由 $5（角色标识）在 SQL 内解析；$7 是归属公司，$8 是同一个公司的 uuid 形态。
+	// 为什么拆两个参数：同一占位符同时用于写入 tenant_id 列（uuid）和子查询比较时，
+	// PG 的类型推断会打架（报 "column tenant_id is of type uuid but expression is of type text"）。
+	//
+	// 两处都用 NULLIF(...)::uuid 而不是在 Go 侧传 nil：
+	// 单人分区的 tenantID 是空串，直接传 '' 会被 uuid 转换拒绝（invalid input syntax for type uuid: ""）。
+	// NULLIF 把空串先变 NULL，再转 uuid 才安全。
+	query := `INSERT INTO ` + r.table + ` (key, name, description, repo_url, role_id, owner_user_id, tenant_id)
+	VALUES ($1, $2, $3, $4,
+	        (SELECT ro.id FROM roles ro
+	         WHERE ro.key = $5 AND (ro.tenant_id IS NULL OR ro.tenant_id = NULLIF($8, '')::uuid)),
+	        $6, NULLIF($7, '')::uuid)
 	RETURNING key`
 
 	var created string
 	err := r.db.QueryRowContext(ctx, query,
-		in.Key, in.Name, in.Description, in.RepoURL, in.RoleKey, ownerUserID, tenantID).Scan(&created)
+		in.Key, in.Name, in.Description, in.RepoURL, in.RoleKey, ownerUserID, tenantID, tenantID).Scan(&created)
 	if err != nil {
 		return contract.Project{}, err
 	}
@@ -145,7 +157,9 @@ func (r *Repository) Update(ctx context.Context, key, ownerUserID string, in con
 	}
 	filter.Add(`p.key = ?`, key)
 	query := `UPDATE ` + r.table + ` p
-	SET name = $1, description = $2, repo_url = $3, role_key = NULLIF($4, '')
+	SET name = $1, description = $2, repo_url = $3,
+	    role_id = (SELECT ro.id FROM roles ro
+	               WHERE ro.key = $4 AND (ro.tenant_id IS NULL OR ro.tenant_id = p.tenant_id))
 	WHERE ` + filter.Cond() + ` RETURNING p.key`
 
 	args := append([]any{in.Name, in.Description, in.RepoURL, in.RoleKey}, filter.Args()...)

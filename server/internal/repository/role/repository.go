@@ -98,11 +98,29 @@ func (r *Repository) FindByKey(ctx context.Context, key string, scope contract.S
 	return item, nil
 }
 
-// FindByKeyAny 不按租户过滤地按 key 查角色，专供权限判定链路使用。
-// 权限判定（authz.resolveRoleKey → 角色权限）必须先解析出「这个人挂着什么角色」，
-// 而那一步发生在 scope 推导过程中，不能反过来依赖 scope；查不到角色时上层按"无角色"处理。
-func (r *Repository) FindByKeyAny(ctx context.Context, key string) (contract.Role, error) {
-	row := r.db.QueryRowContext(ctx, `SELECT `+columns+` FROM roles WHERE key = $1`, key)
+// FindByKeyAny 按 key 查角色，允许平台内置（tenant_id 为空）与指定公司的自定义角色。
+//
+// 参数 tenantID 为空表示「平台视角」（超管），此时只匹配内置角色——
+// 超管没有公司归属，不该解析出某家公司的自定义角色。
+//
+// 为什么保留这个"不走 Scope"的入口：权限判定（authz.resolveRoleKey → 角色权限）
+// 必须先解析出「这个人挂着什么角色」，而那一步发生在 scope 推导过程中，
+// 不能反过来依赖 scope（会形成循环）。所以这里直接收 tenantID 而不是 Scope。
+//
+// 为什么必须带 tenantID：key 现在是「公司内唯一」，两家公司可以各有一个 devops。
+// 不带公司过滤会随机命中一家——意味着甲公司的成员可能被套上乙公司 devops 的权限。
+func (r *Repository) FindByKeyAny(ctx context.Context, key, tenantID string) (contract.Role, error) {
+	// 有公司归属时：内置角色 + 本公司自定义角色。
+	// 无公司归属（超管）时：只认内置角色。
+	query := `SELECT ` + columns + ` FROM roles WHERE key = $1 AND (tenant_id IS NULL)`
+	args := []any{key}
+	if tenantID != "" {
+		query = `SELECT ` + columns + ` FROM roles
+WHERE key = $1 AND (tenant_id IS NULL OR tenant_id = $2)`
+		args = append(args, tenantID)
+	}
+
+	row := r.db.QueryRowContext(ctx, query, args...)
 	item, err := scan(row)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) || errors.Is(err, pgx.ErrNoRows) {
@@ -213,8 +231,13 @@ func (r *Repository) DeletePermissionsExceptRole(ctx context.Context, exceptKey 
 	return nil
 }
 
-// CreateBuiltinIfMissing 播种内置角色：只在 key 不存在时插入并写默认权限。
+// CreateBuiltinIfMissing 播种内置角色：只在「平台内置角色里还没有这个 key」时插入并写默认权限。
 // 返回 true 表示本次新建，false 表示已存在（已存在的角色不会被默认值覆盖）。
+//
+// 不用 ON CONFLICT：key 的唯一性现在是「(coalesce(tenant_id,零), key)」这个表达式索引，
+// ON CONFLICT 要把整个表达式照抄一遍，可读性差且容易与索引定义走偏。
+// 播种只在启动时执行一次，不是热路径，用 INSERT ... WHERE NOT EXISTS 更直白，
+// 语义也精确对应「内置角色（tenant_id 为空）里没有这个 key」。
 func (r *Repository) CreateBuiltinIfMissing(ctx context.Context, key, name, description string, permissions []string) (bool, error) {
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -224,8 +247,9 @@ func (r *Repository) CreateBuiltinIfMissing(ctx context.Context, key, name, desc
 
 	var roleID string
 	err = tx.QueryRowContext(ctx,
-		`INSERT INTO roles (key, name, description, is_builtin) VALUES ($1, $2, $3, true)
-		 ON CONFLICT (key) DO NOTHING
+		`INSERT INTO roles (key, name, description, is_builtin)
+		 SELECT $1, $2, $3, true
+		 WHERE NOT EXISTS (SELECT 1 FROM roles WHERE key = $1 AND tenant_id IS NULL)
 		 RETURNING id::text`,
 		key, name, description).Scan(&roleID)
 	if errors.Is(err, sql.ErrNoRows) {

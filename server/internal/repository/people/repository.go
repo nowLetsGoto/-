@@ -29,10 +29,22 @@ func NewRepository(db *sql.DB) *Repository {
 }
 
 // selectColumns 带 LEFT JOIN 取角色名：列表要显示"什么角色"，一次查完不做 N+1。
+// 角色名从 roles 表 JOIN 出来，而不是在 people 里存一份快照——
+// 角色改名后列表应当立刻显示新名字。
 const selectColumns = `p.id::text, p.name, coalesce(p.username, ''), p.email, p.phone, p.title,
-coalesce(p.role_key, ''), coalesce(r.name, ''), p.created_at`
+coalesce(r.key, ''), coalesce(r.name, ''), p.created_at`
 
-const fromClause = ` FROM people p LEFT JOIN roles r ON r.key = p.role_key`
+// 关联改为按 roles.id：key 不再是外键目标，可以公司内重名（见 schema.sql 说明）。
+const fromClause = ` FROM people p LEFT JOIN roles r ON r.id = p.role_id`
+
+// roleIDSubquery 把调用方提交的角色标识解析成 roles.id。
+//
+// 为什么在 SQL 里解析而不是先查一次再写：解析与写入必须在同一个语句里完成，
+// 否则两次查询之间有窗口期（角色被删/被改名），会出现"查到了但写进去是空"。
+// 条件带租户：只能挂本公司自定义角色或平台内置角色（tenant_id 为空）。
+// 解析不到时结果是 NULL（NOT NULL 约束之外的空值），即"没有角色"，与传空串等价。
+const roleIDSubquery = `(SELECT r.id FROM roles r
+  WHERE r.key = $%d AND (r.tenant_id IS NULL OR r.tenant_id = $%d))`
 
 // 关联查询统一从"人员侧"出发，JOIN 出名字；两张表结构对称，抽成常量避免抄错列顺序。
 // 项目关联只存在于团队分区，因此显式写 team.projects（分表后不再有 public.projects）。
@@ -202,9 +214,10 @@ func (r *Repository) save(ctx context.Context, id string, in contract.PersonInpu
 	if id == "" {
 		// NULLIF 把空登录名落成 NULL：username 上有唯一索引，多个空串会互相冲突。
 		// tenant_id 从 scope 取——请求体里没有这个字段，调用方无法伪造归属。
+		// role_id 由 $6（角色标识）在 SQL 内解析，$7（tenant_id）同时用于归属与角色可见性。
 		row = tx.QueryRowContext(ctx,
-			`INSERT INTO people (name, username, email, phone, title, role_key, tenant_id)
-			 VALUES ($1, NULLIF($2, ''), $3, $4, $5, NULLIF($6, ''), $7)
+			`INSERT INTO people (name, username, email, phone, title, role_id, tenant_id)
+			 VALUES ($1, NULLIF($2, ''), $3, $4, $5, `+fmt.Sprintf(roleIDSubquery, 6, 7)+`, $7)
 			 RETURNING id::text`,
 			in.Name, in.Username, in.Email, in.Phone, in.Title, in.RoleKey, scope.TenantID)
 	} else {
@@ -214,7 +227,7 @@ func (r *Repository) save(ctx context.Context, id string, in contract.PersonInpu
 		row = tx.QueryRowContext(ctx,
 			`UPDATE people
 			 SET name = $1, username = NULLIF($2, ''), email = $3, phone = $4, title = $5,
-			     role_key = NULLIF($6, '')
+			     role_id = `+fmt.Sprintf(roleIDSubquery, 6, 7)+`
 			 WHERE `+filter.Cond()+` RETURNING id::text`,
 			in.Name, in.Username, in.Email, in.Phone, in.Title, in.RoleKey, scope.TenantID, id)
 	}

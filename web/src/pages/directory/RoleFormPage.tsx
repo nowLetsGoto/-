@@ -52,11 +52,6 @@ export function RoleFormPage(): JSX.Element {
     (isBuiltin && !isSuperAdmin) ||
     !atLeastLevel(me, 'platform_admin');
 
-  // 新建自定义角色时后端要求 key 带公司前缀（取公司 UUID 前 8 位），
-  // 因为 roles.key 全局唯一且被人员/项目外键引用，不带前缀会与内置或他家的角色撞车。
-  // 这里把它做成 placeholder 提示，不自动填充——用户可以自己粘，但得知道规则。
-  const keyPrefix = me?.tenantId ? me.tenantId.slice(0, 8) : '';
-
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
@@ -186,11 +181,7 @@ export function RoleFormPage(): JSX.Element {
           <Input
             className="text-input"
             maxLength={32}
-            placeholder={
-              keyPrefix
-                ? `如 ${keyPrefix}-devops，创建后不可改`
-                : '如 release-manager，创建后不可改'
-            }
+            placeholder="如 devops，本公司内不可重名，创建后不可改"
             value={form.key}
             readOnly={editing}
             disabled={readOnly}

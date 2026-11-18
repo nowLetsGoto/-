@@ -262,7 +262,13 @@ SELECT setval(
 -- 之后在页面上改过就不再被覆盖。
 CREATE TABLE IF NOT EXISTS roles (
   id          UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
-  key         TEXT        UNIQUE NOT NULL,
+  -- key 只在本公司内唯一（见下方 idx_roles_tenant_key）；平台内置角色 tenant_id 为空，
+  -- 归到同一个"平台"分组，因此内置之间仍然互不重名。
+  --
+  -- 建表时**不能**写 UNIQUE：roles.key 曾是 people/projects 的外键目标，
+  -- 老库里那两个外键还挂着，删约束会被依赖挡住。旧约束的清理放在 people /
+  -- team.projects 两段里（那里先删外键，再删本约束）。
+  key         TEXT        NOT NULL,
   name        TEXT        NOT NULL,
   description TEXT        NOT NULL DEFAULT '',
   is_builtin  BOOLEAN     NOT NULL DEFAULT false,
@@ -314,13 +320,26 @@ DROP INDEX IF EXISTS people_username_key;
 -- 存量库补列：早期 people 表没有 role_key，缺了外键就补一个。
 ALTER TABLE people ADD COLUMN IF NOT EXISTS role_key TEXT;
 
-DO $$
-BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'people_role_fk') THEN
-    ALTER TABLE people ADD CONSTRAINT people_role_fk
-      FOREIGN KEY (role_key) REFERENCES roles(key) ON DELETE SET NULL;
-  END IF;
-END $$;
+-- 角色关联改为按 roles.id（UUID）而不是 roles.key（文本）。
+--
+-- 为什么：key 是给人看的业务标识（devops / tester），本该允许两家公司各有一个 devops；
+-- 但它当时是外键的目标，只能全平台唯一，于是被迫用「公司 UUID 前 8 位前缀」绕过——
+-- 那是权宜之计，用户看到的角色标识变成 a1b2c3d4-devops。
+-- 改引用主键之后，key 就只是本公司的展示字段，可以放心地公司内唯一。
+--
+-- 顺序：先加 role_id 并回填（此时 role_key 还在，可用来对照），再换外键、删旧列。
+ALTER TABLE people ADD COLUMN IF NOT EXISTS role_id UUID REFERENCES roles(id) ON DELETE SET NULL;
+
+-- 回填：把已有的 role_key 翻成对应的 roles.id。
+-- 只在 role_id 为空时填，保证幂等（重复启动不会覆盖后续的选择）。
+UPDATE people p SET role_id = r.id
+FROM roles r
+WHERE p.role_id IS NULL AND p.role_key IS NOT NULL AND p.role_key <> '' AND r.key = p.role_key;
+
+-- 旧外键与旧列一起清掉：role_key 若保留会变成"第二份真相"，
+-- 一旦写入路径漏了同步就会与 role_id 不一致，反而制造 bug。
+ALTER TABLE people DROP CONSTRAINT IF EXISTS people_role_fk;
+ALTER TABLE people DROP COLUMN IF EXISTS role_key;
 
 CREATE TABLE IF NOT EXISTS teams (
   id          UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -396,6 +415,11 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_people_tenant_username
 -- roles.tenant_id 为空表示平台内置（所有公司可见），非空表示公司自定义。
 ALTER TABLE roles ADD COLUMN IF NOT EXISTS tenant_id UUID REFERENCES tenants(id);
 CREATE INDEX IF NOT EXISTS idx_roles_tenant ON roles (tenant_id);
+-- 角色标识的公司内唯一索引：必须在加完 tenant_id 之后建。
+-- coalesce 把内置角色（tenant_id 为空）归到同一个"平台"分组，
+-- 保证 5 个内置角色之间仍然互不重名（否则可能出现两个 developer）。
+CREATE UNIQUE INDEX IF NOT EXISTS idx_roles_tenant_key
+  ON roles (coalesce(tenant_id, '00000000-0000-0000-0000-000000000000'::uuid), key);
 
 -- 项目两张分区表同构加列：solo 分区恒为 NULL——单人数据不参与公司隔离，
 -- 保留同构列只是让仓储能共用同一份 SQL。
@@ -464,10 +488,24 @@ CREATE INDEX IF NOT EXISTS idx_team_admins_user ON team_admins (user_id);
 
 -- 团队项目的角色：进入该项目时的"项目角色"，优先级高于人员自身的角色。
 -- 允许为空：为空表示"沿用人员角色"，这是默认状态。
-DO $$
-BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'projects_role_fk') THEN
-    ALTER TABLE team.projects ADD CONSTRAINT projects_role_fk
-      FOREIGN KEY (role_key) REFERENCES roles(key) ON DELETE SET NULL;
-  END IF;
-END $$;
+--
+-- 与 people 同样改为引用 roles.id：理由见 people 段的说明（key 要能公司内唯一）。
+ALTER TABLE team.projects ADD COLUMN IF NOT EXISTS role_id UUID REFERENCES roles(id) ON DELETE SET NULL;
+UPDATE team.projects p SET role_id = r.id
+FROM roles r
+WHERE p.role_id IS NULL AND p.role_key IS NOT NULL AND p.role_key <> '' AND r.key = p.role_key;
+ALTER TABLE team.projects DROP CONSTRAINT IF EXISTS projects_role_fk;
+ALTER TABLE team.projects DROP COLUMN IF EXISTS role_key;
+
+-- 单人分区的 role_key 列原本只是为了与团队表同构（单人模式没有角色，恒为空）。
+-- 去掉它，改成与团队表同构的 role_id（恒为 NULL）：两套表仍共用同一份查询 SQL，
+-- 因此列必须存在；但它不会有人写，也不会命中任何角色。
+-- 之所以不顺带把 role_key 留着当"同构列"：列名叫 key 却永远为空，比没有更容易误用。
+ALTER TABLE solo.projects ADD COLUMN IF NOT EXISTS role_id UUID REFERENCES roles(id) ON DELETE SET NULL;
+ALTER TABLE solo.projects DROP COLUMN IF EXISTS role_key;
+
+-- 到这里 people_role_fk 与 projects_role_fk 都已删除，roles.key 不再被任何外键引用，
+-- 可以安全地去掉它的全局唯一约束了。老库里它是 UNIQUE 约束（contype='u'），
+-- DROP INDEX 对约束无效，两种形态都清。
+ALTER TABLE roles DROP CONSTRAINT IF EXISTS roles_key_key;
+DROP INDEX IF EXISTS roles_key_key;
