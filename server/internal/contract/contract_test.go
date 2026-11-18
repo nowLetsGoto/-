@@ -128,6 +128,24 @@ func TestMetaSourceEnumMatchesContract(t *testing.T) {
 	}
 }
 
+// TestAccountLevelEnumMatchesContract 锁死四级身份的取值与顺序：
+// 层级大小直接决定接口门槛，yaml 与 Go 一旦漂移就会出现"前端显示平台管理员、后端却当普通成员"的越权/误拒。
+func TestAccountLevelEnumMatchesContract(t *testing.T) {
+	spec := loadSpec(t)
+	enum := spec.Components.Schemas["AccountLevel"].Enum
+	if !reflect.DeepEqual(enum, AccountLevels) {
+		t.Fatalf("AccountLevel.enum=%v 与 Go AccountLevels=%v 不一致", enum, AccountLevels)
+	}
+	if AccountLevelRank(AccountLevelSuperAdmin) <= AccountLevelRank(AccountLevelPlatformAdmin) ||
+		AccountLevelRank(AccountLevelPlatformAdmin) <= AccountLevelRank(AccountLevelTeamAdmin) ||
+		AccountLevelRank(AccountLevelTeamAdmin) <= AccountLevelRank(AccountLevelMember) {
+		t.Fatal("层级顺序必须是 super_admin > platform_admin > team_admin > member")
+	}
+	if AccountLevelRank("unknown") != 0 || AccountLevelAtLeast(AccountLevelMember, "unknown") {
+		t.Fatal("未知层级必须排最低，未知门槛必须失败关闭")
+	}
+}
+
 func TestAPIRoutesMatchContract(t *testing.T) {
 	spec := loadSpec(t)
 	if len(spec.Servers) == 0 {

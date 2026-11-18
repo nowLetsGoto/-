@@ -247,7 +247,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** 权限点目录（前端据此渲染勾选矩阵，避免把目录抄进前端） */
+        /** 权限点目录（仅超级管理员；前端据此渲染勾选矩阵，避免把目录抄进前端） */
         get: operations["listPermissions"];
         put?: never;
         post?: never;
@@ -264,7 +264,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** 角色列表（含各自权限点） */
+        /** 角色列表（仅超级管理员；含各自权限点） */
         get: operations["listRoles"];
         put?: never;
         /** 新建自定义角色（仅超级管理员） */
@@ -282,7 +282,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** 角色详情 */
+        /** 角色详情（仅超级管理员） */
         get: operations["getRole"];
         /** 编辑角色名称 / 描述 / 权限（仅超级管理员；超管角色权限不可改） */
         put: operations["updateRole"];
@@ -538,6 +538,12 @@ export interface components {
          * @enum {string}
          */
         SessionMode: "solo" | "team";
+        /**
+         * @description 管理身份层级，决定「能管谁、管多大范围」，与业务角色正交。 顺序 super_admin > platform_admin > team_admin > member； 与 users.account_level 的 CHECK 约束、Go 的 contract.AccountLevel* 常量一一对应。
+         * @default member
+         * @enum {string}
+         */
+        AccountLevel: "super_admin" | "platform_admin" | "team_admin" | "member";
         /** @description 无状态令牌：载荷含账号、令牌版本、到期时间与登录模式，签名由 AUTH_SECRET 生成。 服务端不存会话，重启后令牌仍然有效；前端存 localStorage 并随请求发送。 */
         LoginResult: {
             /** @description 形如「账号|版本|到期时间戳|模式.HMAC-SHA256 签名」的 BASE64URL 串 */
@@ -549,6 +555,9 @@ export interface components {
              */
             expiresAt: string;
             mode: components["schemas"]["SessionMode"];
+            accountLevel: components["schemas"]["AccountLevel"];
+            /** @description 账号所属公司 id；超管为空串。仅供首屏展示，服务端判定一律以令牌重建的身份为准 */
+            tenantId: string;
         };
         /**
          * @description 四环境枚举，全仓唯一定义处；DB 只 NOT NULL 不加 CHECK
@@ -673,6 +682,13 @@ export interface components {
             projectKeys: string[];
             /** @description 是否超级管理员；前端据此决定是否渲染「超级管理员」菜单（真正的边界在服务端 403） */
             isSuperAdmin: boolean;
+            /** @description 账号所属公司 id；超管为空串 */
+            tenantId: string;
+            /** @description 公司名，由 tenants 表按 tenantId 查得；超管为空串 */
+            tenantName: string;
+            accountLevel: components["schemas"]["AccountLevel"];
+            /** @description 数据范围内的团队 id 并集，由 authz.Service.ScopeOf 推导；超管与公司管理员为空数组表示不限团队 */
+            teamIds: string[];
             /** @description 平台级权限点（不含项目）；项目内权限可能被项目角色覆盖，由各接口判定 */
             permissions: string[];
         };
@@ -1721,6 +1737,13 @@ export interface operations {
                 };
             };
             401: components["responses"]["Unauthorized"];
+            /** @description 非超级管理员 */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
         };
     };
     listRoles: {
@@ -1742,6 +1765,13 @@ export interface operations {
                 };
             };
             401: components["responses"]["Unauthorized"];
+            /** @description 非超级管理员 */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
         };
     };
     createRole: {
@@ -1798,6 +1828,13 @@ export interface operations {
                 };
             };
             401: components["responses"]["Unauthorized"];
+            /** @description 非超级管理员 */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
             404: components["responses"]["NotFound"];
         };
     };

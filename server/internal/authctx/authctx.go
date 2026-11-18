@@ -12,6 +12,7 @@ import (
 )
 
 type identityKey struct{}
+type scopeKey struct{}
 
 // With 把调用者身份写进上下文。
 func With(ctx context.Context, identity contract.Identity) context.Context {
@@ -22,6 +23,20 @@ func With(ctx context.Context, identity contract.Identity) context.Context {
 func From(ctx context.Context) contract.Identity {
 	identity, _ := ctx.Value(identityKey{}).(contract.Identity)
 	return identity
+}
+
+// WithScope 把推导好的数据范围写进上下文；只有 InjectScope 应该调用它。
+// 范围与身份分开存：身份来自令牌，范围来自身份 + 关联表，二者来源不同、失效时机也不同。
+func WithScope(ctx context.Context, scope contract.Scope) context.Context {
+	return context.WithValue(ctx, scopeKey{}, scope)
+}
+
+// ScopeFrom 读出当前请求的数据范围。
+// 未经 InjectScope 时得到零值（All=false、TenantID/TeamIDs 均为空），
+// 宁可查不到数据，也不能因为「没注入」就退化成不加过滤的全量查询。
+func ScopeFrom(ctx context.Context) contract.Scope {
+	scope, _ := ctx.Value(scopeKey{}).(contract.Scope)
+	return scope
 }
 
 // Username 是 From(ctx).Username 的简写，调用点更短。

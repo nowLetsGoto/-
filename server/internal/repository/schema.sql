@@ -157,6 +157,17 @@ ON CONFLICT (key) DO NOTHING;
 -- 四 · 全局表（跨模式共享的事实）
 -- ---------------------------------------------------------------------------
 
+-- 公司：数据隔离的最高边界。name / code 都唯一（code 用于 API Key 归属与界面展示）。
+-- 必须建在 users 之前：users.tenant_id 是它的外键。
+-- 一个公司对应一个平台管理员账号，两者在 P2 的创建流程里原子地建立。
+CREATE TABLE IF NOT EXISTS tenants (
+  id         UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+  name       TEXT        NOT NULL UNIQUE,
+  code       TEXT        NOT NULL UNIQUE,
+  status     TEXT        NOT NULL DEFAULT 'active',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
 -- system_settings：单行系统配置（Webhook + 外部 API Key）。
 -- webhook_fields 用 TEXT 存 JSON 数组：不依赖驱动的 text[] 扫描实现，
 -- 读写统一走 encoding/json，与 contract.WebhookFields 的校验集合天然同构。
@@ -266,6 +277,61 @@ CREATE INDEX IF NOT EXISTS idx_users_mode_created ON users (mode, created_at);
 CREATE INDEX IF NOT EXISTS idx_users_person ON users (person_id);
 
 -- ---------------------------------------------------------------------------
+-- 四·补 · 多公司租户化（P0 身份地基）
+-- 所有新列用 ADD COLUMN IF NOT EXISTS，索引用 IF NOT EXISTS，约束用 DO 包裹，
+-- 于是全新库、存量库、以及"上次执行到一半"的库跑完这段都收敛到同一结构。
+-- 这里只落结构，不做存量数据回填——回填属于 P6 迁移，P0 不碰业务数据。
+-- ---------------------------------------------------------------------------
+
+-- 账号：身份层级 + 公司归属。is_super_admin 过渡期保留，不删除。
+ALTER TABLE users ADD COLUMN IF NOT EXISTS tenant_id UUID REFERENCES tenants(id);
+ALTER TABLE users ADD COLUMN IF NOT EXISTS account_level TEXT NOT NULL DEFAULT 'member';
+
+-- 每家公司至多一个 active 平台管理员：部分唯一索引，停用后可再建新的。
+-- status 是 users 的既有列，因此这里不需要再补列。
+CREATE UNIQUE INDEX IF NOT EXISTS idx_users_one_platform_admin
+  ON users (tenant_id) WHERE account_level = 'platform_admin' AND status = 'active';
+
+-- 身份层级四级枚举约束，挡住 account_level 的脏值。
+-- pg_constraint 里按名字判存在：ALTER TABLE ... ADD CONSTRAINT 没有 IF NOT EXISTS。
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'users_account_level_check') THEN
+    ALTER TABLE users ADD CONSTRAINT users_account_level_check
+      CHECK (account_level IN ('super_admin','platform_admin','team_admin','member'));
+  END IF;
+END $$;
+
+-- 团队 / 人员 / 角色归属公司。一个人只属于一个公司，可关联多个团队。
+ALTER TABLE teams ADD COLUMN IF NOT EXISTS tenant_id UUID REFERENCES tenants(id);
+CREATE INDEX IF NOT EXISTS idx_teams_tenant ON teams (tenant_id);
+ALTER TABLE people ADD COLUMN IF NOT EXISTS tenant_id UUID REFERENCES tenants(id);
+CREATE INDEX IF NOT EXISTS idx_people_tenant ON people (tenant_id);
+-- roles.tenant_id 为空表示平台内置（所有公司可见），非空表示公司自定义。
+ALTER TABLE roles ADD COLUMN IF NOT EXISTS tenant_id UUID REFERENCES tenants(id);
+CREATE INDEX IF NOT EXISTS idx_roles_tenant ON roles (tenant_id);
+
+-- 项目两张分区表同构加列：solo 分区恒为 NULL——单人数据不参与公司隔离，
+-- 保留同构列只是让仓储能共用同一份 SQL。
+DO $$
+DECLARE
+  s TEXT;
+BEGIN
+  FOREACH s IN ARRAY ARRAY['team', 'solo'] LOOP
+    EXECUTE format($q$
+      ALTER TABLE %I.projects ADD COLUMN IF NOT EXISTS tenant_id UUID REFERENCES tenants(id)
+    $q$, s);
+    EXECUTE format('CREATE INDEX IF NOT EXISTS idx_projects_tenant ON %I.projects (tenant_id)', s);
+  END LOOP;
+END $$;
+
+-- 审计日志只有团队分区需要归属维度：单人分区天然以物理表隔离，没有公司/团队概念。
+-- team_id 不加外键——日志的归属是"当时"的事实，团队删除后历史仍要可读。
+ALTER TABLE team.audit_logs ADD COLUMN IF NOT EXISTS tenant_id UUID;
+ALTER TABLE team.audit_logs ADD COLUMN IF NOT EXISTS team_id UUID;
+CREATE INDEX IF NOT EXISTS idx_team_audit_tenant ON team.audit_logs (tenant_id, created_at DESC);
+
+-- ---------------------------------------------------------------------------
 -- 五 · 项目协作关系：只属于团队分区
 -- 单人空间没有"成员"与"项目角色"，所以这两张关联表不参与分区；
 -- 外键显式指向 team.projects——团队项目被删除时会级联清理，不留悬挂关系。
@@ -293,6 +359,16 @@ CREATE TABLE IF NOT EXISTS team_members (
 );
 
 CREATE INDEX IF NOT EXISTS idx_team_members_person ON team_members (person_id);
+
+-- 团队管理员关联：账号 ↔ 团队，多对多，只有 account_level='team_admin' 的账号才会出现在这里。
+-- 一个管理员可管多个团队；一个团队可有多个管理员（人员变动不必迁移团队数据）。
+-- 复合主键保证同一账号对同一团队只有一条关系；user 索引支撑「反查我管哪些团队」。
+CREATE TABLE IF NOT EXISTS team_admins (
+  team_id UUID NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  PRIMARY KEY (team_id, user_id)
+);
+CREATE INDEX IF NOT EXISTS idx_team_admins_user ON team_admins (user_id);
 
 -- 团队项目的角色：进入该项目时的"项目角色"，优先级高于人员自身的角色。
 -- 允许为空：为空表示"沿用人员角色"，这是默认状态。

@@ -39,6 +39,42 @@ FROM team_projects tp
 JOIN team.projects p ON p.id = tp.project_id`
 )
 
+// AdminTeamIDs 返回 team_admin 账号在 team_admins 中关联的全部团队 id。
+// 只做单列读取与行映射；"该账号是不是 team_admin"由 authz.Service 判断，这里不重复判定。
+func (r *Repository) AdminTeamIDs(ctx context.Context, userID string) ([]string, error) {
+	return r.teamIDs(ctx, `SELECT team_id::text FROM team_admins WHERE user_id = $1 ORDER BY team_id`, userID)
+}
+
+// MemberTeamIDs 返回人员在 team_members 中关联的全部团队 id。
+// 参数是 person_id 而不是 user_id：成员关系的真相在人员档案上，
+// 账号到人员的映射由 authz.Service.PersonID 统一负责（显式绑定优先，兼容登录名回退）。
+func (r *Repository) MemberTeamIDs(ctx context.Context, personID string) ([]string, error) {
+	return r.teamIDs(ctx, `SELECT team_id::text FROM team_members WHERE person_id = $1 ORDER BY team_id`, personID)
+}
+
+// teamIDs 把"单列 id 查询"收敛成一份扫描逻辑。
+// 排序让 scope 稳定可断言；空结果返回空切片而非 nil，保证 JSON 里是 []。
+func (r *Repository) teamIDs(ctx context.Context, query, arg string) ([]string, error) {
+	rows, err := r.db.QueryContext(ctx, query, arg)
+	if err != nil {
+		return nil, fmt.Errorf("查询账号关联团队失败: %w", err)
+	}
+	defer rows.Close()
+
+	ids := make([]string, 0)
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("读取关联团队 id 失败: %w", err)
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("遍历关联团队失败: %w", err)
+	}
+	return ids, nil
+}
+
 // List 返回指定页的团队，并补齐该页的关联（共三查，不做 N+1）；同时返回总数供分页。
 func (r *Repository) List(ctx context.Context, page contract.PageQuery) ([]contract.Team, int, error) {
 	var total int

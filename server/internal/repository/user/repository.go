@@ -20,11 +20,15 @@ import (
 	"dandelion/server/internal/repository"
 )
 
-// Record 是仓储内部行：对外 DTO 之外还带密码哈希与令牌版本。
+// Record 是仓储内部行：对外 DTO 之外还带密码哈希、令牌版本与身份层级原始值。
+// 层级与租户只放在 Record 里、不进 contract.User：它们是鉴权输入，不是账号管理接口的输出，
+// 放进 DTO 就得同步改公开契约，徒增 P0 的范围。
 type Record struct {
 	User         contract.User
 	PasswordHash string
 	TokenVersion int
+	AccountLevel string
+	TenantID     string
 }
 
 // Repository 是 users 的唯一 SQL 出入口。
@@ -39,7 +43,8 @@ func NewRepository(db *sql.DB) *Repository {
 // columns 带 LEFT JOIN 取人员姓名与角色名：列表页要显示"绑定的人是谁、什么角色"，一次查完不做 N+1。
 const columns = `u.id::text, u.username, u.mode, u.password_hash, coalesce(u.person_id::text, ''),
 u.is_super_admin, u.status, u.token_version, u.last_login_at, u.last_login_ip,
-u.created_at, coalesce(p.name, ''), coalesce(p.role_key, ''), coalesce(r.name, '')`
+u.created_at, coalesce(p.name, ''), coalesce(p.role_key, ''), coalesce(r.name, ''),
+coalesce(u.tenant_id::text, ''), u.account_level`
 
 // fromClause 两次 LEFT JOIN 都是"可空"的：账号可以先建、之后再绑定人员；
 // 人员也可以没有角色。两种情况都要让账号本身仍能被查出来。
@@ -255,7 +260,7 @@ func scanRecord(row scanner) (Record, error) {
 		&record.User.ID, &record.User.Username, &record.User.Mode, &record.PasswordHash, &record.User.PersonID,
 		&record.User.IsSuperAdmin, &record.User.Status, &record.TokenVersion,
 		&lastLogin, &record.User.LastLoginIP, &createdAt, &record.User.PersonName,
-		&record.User.RoleKey, &record.User.RoleName,
+		&record.User.RoleKey, &record.User.RoleName, &record.TenantID, &record.AccountLevel,
 	)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) || errors.Is(err, pgx.ErrNoRows) {

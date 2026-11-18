@@ -1279,12 +1279,21 @@ components:
       enum: [solo, team]
       default: solo
 
+    AccountLevel:
+      type: string
+      description: >
+        管理身份层级，决定「能管谁、管多大范围」，与业务角色正交。
+        顺序 super_admin > platform_admin > team_admin > member；
+        与 users.account_level 的 CHECK 约束、Go 的 contract.AccountLevel* 常量一一对应。
+      enum: [super_admin, platform_admin, team_admin, member]
+      default: member
+
     LoginResult:
       type: object
       description: >
         无状态令牌：载荷含账号、令牌版本、到期时间与登录模式，签名由 AUTH_SECRET 生成。
         服务端不存会话，重启后令牌仍然有效；前端存 localStorage 并随请求发送。
-      required: [token, username, expiresAt, mode]
+      required: [token, username, expiresAt, mode, accountLevel, tenantId]
       properties:
         token:
           type: string
@@ -1296,7 +1305,12 @@ components:
           format: date-time
           description: ISO 8601 UTC，由 x-constants.authTokenTTLSeconds 推出
         mode:
-          $ref: '#/components/schemas/SessionMode' 
+          $ref: '#/components/schemas/SessionMode'
+        accountLevel:
+          $ref: '#/components/schemas/AccountLevel'
+        tenantId:
+          type: string
+          description: 账号所属公司 id；超管为空串。仅供首屏展示，服务端判定一律以令牌重建的身份为准
 
     Environment:
       type: string
@@ -1524,7 +1538,7 @@ components:
     Me:
       type: object
       description: 当前登录人；没有对应人员记录时 personId 为空、projectKeys 为空
-      required: [username, personId, name, roleKey, roleName, projectKeys, isSuperAdmin, permissions]
+      required: [username, personId, name, roleKey, roleName, projectKeys, isSuperAdmin, tenantId, tenantName, accountLevel, teamIds, permissions]
       properties:
         username:
           type: string
@@ -1546,6 +1560,20 @@ components:
         isSuperAdmin:
           type: boolean
           description: 是否超级管理员；前端据此决定是否渲染「超级管理员」菜单（真正的边界在服务端 403）
+        tenantId:
+          type: string
+          description: 账号所属公司 id；超管为空串
+        tenantName:
+          type: string
+          description: 公司名，由 tenants 表按 tenantId 查得；超管为空串
+        accountLevel:
+          $ref: '#/components/schemas/AccountLevel'
+        teamIds:
+          type: array
+          description: 数据范围内的团队 id 并集，由 authz.Service.ScopeOf 推导；超管与公司管理员为空数组表示不限团队
+          items:
+            type: string
+            format: uuid
         permissions:
           type: array
           description: 平台级权限点（不含项目）；项目内权限可能被项目角色覆盖，由各接口判定

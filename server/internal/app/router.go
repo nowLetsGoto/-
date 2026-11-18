@@ -139,6 +139,9 @@ func NewRouter(d Deps) http.Handler {
 		// 管理动作（上传 / 发布 / 列表 / 系统设置）需要登录；分组只加中间件，不改路由前缀。
 		api.Group(func(private chi.Router) {
 			private.Use(loginmw.RequireAuth(d.Verify))
+			// 身份解析完立刻推导 scope 存进 ctx，后面的 handler 只读不算。
+			// 挂在 RequireAuth 之后：没有可信身份时不做任何范围推导。
+			private.Use(loginmw.InjectScope(d.Authz))
 			// 发布/暂存：提交时项目在请求体里，由 handler 内部判定 build.write
 			private.Post("/builds/stage", middleware.Wrap(d.Builds.Stage))
 			private.Post("/builds", middleware.Wrap(d.Builds.Commit))

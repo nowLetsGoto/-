@@ -14,15 +14,17 @@ import (
 	"dandelion/server/internal/contract"
 	"dandelion/server/internal/repository"
 	peoplerepo "dandelion/server/internal/repository/people"
+	tenantrepo "dandelion/server/internal/repository/tenant"
 )
 
 // Service 是人员模块的唯一业务入口。
 type Service struct {
-	repo *peoplerepo.Repository
+	repo    *peoplerepo.Repository
+	tenants *tenantrepo.Repository
 }
 
-func NewService(repo *peoplerepo.Repository) *Service {
-	return &Service{repo: repo}
+func NewService(repo *peoplerepo.Repository, tenants *tenantrepo.Repository) *Service {
+	return &Service{repo: repo, tenants: tenants}
 }
 
 // List 返回指定页的人员（含关联名字）与总数；page.PageSize=0 时返回全量。
@@ -73,16 +75,34 @@ func (s *Service) Update(ctx context.Context, id string, in contract.PersonInput
 }
 
 // Me 返回当前登录人的档案投影。
-// personID 由 authz 服务按"账号绑定优先"解析，和权限判定共用同一人；
-// 没有对应人员不算错误：返回空档案，前端据此回退到第一个项目。
-func (s *Service) Me(ctx context.Context, username, personID string, isSuperAdmin bool) (contract.Me, error) {
-	empty := contract.Me{Username: username, ProjectKeys: []string{}, IsSuperAdmin: isSuperAdmin}
+// identity 提供"我是谁 / 我属于哪个公司"；personID 由 authz 服务按"账号绑定优先"解析，
+// 和权限判定共用同一人；teamIDs 来自请求上下文里的 scope，由 InjectScope 推导，
+// 本层只做透传，绝不重新算一遍——推导必须只有 authz.Service.ScopeOf 一个出口。
+//
+// 没有对应人员不算错误：仍返回身份字段，前端据此回退到第一个项目。
+func (s *Service) Me(ctx context.Context, identity contract.Identity, personID string, teamIDs []string) (contract.Me, error) {
+	tenantName, err := s.tenants.NameByID(ctx, identity.TenantID)
+	if err != nil {
+		return contract.Me{}, err
+	}
+	if teamIDs == nil {
+		teamIDs = []string{}
+	}
+	me := contract.Me{
+		Username:     identity.Username,
+		ProjectKeys:  []string{},
+		IsSuperAdmin: identity.IsSuperAdmin,
+		TenantID:     identity.TenantID,
+		TenantName:   tenantName,
+		AccountLevel: identity.Level(),
+		TeamIDs:      teamIDs,
+	}
 	if personID == "" {
-		return empty, nil
+		return me, nil
 	}
 	person, err := s.repo.FindByID(ctx, personID)
 	if errors.Is(err, contract.ErrNotFound) {
-		return empty, nil
+		return me, nil
 	}
 	if err != nil {
 		return contract.Me{}, err
@@ -91,12 +111,13 @@ func (s *Service) Me(ctx context.Context, username, personID string, isSuperAdmi
 	if err != nil {
 		return contract.Me{}, err
 	}
-	return contract.Me{
-		Username: username, PersonID: person.ID, Name: person.Name,
-		// 角色原样透出：未分配角色时是空串，由前端统一显示「普通用户」。
-		RoleKey: person.RoleKey, RoleName: person.RoleName,
-		ProjectKeys: keys, IsSuperAdmin: isSuperAdmin,
-	}, nil
+	me.PersonID = person.ID
+	me.Name = person.Name
+	// 角色原样透出：未分配角色时是空串，由前端统一显示「普通用户」。
+	me.RoleKey = person.RoleKey
+	me.RoleName = person.RoleName
+	me.ProjectKeys = keys
+	return me, nil
 }
 
 // translate 把数据库约束冲突翻译成可上屏的中文提示。

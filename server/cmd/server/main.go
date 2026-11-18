@@ -43,6 +43,7 @@ import (
 	rolerepo "dandelion/server/internal/repository/role"
 	settingsrepo "dandelion/server/internal/repository/settings"
 	teamsRepo "dandelion/server/internal/repository/teams"
+	tenantRepo "dandelion/server/internal/repository/tenant"
 	userRepo "dandelion/server/internal/repository/user"
 	"dandelion/server/internal/service"
 	auditsvc "dandelion/server/internal/service/audit"
@@ -112,8 +113,10 @@ func run() error {
 	projectService := projectsvc.NewService(projectRepos)
 
 	// 基础资料：人员与团队各自持有主表，三张关联表由两侧仓储分别维护。
+	// 公司表只提供 /me 需要的名字；归属由身份推导，不由请求参数决定。
+	tenantRepository := tenantRepo.NewRepository(db)
 	peopleRepository := peopleRepo.NewRepository(db)
-	peopleService := peoplesvc.NewService(peopleRepository)
+	peopleService := peoplesvc.NewService(peopleRepository, tenantRepository)
 	teamsRepository := teamsRepo.NewRepository(db)
 	teamsService := teamssvc.NewService(teamsRepository)
 
@@ -145,8 +148,9 @@ func run() error {
 	// 删账号要顺带清掉它在单人分区的项目与文件，因此账号服务依赖清理器与存储路径。
 	userService := usersvc.NewService(usersRepository, repository.NewAccountCleanup(db), paths)
 
-	// 权限判定：超管全量 → 单人业务基线 → 项目角色 → 人员角色 → 空集
-	authzService := authzsvc.NewService(usersRepository, peopleRepository, projectRepos, roleRepository)
+	// 权限判定：超管全量 → 单人业务基线 → 项目角色 → 人员角色 → 空集。
+	// scope 由同一个服务推导：team_admin 查 team_admins，member 查 team_members。
+	authzService := authzsvc.NewService(usersRepository, peopleRepository, projectRepos, roleRepository, teamsRepository)
 	loginService := loginsvc.NewService(cfg, usersRepository)
 	if err := loginService.EnsureAdmin(context.Background()); err != nil {
 		return err

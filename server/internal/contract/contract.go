@@ -74,6 +74,61 @@ const (
 	MetaFallback = "fallback"
 )
 
+// AccountLevel 是管理身份层级：决定「能管谁、管多大范围」，与业务角色完全正交。
+// 取值与 api/openapi.yaml 的 AccountLevel.enum、users.account_level 的 CHECK 约束一一对应。
+// 顺序从高到低；新增层级必须同时改三处并在此注释里说明，避免各层各自解释大小关系。
+const (
+	AccountLevelSuperAdmin    = "super_admin"
+	AccountLevelPlatformAdmin = "platform_admin"
+	AccountLevelTeamAdmin     = "team_admin"
+	AccountLevelMember        = "member"
+)
+
+// AccountLevels 是四级枚举的有序列表，供契约一致性测试逐项比对 openapi.yaml。
+var AccountLevels = []string{
+	AccountLevelSuperAdmin, AccountLevelPlatformAdmin, AccountLevelTeamAdmin, AccountLevelMember,
+}
+
+// AccountLevelRank 返回层级的数值序：super_admin=4 → member=1，未知/空值为 0。
+// 未知值给最低序（而不是默认最高）是刻意的安全选择：库里出现脏值时，
+// 它连 member 门槛都过不了，不会因为「没写层级」意外获得管理权限。
+func AccountLevelRank(level string) int {
+	switch level {
+	case AccountLevelSuperAdmin:
+		return 4
+	case AccountLevelPlatformAdmin:
+		return 3
+	case AccountLevelTeamAdmin:
+		return 2
+	case AccountLevelMember:
+		return 1
+	default:
+		return 0
+	}
+}
+
+// AccountLevelAtLeast 判断 level 是否不低于 min。
+// min 不是四级枚举之一时一律返回 false——门槛拼错应当把接口关上，而不是对所有人放行。
+func AccountLevelAtLeast(level, min string) bool {
+	want := AccountLevelRank(min)
+	if want == 0 {
+		return false
+	}
+	return AccountLevelRank(level) >= want
+}
+
+// EffectiveAccountLevel 把库里的 account_level 与过渡期的 is_super_admin 布尔折算成唯一有效层级。
+// 保留布尔是过渡安排：旧账号（含种子管理员）的 account_level 仍是 member，
+// 若不看布尔，加列这一步就会把现有超管挡在门外。布尔只会「抬高」到 super_admin，
+// 不会反过来压低一个显式设置的层级。
+// 空值保持为空（而不是补成 member）：零值身份代表"还没鉴权"，必须过不了任何层级门槛。
+func EffectiveAccountLevel(level string, superAdmin bool) string {
+	if superAdmin {
+		return AccountLevelSuperAdmin
+	}
+	return level
+}
+
 // 路由常量：servers.url + paths 键组成完整路径；契约测试比对同一份列表。
 const (
 	APIPrefix              = "/api/v1"
@@ -265,11 +320,17 @@ func NormalizeAccountMode(mode SessionMode) (SessionMode, error) {
 }
 
 // LoginResult 是登录成功后的无状态令牌；服务端不存会话，只校验签名与到期时间。
+// AccountLevel / TenantID 由账号表随令牌一并返回，供前端首屏立即知道身份层级；
+// 真正的完整身份（含 teamIds）仍以 /me 为准，客户端传来的这两个字段永远不被信任。
 type LoginResult struct {
 	Token     string      `json:"token"`
 	Username  string      `json:"username"`
 	ExpiresAt string      `json:"expiresAt"`
 	Mode      SessionMode `json:"mode"`
+	// AccountLevel 是折算后的有效层级（旧 is_super_admin 布尔在此已折算为 super_admin）。
+	AccountLevel string `json:"accountLevel"`
+	// TenantID 是账号归属公司；超管为空串。
+	TenantID string `json:"tenantId"`
 }
 
 // WebhookConfig 是 Webhook 的完整配置；字段集合见 WebhookFields。
@@ -454,6 +515,13 @@ type Me struct {
 	RoleName     string   `json:"roleName"`
 	ProjectKeys  []string `json:"projectKeys"`
 	IsSuperAdmin bool     `json:"isSuperAdmin"`
+	// 租户身份三件套，全部由服务端从账号推导，前端只做菜单投影，不参与判定。
+	// TenantID / TeamIDs 为空表示超管（跨全部公司）或未绑定任何团队；
+	// AccountLevel 是折算后的有效层级，与 isSuperAdmin 在过渡期同时存在。
+	TenantID     string   `json:"tenantId"`
+	TenantName   string   `json:"tenantName"`
+	AccountLevel string   `json:"accountLevel"`
+	TeamIDs      []string `json:"teamIds"`
 	// Permissions 是"全局视角"（不含项目）的权限集合，供前端裁剪菜单与按钮。
 	// 项目内的权限可能被项目角色覆盖，那部分由各接口自己判定。
 	Permissions []string `json:"permissions"`
@@ -517,13 +585,38 @@ type RoleList struct {
 	Items []Role `json:"items"`
 }
 
+// Scope 是一次请求能看到的数据边界，由身份层级推导，绝不信任请求参数。
+// 三个字段的语义互斥且完备：
+//   - All=true          → 超管，跨全部公司（仅平台管理接口可达，业务接口仍受 tenant 约束）
+//   - TenantID 非空      → 公司边界；TeamIDs 为空表示本公司全部团队
+//   - TeamIDs 非空       → 团队边界；范围是所有关联团队的并集
+//
+// 这是 P0 的唯一产出物：本阶段只负责把它推导出来存进 context，
+// 仓储按 scope 过滤是 P1 的事，本轮不改变任何仓储签名。
+type Scope struct {
+	All      bool
+	TenantID string
+	TeamIDs  []string
+}
+
 // Identity 是鉴权中间件解析出的「当前调用者」，只含判定所需的最小字段。
 // 放在 contract 里是因为 service/login 产出它、middleware/login 消费它，两边不该互相 import。
 type Identity struct {
-	UserID       string
-	Username     string
+	UserID   string
+	Username string
+	// AccountLevel 是库里的原始层级；判定时一律走 Level()，它负责过渡期布尔折算。
+	AccountLevel string
+	// TenantID 是账号归属公司；超管为空。
+	TenantID     string
 	IsSuperAdmin bool
 	Mode         SessionMode
+}
+
+// Level 返回该身份的有效管理层级。
+// 唯一读取入口：新代码不要再直接比较 IsSuperAdmin 或裸读 AccountLevel，
+// 否则过渡期布尔与新枚举会各自得出不同结论。
+func (i Identity) Level() string {
+	return EffectiveAccountLevel(i.AccountLevel, i.IsSuperAdmin)
 }
 
 // User 是账号视图：**不含任何密码字段**。

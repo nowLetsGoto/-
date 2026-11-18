@@ -109,11 +109,17 @@ func (s *Service) Authenticate(ctx context.Context, username, password, ip strin
 	// 登录信息是旁路：写失败不影响本次登录。
 	s.users.TouchLogin(ctx, record.User.ID, ip)
 
+	// 身份层级随令牌响应一并返回给前端首屏；真正权威的身份是 Verify 每次请求重建的那份。
+	// 折算放在这里而不是前端：旧账号的 is_super_admin 布尔必须在服务端收敛成四级枚举。
+	accountLevel := contract.EffectiveAccountLevel(record.AccountLevel, record.User.IsSuperAdmin)
+
 	return contract.LoginResult{
-		Token:     token,
-		Username:  record.User.Username,
-		ExpiresAt: expiresAt.UTC().Format(time.RFC3339),
-		Mode:      mode,
+		Token:        token,
+		Username:     record.User.Username,
+		ExpiresAt:    expiresAt.UTC().Format(time.RFC3339),
+		Mode:         mode,
+		AccountLevel: accountLevel,
+		TenantID:     record.TenantID,
 	}, nil
 }
 
@@ -151,10 +157,17 @@ func (s *Service) Verify(ctx context.Context, token string) (contract.Identity, 
 	if err != nil || record.User.Status != statusActive || record.TokenVersion != version {
 		return contract.Identity{}, false
 	}
+	// 身份每次请求都从库里重建：层级、租户与超管状态随账号变更立即生效，
+	// 不需要写进令牌载荷，也就不存在"改了层级旧令牌还拿着旧权限"的窗口。
+	// IsSuperAdmin 是派生字段：新账号用 account_level 表达超管，旧账号靠布尔折算，
+	// 两者在这里收敛成一个结论，避免后续代码各读各的来源得出不同权限。
+	effectiveLevel := contract.EffectiveAccountLevel(record.AccountLevel, record.User.IsSuperAdmin)
 	return contract.Identity{
 		UserID:       record.User.ID,
 		Username:     record.User.Username,
-		IsSuperAdmin: record.User.IsSuperAdmin,
+		AccountLevel: effectiveLevel,
+		TenantID:     record.TenantID,
+		IsSuperAdmin: effectiveLevel == contract.AccountLevelSuperAdmin,
 		Mode:         mode,
 	}, true
 }

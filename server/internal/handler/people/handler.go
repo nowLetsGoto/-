@@ -95,7 +95,7 @@ func (h *Handler) Me(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
-	data, err := h.svc.Me(r.Context(), identity.Username, personID, identity.IsSuperAdmin)
+	data, err := h.svc.Me(r.Context(), identity, personID, authctx.ScopeFrom(r.Context()).TeamIDs)
 	if err != nil {
 		return err
 	}

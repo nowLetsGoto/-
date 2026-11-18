@@ -1,10 +1,13 @@
-// Package authz · 权限判定。
-// 职责：把一个「身份 + 项目」解析成权限集合，并提供给中间件与 handler 使用。
-// 输入：repository 的账号 / 人员 / 项目 / 角色读写能力。
-// 输出：map[权限点]struct{}，或 contract.ErrForbidden。
-// 边界：**只做判定，不做业务**；不缓存（内部工具调用量小，先保证正确性，
+// Package authz · 权限判定与数据范围推导。
+// 职责：把一个「身份 + 项目」解析成权限集合，并从身份推导出该请求的数据范围。
+// 输入：账号 / 人员 / 项目 / 角色 / 团队关联的读取能力（以窄接口声明，便于单测注入）。
+// 输出：map[权限点]struct{}、contract.Scope，或相应错误。
+// 边界：**只做判定与推导，不做业务**；不缓存（内部工具调用量小，先保证正确性，
 //
 //	需要时再加一层带失效的短 TTL 缓存）。
+//
+// ScopeOf 是数据范围的唯一推导点：只依据身份里的层级与租户，绝不读请求参数。
+// 本阶段（P0）只把它推导出来交给中间件存进 ctx；仓储按 scope 过滤属于 P1。
 //
 // 判定顺序（用户明确要求）：
 //  1. 超级管理员 → 全量权限（否则会出现"没人能改配置"的死锁）
@@ -27,24 +30,53 @@ import (
 	peoplerepo "dandelion/server/internal/repository/people"
 	projectrepo "dandelion/server/internal/repository/project"
 	rolerepo "dandelion/server/internal/repository/role"
+	teamsrepo "dandelion/server/internal/repository/teams"
 	userrepo "dandelion/server/internal/repository/user"
 )
 
-// Service 是权限判定的唯一入口。
+// userLookup / peopleLookup / teamScopeLookup 是权限判定与 scope 推导所需的最小读取面。
+// 声明成窄接口有两个理由：Service 只依赖它真正调用的方法；
+// ScopeOf 的四级推导可以用几十行假实现完整覆盖，不必为单测启动 PostgreSQL。
+// 真实实现就是对应的 repository 包，分层方向不变（service → repository）。
+type userLookup interface {
+	FindByID(ctx context.Context, id string) (userrepo.Record, error)
+	FindByUsername(ctx context.Context, username string) (userrepo.Record, error)
+}
+
+type peopleLookup interface {
+	FindByID(ctx context.Context, id string) (contract.Person, error)
+	FindByUsername(ctx context.Context, username string) (contract.Person, error)
+}
+
+type teamScopeLookup interface {
+	AdminTeamIDs(ctx context.Context, userID string) ([]string, error)
+	MemberTeamIDs(ctx context.Context, personID string) ([]string, error)
+}
+
+// 编译期约束：仓储一旦改了方法签名，这里立刻报错，而不是等到运行时才发现 scope 推导断了。
+var (
+	_ userLookup      = (*userrepo.Repository)(nil)
+	_ peopleLookup    = (*peoplerepo.Repository)(nil)
+	_ teamScopeLookup = (*teamsrepo.Repository)(nil)
+)
+
+// Service 是权限判定与 scope 推导的唯一入口。
 type Service struct {
-	users    *userrepo.Repository
-	people   *peoplerepo.Repository
+	users    userLookup
+	people   peopleLookup
 	projects repository.Partitioned[*projectrepo.Repository]
 	roles    *rolerepo.Repository
+	teams    teamScopeLookup
 }
 
 func NewService(
-	users *userrepo.Repository,
-	people *peoplerepo.Repository,
+	users userLookup,
+	people peopleLookup,
 	projects repository.Partitioned[*projectrepo.Repository],
 	roles *rolerepo.Repository,
+	teams teamScopeLookup,
 ) *Service {
-	return &Service{users: users, people: people, projects: projects, roles: roles}
+	return &Service{users: users, people: people, projects: projects, roles: roles, teams: teams}
 }
 
 // Permissions 返回该身份在指定项目下的权限集合；projectKey 为空表示"平台级请求"。
@@ -94,6 +126,56 @@ func (s *Service) Check(ctx context.Context, identity contract.Identity, project
 		return contract.ErrForbidden
 	}
 	return nil
+}
+
+// ScopeOf 是数据范围的唯一推导点。
+//
+// 它只依据身份里的层级与租户推导，绝不读请求参数：客户端即使伪造 tenantId/teamIds 也无效。
+// 需要 ctx 与 error 是因为 team_admin / member 的团队边界必须查关联表（team_admins / team_members）；
+// 查不到关联不代表越权，只是返回空边界；真正的数据库错误则向上传递，由中间件转成 500。
+//
+// 层级映射（与 docs/12 §4.3 一致）：
+//   super_admin   → {All:true}
+//   platform_admin→ {TenantID: 账号所属公司}
+//   team_admin    → {TenantID, TeamIDs: team_admins 中关联的全部团队}
+//   member        → {TenantID, TeamIDs: team_members 中关联的全部团队}
+func (s *Service) ScopeOf(ctx context.Context, identity contract.Identity) (contract.Scope, error) {
+	switch identity.Level() {
+	case contract.AccountLevelSuperAdmin:
+		// 超管跨全部公司；业务接口即便超管调用仍需落到具体公司，那是 P1 的约束。
+		return contract.Scope{All: true}, nil
+
+	case contract.AccountLevelPlatformAdmin:
+		// 公司边界内看全部团队，所以 TeamIDs 留空数组（JSON 里是 [] 而不是 null）。
+		return contract.Scope{TenantID: identity.TenantID, TeamIDs: []string{}}, nil
+
+	case contract.AccountLevelTeamAdmin:
+		teamIDs, err := s.teams.AdminTeamIDs(ctx, identity.UserID)
+		if err != nil {
+			return contract.Scope{}, err
+		}
+		return contract.Scope{TenantID: identity.TenantID, TeamIDs: teamIDs}, nil
+
+	case contract.AccountLevelMember:
+		// 成员关系挂在人身上，先复用 /me 与权限判定共用的解析入口，
+		// 避免"页面显示的人"和"算 scope 用的人"是两个人。
+		personID, err := s.PersonID(ctx, identity)
+		if err != nil {
+			return contract.Scope{}, err
+		}
+		if personID == "" {
+			return contract.Scope{TenantID: identity.TenantID, TeamIDs: []string{}}, nil
+		}
+		teamIDs, err := s.teams.MemberTeamIDs(ctx, personID)
+		if err != nil {
+			return contract.Scope{}, err
+		}
+		return contract.Scope{TenantID: identity.TenantID, TeamIDs: teamIDs}, nil
+
+	default:
+		// 未知层级：失败关闭。零值 scope 不会匹配任何数据，绝不放大成 All。
+		return contract.Scope{}, nil
+	}
 }
 
 // PersonID 返回账号对应的人员档案：显式绑定优先，兼容此前按登录名关联的存量数据。
