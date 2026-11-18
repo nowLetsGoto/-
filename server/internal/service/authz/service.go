@@ -111,14 +111,14 @@ func managementPermissions(level string) []string {
 		return []string{
 			"build.read", "build.write", "build.delete",
 			"project.read", "project.write",
-			"directory.read", "directory.write",
-			"settings.read", "settings.write",
+			"directory.read", contract.PermissionDirectoryWrite,
+			contract.PermissionSettingsRead, contract.PermissionSettingsWrite,
 		}
 	case contract.AccountLevelTeamAdmin:
 		return []string{
 			"build.read", "build.write",
 			"project.read", "project.write",
-			"directory.read", "directory.write",
+			"directory.read", contract.PermissionDirectoryWrite,
 		}
 	default:
 		// 超管已由 allPermissions 全量覆盖；普通成员没有管理权限。
@@ -148,7 +148,9 @@ func (s *Service) permissionsOf(ctx context.Context, identity contract.Identity,
 		return permissions, nil
 	}
 
-	role, err := s.roles.FindByKey(ctx, roleKey)
+	// 用 FindByKeyAny：这一步是「这个人挂着什么角色」的身份解析，发生在 scope 推导链路中，
+	// 不能反过来依赖 scope。角色的可见性由角色管理接口单独把关，不影响权限判定。
+	role, err := s.roles.FindByKeyAny(ctx, roleKey)
 	if err != nil {
 		// 角色已删除时只保留默认读取能力，绝不回退到另一个可能更高权限的角色。
 		if errors.Is(err, contract.ErrNotFound) {
@@ -316,8 +318,9 @@ func soloPermissions() map[string]struct{} {
 
 // defaultPermissions 是团队模式下已登录账号的最小阅读基线。
 // build.read 支撑概览/应用包/应用；project.read 只为页面选择项目提供数据；
-// directory.read 让普通成员能查看人员与团队（内部通讯录），但不授予写入能力——
-// 「新增 / 编辑人员、团队」由 directory.write 把关，仍须管理员按角色分配。
+// directory.read 让普通成员能查看人员与团队（内部通讯录）。
+// 写入类能力（改人员/团队、改配置）不在基线里，也不在角色目录里——
+// 它们由 account_level 直接赋予（见 managementPermissions）。
 // 角色、系统设置与账号管理不在基线内：那些属于管理动作，不是"人人可见"的信息。
 // 每次返回独立集合，防止调用方污染基线。
 func defaultPermissions() map[string]struct{} {
@@ -328,11 +331,19 @@ func defaultPermissions() map[string]struct{} {
 	}
 }
 
-// allPermissions 返回权限目录的全集。
+// allPermissions 返回全集：可勾选的业务权限点 + 已从目录移除的管理类权限点。
+// 超管必须同时拥有两者——业务目录精简后，管理点不再出现在 Permissions 里，
+// 若只遍历目录，超管反而会丢掉 settings.write 这类能力。
 func allPermissions() map[string]struct{} {
-	permissions := make(map[string]struct{}, len(contract.Permissions))
+	permissions := make(map[string]struct{}, len(contract.Permissions)+4)
 	for _, permission := range contract.Permissions {
 		permissions[permission.Key] = struct{}{}
+	}
+	for _, key := range []string{
+		contract.PermissionDirectoryWrite, contract.PermissionSettingsRead,
+		contract.PermissionSettingsWrite, contract.PermissionAdminAccess,
+	} {
+		permissions[key] = struct{}{}
 	}
 	return permissions
 }

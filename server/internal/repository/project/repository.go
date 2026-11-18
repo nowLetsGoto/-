@@ -43,7 +43,7 @@ func newRepository(db *sql.DB, schema repository.Schema, ownerScoped bool) *Repo
 // selectColumns 带 LEFT JOIN 取角色名：列表要显示"项目角色"，一次查完不做 N+1。
 // solo.projects 也有 role_key 列（表同构），因此两套表共用同一份查询。
 const selectColumns = `p.id::text, p.key, p.name, p.description, p.repo_url,
-coalesce(p.role_key, ''), coalesce(r.name, ''), p.created_at`
+coalesce(p.role_key, ''), coalesce(r.name, ''), coalesce(p.tenant_id::text, ''), p.created_at`
 
 const fromClause = ` LEFT JOIN roles r ON r.key = p.role_key`
 
@@ -228,7 +228,7 @@ func scan(row scanner) (contract.Project, error) {
 	var item contract.Project
 	var createdAt time.Time
 	if err := row.Scan(&item.ID, &item.Key, &item.Name, &item.Description, &item.RepoURL,
-		&item.RoleKey, &item.RoleName, &createdAt); err != nil {
+		&item.RoleKey, &item.RoleName, &item.TenantID, &createdAt); err != nil {
 		return contract.Project{}, err
 	}
 	item.CreatedAt = createdAt.UTC().Format(time.RFC3339)

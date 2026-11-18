@@ -35,7 +35,7 @@ func (h *Handler) Permissions(w http.ResponseWriter, r *http.Request) error {
 
 // List 返回全部角色（含各自权限点）。
 func (h *Handler) List(w http.ResponseWriter, r *http.Request) error {
-	data, err := h.svc.List(r.Context())
+	data, err := h.svc.List(r.Context(), authctx.ScopeFrom(r.Context()))
 	if err != nil {
 		return err
 	}
@@ -44,7 +44,7 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) error {
 
 // Get 返回单个角色，供编辑页回填。
 func (h *Handler) Get(w http.ResponseWriter, r *http.Request) error {
-	data, err := h.svc.Get(r.Context(), chi.URLParam(r, "key"))
+	data, err := h.svc.Get(r.Context(), chi.URLParam(r, "key"), authctx.ScopeFrom(r.Context()))
 	if err != nil {
 		return err
 	}
@@ -57,7 +57,7 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) error {
 	if err := handler.DecodeJSON(w, r, &in, "key/name/description/permissions"); err != nil {
 		return err
 	}
-	item, err := h.svc.Create(r.Context(), in)
+	item, err := h.svc.Create(r.Context(), in, authctx.ScopeFrom(r.Context()))
 	if err != nil {
 		return err
 	}
@@ -73,7 +73,7 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	key := chi.URLParam(r, "key")
-	item, err := h.svc.Update(r.Context(), key, in)
+	item, err := h.svc.Update(r.Context(), key, in, authctx.ScopeFrom(r.Context()))
 	if err != nil {
 		return err
 	}

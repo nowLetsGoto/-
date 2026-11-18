@@ -34,10 +34,13 @@ const (
 )
 
 // payload 是投递到目标地址的请求体结构。
+// TenantID 让接收端能区分"这是哪家公司的包"——同一套接收服务可以服务多家公司，
+// 靠这个字段分流；它在字段勾选之外恒定存在，属于信封信息而不是业务字段。
 type payload struct {
-	Event  string         `json:"event"`
-	SentAt string         `json:"sentAt"`
-	Build  map[string]any `json:"build"`
+	Event    string         `json:"event"`
+	SentAt   string         `json:"sentAt"`
+	TenantID string         `json:"tenantId"`
+	Build    map[string]any `json:"build"`
 }
 
 // Service 读取配置并完成投递，由 main.go 注入。
@@ -52,30 +55,44 @@ func NewService(repo *settingsrepo.Repository) *Service {
 
 // NotifyBuild 在发布成功后异步投递。
 // 有意丢弃请求 ctx：上传响应不该等第三方，客户端断开也不该取消已经排队的通知。
-func (s *Service) NotifyBuild(_ context.Context, build contract.Build) {
+//
+// tenantID 是包所属公司：配置优先用本公司的，没配则回落平台兜底行。
+// 这样两家公司的回调地址互不相干，也不会因为新公司还没配 Webhook 就不通知。
+func (s *Service) NotifyBuild(_ context.Context, tenantID string, build contract.Build) {
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), deliverTimeout)
 		defer cancel()
 
-		cfg, err := s.repo.Load(ctx)
+		cfg, err := s.repo.LoadForDelivery(ctx, tenantID)
 		if err != nil {
-			log.Printf("webhook 读取配置失败 build=%s err=%v", build.ID, err)
+			log.Printf("webhook 读取配置失败 build=%s tenant=%s err=%v", build.ID, tenantID, err)
 			return
 		}
 		if !cfg.Enabled || cfg.URL == "" {
 			return
 		}
-		if _, err := s.post(ctx, cfg.Webhook, build); err != nil {
+		if _, err := s.post(ctx, cfg, build); err != nil {
 			// 失败只记日志：Webhook 挂了不能让发布失败，也不阻塞后续发布。
-			log.Printf("webhook 投递失败 url=%s build=%s err=%v", cfg.URL, build.ID, err)
+			log.Printf("webhook 投递失败 url=%s build=%s tenant=%s fallback=%v err=%v",
+				cfg.URL, build.ID, tenantID, cfg.FromFallback, err)
 		}
 	}()
 }
 
 // Test 同步投递一条示例消息，并把目标状态码带回设置页。
 // 目标不可达不算接口错误：返回 200 + delivered=false，比抛 500 更利于排查。
-func (s *Service) Test(ctx context.Context) (contract.WebhookTestResult, error) {
-	cfg, err := s.repo.Load(ctx)
+//
+// 用当前 scope 对应公司的配置（严格，不回落兜底）：用户在"我这家的设置页"点测试，
+// 想验证的是我填的这个地址通不通；回落到兜底地址会测出一个不是他填的结果。
+func (s *Service) Test(ctx context.Context, scope contract.Scope) (contract.WebhookTestResult, error) {
+	tenantID := ""
+	if !scope.All {
+		if scope.TenantID == "" {
+			return contract.WebhookTestResult{}, contract.ErrForbidden
+		}
+		tenantID = scope.TenantID
+	}
+	cfg, err := s.repo.EnsureRow(ctx, tenantID)
 	if err != nil {
 		return contract.WebhookTestResult{}, err
 	}
@@ -83,7 +100,7 @@ func (s *Service) Test(ctx context.Context) (contract.WebhookTestResult, error) 
 		return contract.WebhookTestResult{}, &contract.ValidationError{Message: "请先启用 Webhook 并填写地址"}
 	}
 
-	status, err := s.post(ctx, cfg.Webhook, sampleBuild())
+	status, err := s.post(ctx, cfg, sampleBuild())
 	if err != nil {
 		return contract.WebhookTestResult{Delivered: false, StatusCode: 0, Message: "投递失败：" + err.Error()}, nil
 	}
@@ -98,11 +115,14 @@ func (s *Service) Test(ctx context.Context) (contract.WebhookTestResult, error) 
 }
 
 // post 组装并发送一次请求；返回目标状态码（未收到响应时为 0）。
-func (s *Service) post(ctx context.Context, cfg settingsrepo.Webhook, build contract.Build) (int, error) {
+func (s *Service) post(ctx context.Context, cfg settingsrepo.Config, build contract.Build) (int, error) {
+	// tenantId 取「配置所属公司」而不是包的公司：回落到兜底行时，
+	// 接收端看到的是平台兜底配置发出的通知，标成具体公司反而误导。
 	body, err := json.Marshal(payload{
-		Event:  eventBuildCreated,
-		SentAt: time.Now().UTC().Format(time.RFC3339),
-		Build:  pickFields(build, cfg.Fields),
+		Event:    eventBuildCreated,
+		SentAt:   time.Now().UTC().Format(time.RFC3339),
+		TenantID: cfg.TenantID,
+		Build:    pickFields(build, cfg.Fields),
 	})
 	if err != nil {
 		return 0, fmt.Errorf("组装请求体失败: %w", err)

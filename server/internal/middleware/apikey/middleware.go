@@ -1,12 +1,14 @@
-// Package apikey · 外部接口的 API Key 校验。
-// 职责：从 X-API-Key 取 Key，与系统设置里的 Key 定长比较；不匹配即 401。
-// 输入：KeyProvider（由 service/settings 提供）；输出：可挂到 chi 路由上的中间件。
-// 边界：不生成 / 不轮换 Key、不区分调用方身份；Key 为空（未配置）时一律拒绝。
+// Package apikey · 外部接口的 API Key 校验与归属反查。
+// 职责：从 X-API-Key 取 Key，反查它属于哪家公司（平台兜底 Key 为空串），把结果写进 context。
+// 输入：KeyResolver（由 service/settings 提供）；输出：可挂到 chi 路由上的中间件。
+// 边界：不生成 / 不轮换 Key、不区分调用方身份、不做业务授权。
+//
+// 归属只能来自 Key 本身：请求体里的任何公司标识都不可信，
+// 否则任何人都能伪造一个 tenant 把包塞进别家公司。
 package apikey
 
 import (
 	"context"
-	"crypto/subtle"
 	"net/http"
 	"strings"
 
@@ -16,29 +18,39 @@ import (
 
 const headerName = "X-API-Key"
 
-// KeyProvider 返回当前有效 Key；每次请求都读一次，改配置后无需重启。
-type KeyProvider func(ctx context.Context) (string, error)
+// KeyResolver 用调用方提供的 Key 反查归属公司；返回空串表示平台兜底 Key。
+// 找不到（或 Key 无效）返回 contract.ErrAPIKeyInvalid。
+// 每次请求都查一次库，改配置后无需重启。
+type KeyResolver func(ctx context.Context, provided string) (string, error)
 
-// Require 返回校验 API Key 的中间件。
-func Require(provider KeyProvider) func(http.Handler) http.Handler {
+// tenantKey 是存放归属公司的 context key，仅本包与 openapi handler 之间约定。
+type tenantKey struct{}
+
+// Require 返回校验 API Key 的中间件；校验通过后把归属公司写进 context。
+func Require(resolve KeyResolver) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			expected, err := provider(r.Context())
-			// 读配置失败或 Key 未配置：宁可全拒，也不要放行一个没有凭据的写接口。
-			if err != nil || expected == "" {
+			provided := strings.TrimSpace(r.Header.Get(headerName))
+			// Key 未配置或无效：宁可全拒，也不要放行一个没有凭据的写接口。
+			if provided == "" {
 				handler.WriteError(w, r, contract.ErrAPIKeyInvalid)
 				return
 			}
-			if !match(r.Header.Get(headerName), expected) {
+			tenantID, err := resolve(r.Context(), provided)
+			if err != nil {
 				handler.WriteError(w, r, contract.ErrAPIKeyInvalid)
 				return
 			}
-			next.ServeHTTP(w, r)
+			// 空串是合法结果（平台兜底 Key），表示"按项目归属推导公司"。
+			next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), tenantKey{}, tenantID)))
 		})
 	}
 }
 
-// match 用定长比较，避免通过响应耗时逐字符试探 Key。
-func match(provided string, expected string) bool {
-	return subtle.ConstantTimeCompare([]byte(strings.TrimSpace(provided)), []byte(expected)) == 1
+// TenantFrom 取出中间件写入的归属公司。
+// 返回 ("", false)：调用链上没有 API Key 中间件（不该发生，调用方应视为未授权）；
+// 返回 ("", true)：合法的平台兜底 Key。两者必须区分，否则会把"没走鉴权"当成"兜底 Key"。
+func TenantFrom(ctx context.Context) (string, bool) {
+	tenantID, ok := ctx.Value(tenantKey{}).(string)
+	return tenantID, ok
 }

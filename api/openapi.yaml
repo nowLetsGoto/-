@@ -809,7 +809,8 @@ paths:
   /settings:
     get:
       operationId: getSettings
-      summary: 读取系统设置（Webhook 配置 + 外部 API Key）
+      summary: 读取本公司系统设置（Webhook 配置 + 外部 API Key）
+      description: 平台管理员取本公司配置；超级管理员取平台兜底配置。归属由登录身份推导，不接受请求参数。
       security:
         - bearerAuth: []
       responses:
@@ -887,7 +888,7 @@ paths:
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
-          description: 非超级管理员
+          description: 非平台管理员及以上
 
   /open/builds:
     post:
@@ -1827,13 +1828,14 @@ components:
 
     Role:
       type: object
-      required: [id, key, name, description, isBuiltin, permissions, createdAt]
+      required: [id, key, name, description, isBuiltin, tenantId, permissions, createdAt]
       properties:
         id:
           type: string
           format: uuid
         key:
           type: string
+          description: 全局唯一；本公司自定义角色需带公司前缀（取公司 id 前 8 位）
         name:
           type: string
         description:
@@ -1841,6 +1843,9 @@ components:
         isBuiltin:
           type: boolean
           description: 内置角色不可删除；超管角色的权限不可修改
+        tenantId:
+          type: string
+          description: 为空表示平台内置角色（所有公司可见、只有超管能改）；非空表示某公司的自定义角色
         permissions:
           type: array
           items:

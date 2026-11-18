@@ -46,9 +46,11 @@ type stagedLookup struct {
 }
 
 // BuildNotifier 在发布成功后收到通知。
+// tenantID 是包所属公司，实现方据此选择「这家公司」的 Webhook 配置——
+// 两家公司的回调地址互不影响，是 P4 隔离的核心。
 // 实现方必须自行保证：投递失败只记日志、不阻塞、不影响发布结果（见 service/webhook）。
 type BuildNotifier interface {
-	NotifyBuild(ctx context.Context, build contract.Build)
+	NotifyBuild(ctx context.Context, tenantID string, build contract.Build)
 }
 
 // BuildService 持有配置、路径、分仓储与可选的通知旁路，由 main.go 装配层注入。
@@ -324,7 +326,8 @@ func (s *BuildService) Create(ctx context.Context, in contract.CommitInput, iden
 	// ★ 唯一「上传完成」时点：文件已落盘 + DB 已提交 + 绝对地址已生成且可访问。
 	if s.notifier != nil {
 		// 旁路通知：实现方异步投递，这里不等待、不重试，发布结果不受影响。
-		s.notifier.NotifyBuild(ctx, build)
+		// 公司归属取自项目（项目是包的唯一归属载体），不是请求参数。
+		s.notifier.NotifyBuild(ctx, project.TenantID, build)
 	}
 	return build, nil
 }

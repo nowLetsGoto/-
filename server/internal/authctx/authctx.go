@@ -25,7 +25,9 @@ func From(ctx context.Context) contract.Identity {
 	return identity
 }
 
-// WithScope 把推导好的数据范围写进上下文；只有 InjectScope 应该调用它。
+// WithScope 把推导好的数据范围写进上下文。
+// 两个合法调用方：登录态的 InjectScope 中间件（由身份推导），
+// 以及外部 API 的 API Key 中间件（由 Key 反查公司）。
 // 范围与身份分开存：身份来自令牌，范围来自身份 + 关联表，二者来源不同、失效时机也不同。
 func WithScope(ctx context.Context, scope contract.Scope) context.Context {
 	return context.WithValue(ctx, scopeKey{}, scope)

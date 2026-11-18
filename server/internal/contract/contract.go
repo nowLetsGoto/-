@@ -155,6 +155,8 @@ const (
 	RouteAdminUserPassword = APIPrefix + "/admin/users/{id}/reset-password"
 	RouteAdminUserStatus   = APIPrefix + "/admin/users/{id}/status"
 	RouteAdminAuditLogs    = APIPrefix + "/admin/audit-logs"
+	// RoutePlatformTenants 是超管的公司管理入口（列表 + 新建，同一路径不同方法）。
+	RoutePlatformTenants = APIPrefix + "/platform/tenants"
 	RouteSettings          = APIPrefix + "/settings"
 	RouteWebhookTest       = APIPrefix + "/settings/webhook/test"
 	RouteAPIKeyRotate      = APIPrefix + "/settings/api-key/rotate"
@@ -205,6 +207,7 @@ var APIRoutes = []string{
 	RouteLogin, RouteMe, RouteMePassword,
 	RouteAdminUsers, RouteAdminUserByID, RouteAdminUserPassword, RouteAdminUserStatus,
 	RouteAdminAuditLogs,
+	RoutePlatformTenants,
 	RouteProjects, RouteProjectByKey,
 	RoutePeople, RoutePersonByID, RouteTeams, RouteTeamByID,
 	RoutePermissions, RouteRoles, RouteRoleByKey,
@@ -384,6 +387,9 @@ type Project struct {
 	RoleKey     string `json:"roleKey"`
 	RoleName    string `json:"roleName"`
 	CreatedAt   string `json:"createdAt"`
+	// TenantID 是项目归属公司；solo 分区的项目恒为空。
+	// 包继承项目的归属，Webhook 投递据此选择「这家公司」的配置。
+	TenantID string `json:"tenantId"`
 }
 
 // ProjectInput 是新建 / 编辑项目请求，恰好 4 个字段。
@@ -541,9 +547,16 @@ type Permission struct {
 	Label string `json:"label"`
 }
 
-// Permissions 是全部权限点，按业务模块分组；前端按 Group 渲染勾选矩阵。
-// 角色管理**不在**目录里：它只对超级管理员开放（路由层 RequireSuperAdmin），
-// 不是"勾一下就能给谁"的能力。留一个永远判不过的权限点只会让角色编辑页出现无效选项。
+// Permissions 是**业务角色可勾选**的权限点，按业务模块分组；前端按 Group 渲染勾选矩阵。
+//
+// 这里只放"业务能力"（能看什么、能传什么），**不放管理能力**：
+//   - directory.read 保留：看通讯录是业务需要（提交包要选项目、看团队）；
+//   - directory.write 移出：改人员/团队是管理动作，由 account_level（team_admin 及以上）直接赋予；
+//   - settings.read/write 移出：平台集成配置属于公司管理，由 platform_admin 直接赋予；
+//   - admin.access、角色管理移出：这些是身份层级本身，不该"勾一下就能给谁"。
+//
+// 这样从源头杜绝「给某人勾了 settings.write 就能改全公司配置」这类越权，
+// 即使攻击者伪造权限点，IsValidPermission 也会拒绝。
 var Permissions = []Permission{
 	{Key: "build.read", Group: "应用包", Label: "查看应用包与下载"},
 	{Key: "build.write", Group: "应用包", Label: "上传与发布应用包"},
@@ -551,13 +564,22 @@ var Permissions = []Permission{
 	{Key: "project.read", Group: "项目", Label: "查看项目"},
 	{Key: "project.write", Group: "项目", Label: "新建与编辑项目"},
 	{Key: "directory.read", Group: "基础资料", Label: "查看人员与团队"},
-	{Key: "directory.write", Group: "基础资料", Label: "新建与编辑人员、团队"},
-	{Key: "settings.read", Group: "平台设置", Label: "查看平台集成配置"},
-	{Key: "settings.write", Group: "平台设置", Label: "修改 Webhook、轮换 API Key"},
-	{Key: "admin.access", Group: "超级管理", Label: "进入超级管理员专区"},
 }
 
-// IsValidPermission 判断权限点是否在目录里，写入角色时用它挡住拼错/伪造的值。
+// ManagementPermissions 是「已从角色目录移除、但历史上可能存在」的管理类权限点。
+// 保留这个清单是为了：
+//   - 存量角色里若还勾着 directory.write / settings.write，启动播种时清掉（见 service/role）；
+//   - managementPermissions 仍需要这些 key 字符串来赋予管理层级。
+// 它们不出现在 Permissions 里，所以前端勾选矩阵看不到，也无法通过接口新勾上去。
+const (
+	PermissionDirectoryWrite = "directory.write"
+	PermissionSettingsRead   = "settings.read"
+	PermissionSettingsWrite  = "settings.write"
+	PermissionAdminAccess    = "admin.access"
+)
+
+// IsValidPermission 判断权限点是否在**可勾选**目录里，写入角色时用它挡住拼错/伪造的值。
+// 注意：管理类权限点不在 Permissions 里，因此角色接口无法写入它们。
 func IsValidPermission(key string) bool {
 	for _, permission := range Permissions {
 		if permission.Key == key {
@@ -574,6 +596,9 @@ type Role struct {
 	Name        string   `json:"name"`
 	Description string   `json:"description"`
 	IsBuiltin   bool     `json:"isBuiltin"`
+	// TenantID 为空表示平台内置角色（所有公司可见、只有超管能改）；
+	// 非空表示某公司的自定义角色，只有本公司管理员看得到、改得了。
+	TenantID    string   `json:"tenantId"`
 	Permissions []string `json:"permissions"`
 	CreatedAt   string   `json:"createdAt"`
 }

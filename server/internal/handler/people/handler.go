@@ -54,7 +54,9 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	// 授权字段独立于普通资料编辑：directory.write 不等于可分配角色。
-	if in.RoleKey != "" && !authctx.From(r.Context()).IsSuperAdmin {
+	// 分配角色是管理动作：由身份层级把关（团队管理员及以上），不再要求超管。
+	// 具体能分配哪些角色键由 service 校验（必须是本公司可见、且不属于越权角色）。
+	if in.RoleKey != "" && !canAssignRole(authctx.From(r.Context())) {
 		return contract.ErrForbidden
 	}
 	item, err := h.svc.Create(r.Context(), in)
@@ -75,8 +77,12 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) error {
 		if err != nil {
 			return err
 		}
-		// 登录名也参与账号绑定，非超管不得借更换登录名或角色接管权限。
-		if in.RoleKey != current.RoleKey || in.Username != current.Username {
+		// 登录名参与账号绑定，非超管不得借更换登录名接管权限——这条红线不变。
+		if in.Username != current.Username {
+			return contract.ErrForbidden
+		}
+		// 角色可以改，但改角色本身是管理动作，需要管理层级。
+		if in.RoleKey != current.RoleKey && !canAssignRole(authctx.From(r.Context())) {
 			return contract.ErrForbidden
 		}
 	}
@@ -85,6 +91,13 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	return handler.OK(w, item)
+}
+
+// canAssignRole 判断该身份能否给人员分配业务角色。
+// 分配角色是「管人」的一部分：团队管理员及以上都该能做（范围由 scope 限定在本团队），
+// 普通成员不行。角色定义本身能不能改是另一回事，走 /roles 接口（platform_admin 起）。
+func canAssignRole(identity contract.Identity) bool {
+	return contract.AccountLevelAtLeast(identity.Level(), contract.AccountLevelTeamAdmin)
 }
 
 // Me 返回当前登录人；登录名由鉴权中间件写入请求上下文。

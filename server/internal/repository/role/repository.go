@@ -14,6 +14,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"dandelion/server/internal/contract"
+	"dandelion/server/internal/repository"
 )
 
 // Repository 是 roles 的唯一 SQL 出入口。
@@ -25,11 +26,32 @@ func NewRepository(db *sql.DB) *Repository {
 	return &Repository{db: db}
 }
 
-const columns = `id::text, key, name, description, is_builtin, created_at`
+// roleColumns 带 tenant_id，用来判断"内置（跨公司）"还是"某公司自定义"。
+const columns = `id::text, key, name, description, is_builtin, coalesce(tenant_id::text, ''), created_at`
 
-// List 返回全部角色，并一次性补齐权限点（两查，不做 N+1）。
-func (r *Repository) List(ctx context.Context) ([]contract.Role, error) {
-	rows, err := r.db.QueryContext(ctx, `SELECT `+columns+` FROM roles ORDER BY is_builtin DESC, created_at ASC`)
+// visibleFilter 生成角色可见性条件：平台内置（tenant_id 为空）对所有公司可见，
+// 公司只能看到自己的自定义角色。超管（All）不加条件，看全部。
+//
+// 注意不能直接用 ApplyTenant：它对 tenant_id 为 NULL 的行会过滤掉，
+// 而内置角色恰恰是靠 NULL 表示"平台级、所有公司共享"。
+func visibleFilter(base int, scope contract.Scope) *repository.Filter {
+	filter := repository.NewFilter(base)
+	if scope.All {
+		return filter
+	}
+	if scope.TenantID == "" {
+		// 失败关闭：没有公司归属的身份不该看到任何角色。
+		return filter.AddRaw(`1 = 0`)
+	}
+	return filter.Add(`(tenant_id IS NULL OR tenant_id = ?)`, scope.TenantID)
+}
+
+// List 返回可见角色，并一次性补齐权限点（两查，不做 N+1）。
+func (r *Repository) List(ctx context.Context, scope contract.Scope) ([]contract.Role, error) {
+	filter := visibleFilter(0, scope)
+	rows, err := r.db.QueryContext(ctx,
+		`SELECT `+columns+` FROM roles`+filter.Where()+
+			` ORDER BY is_builtin DESC, created_at ASC`, filter.Args()...)
 	if err != nil {
 		return nil, fmt.Errorf("查询角色列表失败: %w", err)
 	}
@@ -58,7 +80,28 @@ func (r *Repository) List(ctx context.Context) ([]contract.Role, error) {
 }
 
 // FindByKey 按 key 查角色；无记录转 contract.ErrNotFound。
-func (r *Repository) FindByKey(ctx context.Context, key string) (contract.Role, error) {
+// scope 限定可见范围：跨公司的自定义角色与「不存在」同口径，避免用 key 探测。
+func (r *Repository) FindByKey(ctx context.Context, key string, scope contract.Scope) (contract.Role, error) {
+	filter := visibleFilter(0, scope).Add(`key = ?`, key)
+	row := r.db.QueryRowContext(ctx, `SELECT `+columns+` FROM roles`+filter.Where(), filter.Args()...)
+	item, err := scan(row)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) || errors.Is(err, pgx.ErrNoRows) {
+			return contract.Role{}, contract.ErrNotFound
+		}
+		return contract.Role{}, err
+	}
+	item.Permissions, err = r.listPermissions(ctx, item.ID)
+	if err != nil {
+		return contract.Role{}, err
+	}
+	return item, nil
+}
+
+// FindByKeyAny 不按租户过滤地按 key 查角色，专供权限判定链路使用。
+// 权限判定（authz.resolveRoleKey → 角色权限）必须先解析出「这个人挂着什么角色」，
+// 而那一步发生在 scope 推导过程中，不能反过来依赖 scope；查不到角色时上层按"无角色"处理。
+func (r *Repository) FindByKeyAny(ctx context.Context, key string) (contract.Role, error) {
 	row := r.db.QueryRowContext(ctx, `SELECT `+columns+` FROM roles WHERE key = $1`, key)
 	item, err := scan(row)
 	if err != nil {
@@ -74,21 +117,31 @@ func (r *Repository) FindByKey(ctx context.Context, key string) (contract.Role, 
 	return item, nil
 }
 
-// Create 新建自定义角色。
-func (r *Repository) Create(ctx context.Context, in contract.RoleInput) (contract.Role, error) {
-	return r.save(ctx, "", in, false)
+// Create 新建自定义角色，归属公司从 scope 取（请求体不接受 tenantId）。
+func (r *Repository) Create(ctx context.Context, in contract.RoleInput, scope contract.Scope) (contract.Role, error) {
+	return r.save(ctx, "", in, false, scope.TenantID)
 }
 
 // Update 覆盖名称 / 描述 / 权限；key 创建后不可改。
-func (r *Repository) Update(ctx context.Context, key string, in contract.RoleInput) (contract.Role, error) {
-	existing, err := r.FindByKey(ctx, key)
+// scope 限定只能改本公司自定义角色：内置角色（tenant_id 为空）与别家公司的角色都会查不到。
+func (r *Repository) Update(ctx context.Context, key string, in contract.RoleInput, scope contract.Scope) (contract.Role, error) {
+	filter := visibleFilter(0, scope).Add(`key = ?`, key)
+	// 内置角色只有超管能改：普通人即便看得到它，也不能改平台级定义。
+	if !scope.All {
+		filter.AddRaw(`tenant_id IS NOT NULL`)
+	}
+	row := r.db.QueryRowContext(ctx, `SELECT `+columns+` FROM roles`+filter.Where(), filter.Args()...)
+	existing, err := scan(row)
 	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) || errors.Is(err, pgx.ErrNoRows) {
+			return contract.Role{}, contract.ErrNotFound
+		}
 		return contract.Role{}, err
 	}
-	return r.save(ctx, existing.ID, in, existing.IsBuiltin)
+	return r.save(ctx, existing.ID, in, existing.IsBuiltin, existing.TenantID)
 }
 
-func (r *Repository) save(ctx context.Context, id string, in contract.RoleInput, isBuiltin bool) (contract.Role, error) {
+func (r *Repository) save(ctx context.Context, id string, in contract.RoleInput, isBuiltin bool, tenantID string) (contract.Role, error) {
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
 		return contract.Role{}, fmt.Errorf("开启事务失败: %w", err)
@@ -97,9 +150,10 @@ func (r *Repository) save(ctx context.Context, id string, in contract.RoleInput,
 
 	var roleID string
 	if id == "" {
+		// tenant_id 从 scope 取：自定义角色归属本公司，请求体无法伪造归属。
 		row := tx.QueryRowContext(ctx,
-			`INSERT INTO roles (key, name, description, is_builtin) VALUES ($1, $2, $3, $4) RETURNING id::text`,
-			in.Key, in.Name, in.Description, isBuiltin)
+			`INSERT INTO roles (key, name, description, is_builtin, tenant_id) VALUES ($1, $2, $3, $4, NULLIF($5, '')::uuid) RETURNING id::text`,
+			in.Key, in.Name, in.Description, isBuiltin, tenantID)
 		if err := row.Scan(&roleID); err != nil {
 			return contract.Role{}, fmt.Errorf("创建角色失败: %w", err)
 		}
@@ -128,6 +182,35 @@ func (r *Repository) save(ctx context.Context, id string, in contract.RoleInput,
 		return contract.Role{}, fmt.Errorf("提交角色变更失败: %w", err)
 	}
 	return r.findByID(ctx, roleID)
+}
+
+// ClearBuiltinTenant 把内置角色的 tenant_id 归零（NULL），表示"平台级、所有公司共享"。
+// P1 的存量回填曾把角色一律归到默认公司；不修正的话，其他公司将看不到任何内置角色，
+// 连 developer / tester 都选不到。幂等，只动 is_builtin=true 的行。
+func (r *Repository) ClearBuiltinTenant(ctx context.Context) error {
+	if _, err := r.db.ExecContext(ctx,
+		`UPDATE roles SET tenant_id = NULL WHERE is_builtin = true AND tenant_id IS NOT NULL`); err != nil {
+		return fmt.Errorf("修正内置角色归属失败: %w", err)
+	}
+	return nil
+}
+
+// DeletePermissionsExceptRole 从除 exceptKey 之外的所有角色里删除指定权限点。
+// 用于清理「已从可勾选目录移除、但存量角色还留着」的管理类权限，幂等。
+// 用 NOT IN 子查询而不是先查再逐个删：一条语句完成，不会出现中间态。
+func (r *Repository) DeletePermissionsExceptRole(ctx context.Context, exceptKey string, permissions []string) error {
+	if len(permissions) == 0 {
+		return nil
+	}
+	_, err := r.db.ExecContext(ctx,
+		`DELETE FROM role_permissions
+		 WHERE permission = ANY($1::text[])
+		   AND role_id NOT IN (SELECT id FROM roles WHERE key = $2)`,
+		permissions, exceptKey)
+	if err != nil {
+		return fmt.Errorf("清理过期权限点失败: %w", err)
+	}
+	return nil
 }
 
 // CreateBuiltinIfMissing 播种内置角色：只在 key 不存在时插入并写默认权限。
@@ -232,7 +315,7 @@ type scanner interface {
 func scan(row scanner) (contract.Role, error) {
 	var item contract.Role
 	var createdAt time.Time
-	if err := row.Scan(&item.ID, &item.Key, &item.Name, &item.Description, &item.IsBuiltin, &createdAt); err != nil {
+	if err := row.Scan(&item.ID, &item.Key, &item.Name, &item.Description, &item.IsBuiltin, &item.TenantID, &createdAt); err != nil {
 		return contract.Role{}, err
 	}
 	item.CreatedAt = createdAt.UTC().Format(time.RFC3339)

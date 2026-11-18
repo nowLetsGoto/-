@@ -55,8 +55,8 @@ type Deps struct {
 	Tenants *tenanthandler.Handler
 	Settings *settingshandler.Handler
 	Verify   loginmw.Verifier
-	// APIKey 每次请求读一次系统设置里的 Key，改配置无需重启。
-	APIKey   apikey.KeyProvider
+	// APIKey 每次请求查一次库反查归属公司（空串=平台兜底 Key），改配置无需重启。
+	APIKey   apikey.KeyResolver
 	Health   *handler.HealthHandler
 	StaticFS fs.FS
 }
@@ -197,23 +197,35 @@ func NewRouter(d Deps) http.Handler {
 			admin.Get("/platform/tenants", middleware.Wrap(d.Tenants.List))
 			admin.Post("/platform/tenants", middleware.Wrap(d.Tenants.Create))
 			admin.Get("/admin/audit-logs", middleware.Wrap(d.Audit.List))
-			// 角色管理整块归超管：它决定"谁能做什么"，让持有某个角色的人自己看到角色清单
-			// 等于把权限模型对外公开，也会让"角色管理菜单"成为普通账号的一级入口。
-			// 五个接口（权限目录 + 角色的列表/详情/新建/编辑）都仍要求团队模式：单人空间没有角色概念。
-			admin.Group(func(team chi.Router) {
-				team.Use(authzmw.RequireTeamMode)
-				team.Get("/permissions", middleware.Wrap(d.Roles.Permissions))
-				team.Get("/roles", middleware.Wrap(d.Roles.List))
-				team.Get("/roles/{key}", middleware.Wrap(d.Roles.Get))
-				team.Post("/roles", middleware.Wrap(d.Roles.Create))
-				team.Put("/roles/{key}", middleware.Wrap(d.Roles.Update))
-			})
+		})
 
-			// 平台设置与密钥：路径仍是 /settings，但只对超管开放。
-			admin.Get("/settings", middleware.Wrap(d.Settings.Get))
-			admin.Put("/settings", middleware.Wrap(d.Settings.Update))
-			admin.Post("/settings/webhook/test", middleware.Wrap(d.Settings.Test))
-			admin.Post("/settings/api-key/rotate", middleware.Wrap(d.Settings.RotateAPIKey))
+		// 平台集成配置：平台管理员及以上，限本公司（超管落到平台兜底行）。
+		// 与角色管理同一个门槛，但必须单独成组：它需要 InjectScope 才能定位"哪家公司的那一行"，
+		// 而超管专区（admin 组）没有 scope 注入。
+		api.Group(func(settings chi.Router) {
+			settings.Use(loginmw.RequireAuth(d.Verify))
+			settings.Use(loginmw.InjectScope(d.Authz))
+			settings.Use(loginmw.RequireMinLevel(contract.AccountLevelPlatformAdmin))
+			settings.Get("/settings", middleware.Wrap(d.Settings.Get))
+			settings.Put("/settings", middleware.Wrap(d.Settings.Update))
+			settings.Post("/settings/webhook/test", middleware.Wrap(d.Settings.Test))
+			settings.Post("/settings/api-key/rotate", middleware.Wrap(d.Settings.RotateAPIKey))
+		})
+
+		// 角色管理：平台管理员及以上（团队管理员只能「分配」角色，不能改定义）。
+		// 可见范围由 scope 决定：platform_admin 看「平台内置 + 本公司自定义」，改不了内置；
+		// 超管（All）看全部、可改内置。团队管理员不进这个组——它只需要把人挂到已有角色上，
+		// 那是 people 接口 field roleKey 的事，不是角色定义。
+		api.Group(func(roles chi.Router) {
+			roles.Use(loginmw.RequireAuth(d.Verify))
+			roles.Use(loginmw.InjectScope(d.Authz))
+			roles.Use(loginmw.RequireMinLevel(contract.AccountLevelPlatformAdmin))
+			roles.Use(authzmw.RequireTeamMode)
+			roles.Get("/permissions", middleware.Wrap(d.Roles.Permissions))
+			roles.Get("/roles", middleware.Wrap(d.Roles.List))
+			roles.Get("/roles/{key}", middleware.Wrap(d.Roles.Get))
+			roles.Post("/roles", middleware.Wrap(d.Roles.Create))
+			roles.Put("/roles/{key}", middleware.Wrap(d.Roles.Update))
 		})
 	})
 	r.Get(contract.RouteHealth, middleware.Wrap(d.Health.Health))

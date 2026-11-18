@@ -321,7 +321,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** 读取系统设置（Webhook 配置 + 外部 API Key） */
+        /**
+         * 读取本公司系统设置（Webhook 配置 + 外部 API Key）
+         * @description 平台管理员取本公司配置；超级管理员取平台兜底配置。归属由登录身份推导，不接受请求参数。
+         */
         get: operations["getSettings"];
         /**
          * 更新 Webhook 配置
@@ -814,11 +817,14 @@ export interface components {
         Role: {
             /** Format: uuid */
             id: string;
+            /** @description 全局唯一；本公司自定义角色需带公司前缀（取公司 id 前 8 位） */
             key: string;
             name: string;
             description: string;
             /** @description 内置角色不可删除；超管角色的权限不可修改 */
             isBuiltin: boolean;
+            /** @description 为空表示平台内置角色（所有公司可见、只有超管能改）；非空表示某公司的自定义角色 */
+            tenantId: string;
             permissions: string[];
             /** Format: date-time */
             createdAt: string;
@@ -2110,7 +2116,7 @@ export interface operations {
                 };
             };
             401: components["responses"]["Unauthorized"];
-            /** @description 非超级管理员 */
+            /** @description 非平台管理员及以上 */
             403: {
                 headers: {
                     [name: string]: unknown;

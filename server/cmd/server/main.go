@@ -140,6 +140,11 @@ func run() error {
 	if err := roleService.EnsureBuiltin(context.Background()); err != nil {
 		return err
 	}
+	// 修正存量内置角色：tenant_id 归零为"平台级共享"，并清掉残留的管理类权限点
+	// （directory.write / settings.* 等已改由 account_level 直接赋予）。
+	if err := roleService.NormalizeBuiltins(context.Background()); err != nil {
+		return err
+	}
 
 	// 审计：只追加不修改，写失败只记日志、绝不影响业务操作。
 	// 单人 / 团队各写各的分区，单人操作不会混进团队审计。
@@ -191,7 +196,7 @@ func run() error {
 		Authz:    authzService,
 		Settings: settingsHandler,
 		Verify:   loginService.Verify,
-		APIKey:   settingsService.APIKey,
+		APIKey:   settingsService.APIKeyByRequest,
 		Health:   health,
 		StaticFS: public,
 	})

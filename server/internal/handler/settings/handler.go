@@ -30,8 +30,9 @@ func NewHandler(settings *settingssvc.Service, webhook *webhooksvc.Service, audi
 }
 
 // Get 返回 Webhook 配置、API Key 与可选字段目录。
+// 归属公司从 scope 推导：平台管理员只能看到本公司配置，超管看平台兜底配置。
 func (h *Handler) Get(w http.ResponseWriter, r *http.Request) error {
-	data, err := h.settings.Get(r.Context())
+	data, err := h.settings.Get(r.Context(), authctx.ScopeFrom(r.Context()))
 	if err != nil {
 		return err
 	}
@@ -44,7 +45,7 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) error {
 	if err := handler.DecodeJSON(w, r, &in, "enabled/url/secret/fields"); err != nil {
 		return err
 	}
-	data, err := h.settings.UpdateWebhook(r.Context(), in)
+	data, err := h.settings.UpdateWebhook(r.Context(), authctx.ScopeFrom(r.Context()), in)
 	if err != nil {
 		return err
 	}
@@ -55,9 +56,9 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) error {
 	return handler.OK(w, data)
 }
 
-// RotateAPIKey 轮换外部接口 Key：旧 Key 立即失效，新 Key 只在本响应里出现一次。
+// RotateAPIKey 轮换本公司外部接口 Key：旧 Key 立即失效，新 Key 只在本响应里出现一次。
 func (h *Handler) RotateAPIKey(w http.ResponseWriter, r *http.Request) error {
-	key, err := h.settings.RotateAPIKey(r.Context())
+	key, err := h.settings.RotateAPIKey(r.Context(), authctx.ScopeFrom(r.Context()))
 	if err != nil {
 		return err
 	}
@@ -68,8 +69,9 @@ func (h *Handler) RotateAPIKey(w http.ResponseWriter, r *http.Request) error {
 }
 
 // Test 发一条示例消息；目标不可达也返回 200，结果由 delivered / statusCode / message 表达。
+// 用当前 scope 对应公司的配置投递——测的必须是"我这家的回调能不能通"。
 func (h *Handler) Test(w http.ResponseWriter, r *http.Request) error {
-	result, err := h.webhook.Test(r.Context())
+	result, err := h.webhook.Test(r.Context(), authctx.ScopeFrom(r.Context()))
 	if err != nil {
 		return err
 	}

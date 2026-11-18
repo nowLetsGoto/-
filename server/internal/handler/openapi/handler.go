@@ -10,9 +10,11 @@ import (
 	"net/http"
 	"strings"
 
+	"dandelion/server/internal/authctx"
 	"dandelion/server/internal/config"
 	"dandelion/server/internal/contract"
 	"dandelion/server/internal/handler"
+	"dandelion/server/internal/middleware/apikey"
 	"dandelion/server/internal/service"
 	"dandelion/server/internal/storage"
 )
@@ -55,9 +57,26 @@ func (h *Handler) Upload(w http.ResponseWriter, r *http.Request) error {
 	}
 	handler.AttachLogFields(r, "source=openapi project="+in.Project+" environment="+in.Environment+" platform="+in.Platform)
 
+	// 归属公司来自 API Key 反查（中间件已写进 ctx），请求体里的任何公司标识都不采信。
+	//
+	// 两种 Key 的语义不同：
+	//   - 公司 Key：scope 限定该公司，项目必须属于它，包自然落在该公司；
+	//   - 平台兜底 Key（tenantID 为空）：不加公司限制，按项目自身的 tenant_id 推导归属，
+	//     行为与改造前完全一致，现有 CI 无需改动。
+	tenantID, ok := apikey.TenantFrom(r.Context())
+	if !ok {
+		// 走到这里说明路由没挂 API Key 中间件——绝不能当成"兜底 Key"放行。
+		return contract.ErrAPIKeyInvalid
+	}
+	keyScope := contract.Scope{All: true}
+	if tenantID != "" {
+		keyScope = contract.Scope{TenantID: tenantID}
+	}
+	ctx := authctx.WithScope(r.Context(), keyScope)
+
 	// 外部系统没有登录态：按团队模式的匿名身份处理（UserID 为空 → 包记为 system），
 	// 因此只写 team 分区，永远进不了任何人的单人空间。
-	build, err := h.svc.Create(r.Context(), in, contract.Identity{Mode: contract.ModeTeam})
+	build, err := h.svc.Create(ctx, in, contract.Identity{Mode: contract.ModeTeam})
 	if err != nil {
 		return err
 	}
