@@ -21,6 +21,9 @@ export function PeoplePage(): JSX.Element {
   const { page, pageSize, change: changePage } = usePageState();
   const { items: people, total, loading, error, reload } = usePeoplePage(page, pageSize);
   const { me } = useMe();
+  // directory.write 已从「角色可勾选目录」移除，改由服务端按 managementPermissions(account_level)
+  // 直接下发（team_admin 及以上才有）。所以这里用 can() 依然正确：前端零逻辑，
+  // 判的是服务端合成后的权限集，而不是角色勾了什么。
   const writable = can(me, 'directory.write');
 
   const columns: TableColumnsType<Person> = [

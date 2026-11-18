@@ -13,6 +13,7 @@ import { ErrorBoundary } from 'react-error-boundary';
 import { Navigate, Outlet, Route, Routes, useLocation } from 'react-router-dom';
 import { readSession } from './api/session';
 import { AdminGate } from './components/AdminGate';
+import { LevelGate } from './components/LevelGate';
 import { Layout } from './components/Layout';
 import { PermissionGate } from './components/PermissionGate';
 import { NoProjectYet } from './components/ProjectGate';
@@ -74,6 +75,12 @@ const AccountFormPage = lazy(() =>
 );
 const AuditLogsPage = lazy(() =>
   import('./pages/admin/AuditLogsPage').then((m) => ({ default: m.AuditLogsPage })),
+);
+const TenantsPage = lazy(() =>
+  import('./pages/admin/TenantsPage').then((m) => ({ default: m.TenantsPage })),
+);
+const TenantFormPage = lazy(() =>
+  import('./pages/admin/TenantFormPage').then((m) => ({ default: m.TenantFormPage })),
 );
 
 /**
@@ -245,61 +252,63 @@ export function App(): JSX.Element {
           <Route
             path="/directory/roles"
             element={
-              <AdminGate>
+              <LevelGate minLevel="platform_admin">
                 <RolesPage />
-              </AdminGate>
+              </LevelGate>
             }
           />
-          {/* 角色管理整块归超管，连查看也不例外：所以这里用 AdminGate 而不是 PermissionGate——
-              权限目录里已经没有 role.read / role.write，用权限点判定会让超管也进不去。 */}
+          {/* 角色管理：平台管理员及以上（后端 RequireMinLevel(platform_admin)）。
+              这里只能用 LevelGate 而不是 PermissionGate——权限目录里没有 role.*，
+              而且"能改角色定义"是身份层级，不是可勾选的业务权限。 */}
           <Route
             path="/directory/roles/new"
             element={
-              <AdminGate>
+              <LevelGate minLevel="platform_admin">
                 <RoleFormPage />
-              </AdminGate>
+              </LevelGate>
             }
           />
           <Route
             path="/directory/roles/:key/edit"
             element={
-              <AdminGate>
+              <LevelGate minLevel="platform_admin">
                 <RoleFormPage />
-              </AdminGate>
+              </LevelGate>
             }
           />
           <Route
             path="/settings"
             element={
-              <AdminGate>
+              <LevelGate minLevel="platform_admin">
                 <SettingsPage />
-              </AdminGate>
+              </LevelGate>
             }
           />
-          {/* 超级管理员专区：AdminGate 只做体验层拦截，接口层还有 403 兜底 */}
+          {/* 账号管理：团队管理员及以上（后端 RequireMinLevel(team_admin)）。
+              能建谁、能管谁由服务端按层级与 scope 判定，这里只挡普通成员。 */}
           <Route
             path="/admin/accounts"
             element={
-              <AdminGate>
+              <LevelGate minLevel="team_admin">
                 <AccountsPage />
-              </AdminGate>
+              </LevelGate>
             }
           />
           <Route
             path="/admin/accounts/new"
             element={
-              <AdminGate>
+              <LevelGate minLevel="team_admin">
                 <AccountFormPage />
-              </AdminGate>
+              </LevelGate>
             }
           />
           {/* 新建与编辑复用同一个页面组件：字段几乎相同，拆两份只会让两处慢慢走偏 */}
           <Route
             path="/admin/accounts/:id/edit"
             element={
-              <AdminGate>
+              <LevelGate minLevel="team_admin">
                 <AccountFormPage />
-              </AdminGate>
+              </LevelGate>
             }
           />
           <Route
@@ -307,6 +316,24 @@ export function App(): JSX.Element {
             element={
               <AdminGate>
                 <AuditLogsPage />
+              </AdminGate>
+            }
+          />
+          {/* 公司管理：平台最高权限动作，连查看也只给超管（后端 RequireSuperAdmin）。
+              新建后会在原地展示平台管理员的一次性初始密码，所以新建是独立路由。 */}
+          <Route
+            path="/admin/tenants"
+            element={
+              <AdminGate>
+                <TenantsPage />
+              </AdminGate>
+            }
+          />
+          <Route
+            path="/admin/tenants/new"
+            element={
+              <AdminGate>
+                <TenantFormPage />
               </AdminGate>
             }
           />

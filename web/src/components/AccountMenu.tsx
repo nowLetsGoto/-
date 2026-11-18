@@ -11,6 +11,7 @@ import { useNavigate } from 'react-router-dom';
 import { Popover } from '@seakoi/console-kit';
 import { clearSession, readSession } from '../api/session';
 import { clearMe, useMe } from '../hooks/useMe';
+import { levelLabel } from '../utils/accountLevel';
 import { MODE_HINTS, MODE_LABELS } from '../utils/format';
 import { ChangePasswordDialog } from './ChangePasswordDialog';
 import { Icon } from './icons';
@@ -71,10 +72,24 @@ export function AccountMenu(): JSX.Element | null {
       {/* 角色只对团队模式有意义：单人模式没有角色区分，显示一行空值反而让人以为配错了。
           未分配角色时统一显示「普通用户」——这是展示约定，后端不为此造一个假角色。 */}
       {mode === 'team' ? (
-        <div className="account-card-role">
-          <span className="account-card-role-label">当前角色</span>
-          <span className="account-card-role-value">{me?.roleName || '普通用户'}</span>
-        </div>
+        <>
+          <div className="account-card-role">
+            <span className="account-card-role-label">当前角色</span>
+            <span className="account-card-role-value">{me?.roleName || '普通用户'}</span>
+          </div>
+          {/* 管理身份与业务角色正交：一个 team_admin 也可以是 developer。
+              分两行显示，避免让人以为"升级身份就会换掉角色"。 */}
+          <div className="account-card-role">
+            <span className="account-card-role-label">管理身份</span>
+            <span className="account-card-role-value">{levelLabel(me)}</span>
+          </div>
+          {me?.tenantName ? (
+            <div className="account-card-role">
+              <span className="account-card-role-label">所属公司</span>
+              <span className="account-card-role-value">{me.tenantName}</span>
+            </div>
+          ) : null}
+        </>
       ) : null}
 
       <div className="account-card-actions">

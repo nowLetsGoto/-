@@ -22,6 +22,7 @@ import { Checkbox, Input } from '../../components/Controls';
 import { FormPage } from '../../components/FormPage';
 import { ErrorState, Loading } from '../../components/States';
 import { useMe } from '../../hooks/useMe';
+import { atLeastLevel } from '../../utils/accountLevel';
 
 const EMPTY: RoleInput = { key: '', name: '', description: '', permissions: [] };
 
@@ -35,13 +36,26 @@ export function RoleFormPage(): JSX.Element {
 
   const [form, setForm] = useState<RoleInput>(EMPTY);
   const [permissions, setPermissions] = useState<Permission[]>([]);
+  // 当前编辑的角色是不是平台内置（tenant_id 为空的那批）。
+  // 后端规则：内置角色只有超管能改，公司管理员改不了（会 404）；前端据此把表单置灰，
+  // 而不是让用户填完再吃 404。
+  const [isBuiltin, setIsBuiltin] = useState(false);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState('');
   const [saving, setSaving] = useState(false);
   const [notice, setNotice] = useState('');
 
-  // 超管角色固定全量、非超管没有写权限 —— 两种都走只读展示
-  const readOnly = !me?.isSuperAdmin || key === SUPER_ADMIN_ROLE_KEY;
+  // 只读的三种情况：超管角色（固定全量）、平台内置角色（非超管不可改）、非管理层级（进不来，兜底）。
+  const isSuperAdmin = me?.isSuperAdmin === true;
+  const readOnly =
+    key === SUPER_ADMIN_ROLE_KEY ||
+    (isBuiltin && !isSuperAdmin) ||
+    !atLeastLevel(me, 'platform_admin');
+
+  // 新建自定义角色时后端要求 key 带公司前缀（取公司 UUID 前 8 位），
+  // 因为 roles.key 全局唯一且被人员/项目外键引用，不带前缀会与内置或他家的角色撞车。
+  // 这里把它做成 placeholder 提示，不自动填充——用户可以自己粘，但得知道规则。
+  const keyPrefix = me?.tenantId ? me.tenantId.slice(0, 8) : '';
 
   useEffect(() => {
     let cancelled = false;
@@ -53,6 +67,7 @@ export function RoleFormPage(): JSX.Element {
           return;
         }
         setPermissions(catalog.items);
+        setIsBuiltin(role?.isBuiltin === true);
         setForm(
           role
             ? {
@@ -134,7 +149,7 @@ export function RoleFormPage(): JSX.Element {
   }
 
   const title = editing
-    ? readOnly && me?.isSuperAdmin
+    ? readOnly
       ? `查看角色：${form.name}`
       : `编辑角色：${form.name}`
     : '新建角色';
@@ -145,7 +160,9 @@ export function RoleFormPage(): JSX.Element {
       subtitle={
         key === SUPER_ADMIN_ROLE_KEY
           ? '超级管理员角色的权限固定为全量，不可修改'
-          : '勾选的权限点决定该角色「能做什么」'
+          : isBuiltin
+            ? '平台内置角色对所有公司可见，只有平台超级管理员能修改它的权限'
+            : '勾选的权限点决定该角色「能做什么」；管理能力（管人、改配置）由账号的管理身份决定，不在这里勾选'
       }
       backTo={LIST_PATH}
       saving={saving}
@@ -169,7 +186,11 @@ export function RoleFormPage(): JSX.Element {
           <Input
             className="text-input"
             maxLength={32}
-            placeholder="如 release-manager，创建后不可改"
+            placeholder={
+              keyPrefix
+                ? `如 ${keyPrefix}-devops，创建后不可改`
+                : '如 release-manager，创建后不可改'
+            }
             value={form.key}
             readOnly={editing}
             disabled={readOnly}

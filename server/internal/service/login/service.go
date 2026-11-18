@@ -59,7 +59,16 @@ func NewService(cfg config.Config, users *userrepo.Repository) *Service {
 
 // EnsureAdmin 首次启动时把环境变量里的管理员写进 users 表（users 为空才写）。
 // 之后账号只在页面/库里维护，环境变量仅作为「首次种子」，改它不会再影响已有账号。
+//
+// 同时对齐存量超管的层级：is_super_admin 为真但 account_level 不是 super_admin 的账号
+// （account_level 是 P0 才加的列，早于它的账号会停留在这个不一致状态）。
+// 运行时靠 EffectiveAccountLevel 折算不影响功能，但数据层应当自洽——
+// 否则任何直接读 account_level 的统计/报表都会把超管算成普通成员。
 func (s *Service) EnsureAdmin(ctx context.Context) error {
+	if _, err := s.users.AlignSuperAdminLevel(ctx); err != nil {
+		return err
+	}
+
 	total, err := s.users.Count(ctx)
 	if err != nil {
 		return err

@@ -282,6 +282,27 @@ func (r *Repository) CountSuperAdmins(ctx context.Context) (int, error) {
 	return count, nil
 }
 
+// AlignSuperAdminLevel 把「is_super_admin 为真但 account_level 不是 super_admin」的存量账号
+// 的层级对齐，返回修正行数。
+//
+// 为什么需要：is_super_admin 是旧模型的唯一身份位，P0 引入 account_level 后两者并存。
+// 运行时靠 contract.EffectiveAccountLevel 折算，功能上不出错；但数据层不一致——
+// 任何直接读 account_level 的地方（SQL 统计、导出的报表、以后的管理界面）都会把超管当成 member。
+// 幂等，启动时执行一次。
+func (r *Repository) AlignSuperAdminLevel(ctx context.Context) (int, error) {
+	result, err := r.db.ExecContext(ctx,
+		`UPDATE users SET account_level = 'super_admin'
+		 WHERE is_super_admin = true AND account_level <> 'super_admin'`)
+	if err != nil {
+		return 0, fmt.Errorf("对齐超管层级失败: %w", err)
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("读取对齐行数失败: %w", err)
+	}
+	return int(affected), nil
+}
+
 func requireAffected(result sql.Result) error {
 	affected, err := result.RowsAffected()
 	if err != nil {
