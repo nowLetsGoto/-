@@ -21,6 +21,12 @@ export interface NavItem {
   canUpload?: boolean;
   /** 进入该页面需要的权限点；缺省表示不限（只要求登录）。前端仅做隐藏，服务端另有判定。 */
   permission?: string;
+  /**
+   * 该页面仅超级管理员可见；与 NavSection 的同名字段同构，粒度落到单个菜单项。
+   * 角色管理用它而不是权限点：角色管理已收归超管（服务端 RequireSuperAdmin），
+   * 它不是"勾一下就能给谁"的能力，所以权限目录里刻意没有 role.* 这一项。
+   */
+  requireSuperAdmin?: boolean;
 }
 
 export interface NavSection {
@@ -34,22 +40,65 @@ export interface NavSection {
 export const NAV_SECTIONS: ReadonlyArray<NavSection> = [
   {
     title: '总览',
-    items: [{ label: '概览', path: '/overview', permission: 'build.read', icon: 'overview', scope: 'project' }],
+    items: [
+      {
+        label: '概览',
+        path: '/overview',
+        permission: 'build.read',
+        icon: 'overview',
+        scope: 'project',
+      },
+    ],
   },
   {
     title: '分发',
     items: [
-      { label: '应用包', path: '/packages', permission: 'build.read', icon: 'packages', scope: 'project', canUpload: true },
+      {
+        label: '应用包',
+        path: '/packages',
+        permission: 'build.read',
+        icon: 'packages',
+        scope: 'project',
+        canUpload: true,
+      },
       { label: '应用', path: '/apps', permission: 'build.read', icon: 'apps', scope: 'project' },
     ],
   },
   {
     title: '基础资料',
     items: [
-      { label: '人员管理', path: '/directory/people', permission: 'directory.read', icon: 'people', scope: 'platform', envScoped: false },
-      { label: '团队管理', path: '/directory/teams', permission: 'directory.read', icon: 'team', scope: 'platform', envScoped: false },
-      { label: '项目管理', path: '/directory/projects', permission: 'project.read', icon: 'project', scope: 'platform', envScoped: false },
-      { label: '角色管理', path: '/directory/roles', permission: 'role.read', icon: 'shield', scope: 'platform', envScoped: false },
+      {
+        label: '人员管理',
+        path: '/directory/people',
+        permission: 'directory.read',
+        icon: 'people',
+        scope: 'platform',
+        envScoped: false,
+      },
+      {
+        label: '团队管理',
+        path: '/directory/teams',
+        permission: 'directory.read',
+        icon: 'team',
+        scope: 'platform',
+        envScoped: false,
+      },
+      {
+        label: '项目管理',
+        path: '/directory/projects',
+        permission: 'project.read',
+        icon: 'project',
+        scope: 'platform',
+        envScoped: false,
+      },
+      {
+        label: '角色管理',
+        path: '/directory/roles',
+        requireSuperAdmin: true,
+        icon: 'shield',
+        scope: 'platform',
+        envScoped: false,
+      },
     ],
   },
   {
@@ -57,9 +106,27 @@ export const NAV_SECTIONS: ReadonlyArray<NavSection> = [
     title: '超级管理员',
     requireSuperAdmin: true,
     items: [
-      { label: '账号管理', path: '/admin/accounts', icon: 'shield', scope: 'platform', envScoped: false },
-      { label: '审计日志', path: '/admin/audit-logs', icon: 'overview', scope: 'platform', envScoped: false },
-      { label: '平台集成', path: '/settings', icon: 'settings', scope: 'platform', envScoped: false },
+      {
+        label: '账号管理',
+        path: '/admin/accounts',
+        icon: 'shield',
+        scope: 'platform',
+        envScoped: false,
+      },
+      {
+        label: '审计日志',
+        path: '/admin/audit-logs',
+        icon: 'overview',
+        scope: 'platform',
+        envScoped: false,
+      },
+      {
+        label: '平台集成',
+        path: '/settings',
+        icon: 'settings',
+        scope: 'platform',
+        envScoped: false,
+      },
     ],
   },
 ];

@@ -647,7 +647,7 @@ paths:
   /permissions:
     get:
       operationId: listPermissions
-      summary: 权限点目录（前端据此渲染勾选矩阵，避免把目录抄进前端）
+      summary: 权限点目录（仅超级管理员；前端据此渲染勾选矩阵，避免把目录抄进前端）
       security:
         - bearerAuth: []
       responses:
@@ -659,11 +659,13 @@ paths:
                 $ref: '#/components/schemas/PermissionListResponse'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '403':
+          description: 非超级管理员
 
   /roles:
     get:
       operationId: listRoles
-      summary: 角色列表（含各自权限点）
+      summary: 角色列表（仅超级管理员；含各自权限点）
       security:
         - bearerAuth: []
       responses:
@@ -675,6 +677,8 @@ paths:
                 $ref: '#/components/schemas/RoleListResponse'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '403':
+          description: 非超级管理员
     post:
       operationId: createRole
       summary: 新建自定义角色（仅超级管理员）
@@ -703,7 +707,7 @@ paths:
   /roles/{key}:
     get:
       operationId: getRole
-      summary: 角色详情
+      summary: 角色详情（仅超级管理员）
       security:
         - bearerAuth: []
       parameters:
@@ -721,6 +725,8 @@ paths:
                 $ref: '#/components/schemas/RoleResponse'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '403':
+          description: 非超级管理员
         '404':
           $ref: '#/components/responses/NotFound'
     put:

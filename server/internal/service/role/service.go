@@ -32,6 +32,9 @@ type builtinRole struct {
 }
 
 // builtinRoles 是内置模板角色；除超级管理员外，权限可以在页面上调整。
+// 角色管理不在任何角色的权限里：它只对超管开放（见 contract.Permissions 的说明）。
+// 三个业务角色都带 directory.read——人员与团队是内部通讯录，能登录就该能查；
+// 写入能力（directory.write）只给项目负责人。
 var builtinRoles = []builtinRole{
 	{
 		key: SuperAdminKey, name: "超级管理员", description: "拥有全部权限；权限固定为全量，不可修改",
@@ -42,20 +45,20 @@ var builtinRoles = []builtinRole{
 		permissions: []string{
 			"build.read", "build.write", "build.delete",
 			"project.read", "project.write",
-			"directory.read", "directory.write", "role.read",
+			"directory.read", "directory.write",
 		},
 	},
 	{
 		key: "developer", name: "开发", description: "可以上传与发布应用包，不能删除",
-		permissions: []string{"build.read", "build.write", "project.read", "directory.read", "role.read"},
+		permissions: []string{"build.read", "build.write", "project.read", "directory.read"},
 	},
 	{
 		key: "tester", name: "测试", description: "可以查看与下载应用包",
-		permissions: []string{"build.read", "project.read", "directory.read", "role.read"},
+		permissions: []string{"build.read", "project.read", "directory.read"},
 	},
 	{
 		key: "guest", name: "访客", description: "只读，适合外部协作方",
-		permissions: []string{"build.read", "project.read", "role.read"},
+		permissions: []string{"build.read", "project.read", "directory.read"},
 	},
 }
 

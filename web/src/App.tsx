@@ -14,6 +14,7 @@ import { Navigate, Outlet, Route, Routes, useLocation } from 'react-router-dom';
 import { readSession } from './api/session';
 import { AdminGate } from './components/AdminGate';
 import { Layout } from './components/Layout';
+import { PermissionGate } from './components/PermissionGate';
 import { NoProjectYet } from './components/ProjectGate';
 import { ErrorState, Loading } from './components/States';
 import { recentProjectKey, useProjects } from './hooks/useProjects';
@@ -202,19 +203,71 @@ export function App(): JSX.Element {
 
         {/* 平台级页面：与项目无关（基础资料 + 系统设置） */}
         <Route element={<ShellLayout />}>
-          {/* 列表与表单刻意拆成不同路由：列表只读、表单独立成页，避免一个页面两副面孔 */}
+          {/* 列表与表单刻意拆成不同路由：列表只读、表单独立成页，避免一个页面两副面孔。
+              表单页另加目录写权限守卫：列表页只是不渲染入口，直接输 URL 仍能进来。 */}
           <Route path="/directory/people" element={<PeoplePage />} />
-          <Route path="/directory/people/new" element={<PersonFormPage />} />
-          <Route path="/directory/people/:id/edit" element={<PersonFormPage />} />
+          <Route
+            path="/directory/people/new"
+            element={
+              <PermissionGate permission="directory.write">
+                <PersonFormPage />
+              </PermissionGate>
+            }
+          />
+          <Route
+            path="/directory/people/:id/edit"
+            element={
+              <PermissionGate permission="directory.write">
+                <PersonFormPage />
+              </PermissionGate>
+            }
+          />
           <Route path="/directory/teams" element={<TeamsPage />} />
-          <Route path="/directory/teams/new" element={<TeamFormPage />} />
-          <Route path="/directory/teams/:id/edit" element={<TeamFormPage />} />
+          <Route
+            path="/directory/teams/new"
+            element={
+              <PermissionGate permission="directory.write">
+                <TeamFormPage />
+              </PermissionGate>
+            }
+          />
+          <Route
+            path="/directory/teams/:id/edit"
+            element={
+              <PermissionGate permission="directory.write">
+                <TeamFormPage />
+              </PermissionGate>
+            }
+          />
           <Route path="/directory/projects" element={<ProjectsPage />} />
           <Route path="/directory/projects/new" element={<ProjectFormPage />} />
           <Route path="/directory/projects/:key/edit" element={<ProjectFormPage />} />
-          <Route path="/directory/roles" element={<RolesPage />} />
-          <Route path="/directory/roles/new" element={<RoleFormPage />} />
-          <Route path="/directory/roles/:key/edit" element={<RoleFormPage />} />
+          <Route
+            path="/directory/roles"
+            element={
+              <AdminGate>
+                <RolesPage />
+              </AdminGate>
+            }
+          />
+          {/* 角色管理整块归超管，连查看也不例外：所以这里用 AdminGate 而不是 PermissionGate——
+              权限目录里已经没有 role.read / role.write，用权限点判定会让超管也进不去。 */}
+          <Route
+            path="/directory/roles/new"
+            element={
+              <AdminGate>
+                <RoleFormPage />
+              </AdminGate>
+            }
+          />
+          <Route
+            path="/directory/roles/:key/edit"
+            element={
+              <AdminGate>
+                <RoleFormPage />
+              </AdminGate>
+            }
+          />
           <Route
             path="/settings"
             element={

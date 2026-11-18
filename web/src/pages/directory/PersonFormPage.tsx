@@ -18,6 +18,7 @@ import { Select } from '../../components/Select';
 import { MultiSelect } from '../../components/MultiSelect';
 import { ErrorState, Loading } from '../../components/States';
 import { invalidateDirectory, useAllTeams } from '../../hooks/useDirectory';
+import { useMe } from '../../hooks/useMe';
 import { useProjects } from '../../hooks/useProjects';
 
 const EMPTY_FORM: PersonInput = {
@@ -46,6 +47,7 @@ export function PersonFormPage(): JSX.Element {
   } = useAllTeams();
   const { projects } = useProjects();
 
+  const { me } = useMe();
   const [form, setForm] = useState<PersonInput>(EMPTY_FORM);
   const [roles, setRoles] = useState<Role[]>([]);
   const [loading, setLoading] = useState(editing);
@@ -54,6 +56,10 @@ export function PersonFormPage(): JSX.Element {
   const [notice, setNotice] = useState('');
 
   useEffect(() => {
+    // 只有超管能拿到角色清单；其他人不必发这个注定 403 的请求。
+    if (!me?.isSuperAdmin) {
+      return;
+    }
     let cancelled = false;
     listRoles()
       .then((result) => {
@@ -70,7 +76,7 @@ export function PersonFormPage(): JSX.Element {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [me?.isSuperAdmin]);
 
   useEffect(() => {
     if (!id) {
@@ -211,17 +217,21 @@ export function PersonFormPage(): JSX.Element {
             onChange={(event) => setForm({ ...form, title: event.target.value })}
           />
         </label>
-        <label className="field">
-          <span>角色</span>
-          <Select
-            value={form.roleKey}
-            options={[
-              { value: '', label: '未分配' },
-              ...roles.map((role) => ({ value: role.key, label: role.name })),
-            ]}
-            onChange={(roleKey) => setForm({ ...form, roleKey })}
-          />
-        </label>
+        {/* 角色分配是超管专属：角色清单只对超管开放（/roles 走 RequireSuperAdmin），
+            服务端也会拦非超管改 roleKey。普通用户看不到这一项，也不需要理解角色模型。 */}
+        {me?.isSuperAdmin ? (
+          <label className="field">
+            <span>角色</span>
+            <Select
+              value={form.roleKey}
+              options={[
+                { value: '', label: '未分配' },
+                ...roles.map((role) => ({ value: role.key, label: role.name })),
+              ]}
+              onChange={(roleKey) => setForm({ ...form, roleKey })}
+            />
+          </label>
+        ) : null}
       </div>
 
       <MultiSelect

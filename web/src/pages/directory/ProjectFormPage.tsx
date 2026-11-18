@@ -17,6 +17,7 @@ import { Input } from '../../components/Controls';
 import { FormPage } from '../../components/FormPage';
 import { Select } from '../../components/Select';
 import { ErrorState, Loading } from '../../components/States';
+import { useMe } from '../../hooks/useMe';
 import { invalidateProjects } from '../../hooks/useProjects';
 
 const EMPTY_FORM: ProjectInput = { key: '', name: '', description: '', repoUrl: '', roleKey: '' };
@@ -27,8 +28,11 @@ export function ProjectFormPage(): JSX.Element {
   const { key } = useParams<{ key: string }>();
   const editing = Boolean(key);
   const navigate = useNavigate();
-  // 单人模式没有角色区分：不展示角色字段，也不请求角色列表（单人无 role.read 权限）。
+  // 单人模式没有角色区分；团队模式里角色清单也只对超管开放（/roles 走 RequireSuperAdmin）。
+  // 两种情况都不该展示「项目角色」，也不必发注定 403 的请求。
   const solo = (readSession()?.mode ?? 'solo') === 'solo';
+  const { me } = useMe();
+  const showRoleField = !solo && me?.isSuperAdmin === true;
 
   const [form, setForm] = useState<ProjectInput>(EMPTY_FORM);
   const [roles, setRoles] = useState<Role[]>([]);
@@ -38,7 +42,8 @@ export function ProjectFormPage(): JSX.Element {
   const [notice, setNotice] = useState('');
 
   useEffect(() => {
-    if (solo) {
+    // 只有超管能拿到角色清单；其他人不必发这个注定 403 的请求。
+    if (!showRoleField) {
       return;
     }
     let cancelled = false;
@@ -57,7 +62,7 @@ export function ProjectFormPage(): JSX.Element {
     return () => {
       cancelled = true;
     };
-  }, [solo]);
+  }, [showRoleField]);
 
   useEffect(() => {
     if (!key) {
@@ -171,7 +176,7 @@ export function ProjectFormPage(): JSX.Element {
             onChange={(event) => setForm({ ...form, repoUrl: event.target.value })}
           />
         </label>
-        {solo ? null : (
+        {showRoleField ? (
           <label className="field">
             <span>项目角色</span>
             <Select
@@ -183,7 +188,7 @@ export function ProjectFormPage(): JSX.Element {
               onChange={(roleKey) => setForm({ ...form, roleKey })}
             />
           </label>
-        )}
+        ) : null}
         <label className="field">
           <span>描述</span>
           <Input
@@ -195,13 +200,15 @@ export function ProjectFormPage(): JSX.Element {
         </label>
       </div>
 
-      {solo ? (
+      {showRoleField ? (
         <p className="settings-hint">
-          项目创建后即可上传包；单人模式不区分角色，所有项目都由你自己管理。
+          项目角色优先级高于人员角色：设置后，所有人访问本项目都按此角色的权限判定（超级管理员除外）。
         </p>
       ) : (
         <p className="settings-hint">
-          项目角色优先级高于人员角色：设置后，所有人访问本项目都按此角色的权限判定（超级管理员除外）。
+          {solo
+            ? '项目创建后即可上传包；单人模式不区分角色，所有项目都由你自己管理。'
+            : '项目角色由超级管理员在编辑项目时设置，你这次保存不会影响它。'}
         </p>
       )}
     </FormPage>

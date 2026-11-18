@@ -11,7 +11,7 @@
 //  2. 单人模式 → 业务基线（概览 / 应用包 / 应用），不参与角色区分
 //  3. 项目角色：团队模式且请求带了项目、项目配置了角色 → 用它的权限
 //  4. 人员角色：项目没配角色时，回落到人员自身的角色
-//  5. 没有角色 → 只有默认的业务读取权限。
+//  5. 没有角色 → 只有默认的业务读取基线（含人员/团队的只读查看）。
 //
 // 单人模式是"个人工作台"：上传、发布与查看自己的包不需要管理员分配角色；
 // 平台管理、账号、角色等权限仍不授予，且由路由层的模式中间件单独拦截。
@@ -176,11 +176,18 @@ func soloPermissions() map[string]struct{} {
 	}
 }
 
-// defaultPermissions 是已登录账号的最小读取基线。
-// build.read 支撑概览/应用包/应用；project.read 只为页面选择项目提供数据，
-// 不授予人员、团队、角色、系统设置的查看或任何写入权限。每次返回独立集合，防止调用方污染基线。
+// defaultPermissions 是团队模式下已登录账号的最小阅读基线。
+// build.read 支撑概览/应用包/应用；project.read 只为页面选择项目提供数据；
+// directory.read 让普通成员能查看人员与团队（内部通讯录），但不授予写入能力——
+// 「新增 / 编辑人员、团队」由 directory.write 把关，仍须管理员按角色分配。
+// 角色、系统设置与账号管理不在基线内：那些属于管理动作，不是"人人可见"的信息。
+// 每次返回独立集合，防止调用方污染基线。
 func defaultPermissions() map[string]struct{} {
-	return map[string]struct{}{"build.read": {}, "project.read": {}}
+	return map[string]struct{}{
+		"build.read":     {},
+		"project.read":   {},
+		"directory.read": {},
+	}
 }
 
 // allPermissions 返回权限目录的全集。

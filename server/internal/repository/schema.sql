@@ -194,6 +194,19 @@ CREATE TABLE IF NOT EXISTS role_permissions (
   PRIMARY KEY (role_id, permission)
 );
 
+-- 权限点目录缩减后的存量清理：role_permissions.permission 是裸 TEXT，没有外键，
+-- 目录里删掉一个权限点不会自动从库里消失。留着它只会让角色编辑页统计"已选数量"时
+-- 多出一个不存在的项（前端只渲染目录内的点，勾不上也去不掉）。
+-- 这里删的是两个已收归超管的权限点：角色管理改由 RequireSuperAdmin 把关，见 contract.Permissions。
+DELETE FROM role_permissions WHERE permission IN ('role.read', 'role.write');
+
+-- 修掉一处权限倒挂：团队模式的默认基线已含 directory.read（普通成员能看内部通讯录），
+-- 而老库里 guest 没有它 —— 分配了 guest 的人反而比"没有角色"的人少看一个菜单。
+-- 只补这一个点、只对内置 guest：EnsureBuiltin 不会覆盖已存在的角色，存量库只能靠这条。
+INSERT INTO role_permissions (role_id, permission)
+SELECT id, 'directory.read' FROM roles WHERE key = 'guest'
+ON CONFLICT DO NOTHING;
+
 -- people：人员档案。username 为空表示"只在通讯录里，不能登录"。
 -- 一个人只挂一个角色（权限取单一集合，避免"多角色取并集"的歧义）。
 CREATE TABLE IF NOT EXISTS people (

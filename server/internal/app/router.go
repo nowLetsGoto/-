@@ -164,9 +164,7 @@ func NewRouter(d Deps) http.Handler {
 				team.With(authzmw.RequirePermission(d.Authz, "directory.write")).Post("/teams", middleware.Wrap(d.Teams.Create))
 				team.With(authzmw.RequirePermission(d.Authz, "directory.read")).Get("/teams/{id}", middleware.Wrap(d.Teams.Get))
 				team.With(authzmw.RequirePermission(d.Authz, "directory.write")).Put("/teams/{id}", middleware.Wrap(d.Teams.Update))
-				team.Get("/permissions", middleware.Wrap(d.Roles.Permissions))
-				team.With(authzmw.RequirePermission(d.Authz, "role.read")).Get("/roles", middleware.Wrap(d.Roles.List))
-				team.With(authzmw.RequirePermission(d.Authz, "role.read")).Get("/roles/{key}", middleware.Wrap(d.Roles.Get))
+				// 角色管理不在这里：它只对超级管理员开放，见下面的 admin 专区。
 			})
 		})
 
@@ -184,9 +182,14 @@ func NewRouter(d Deps) http.Handler {
 			admin.Post("/admin/users/{id}/reset-password", middleware.Wrap(d.Users.ResetPassword))
 			admin.Post("/admin/users/{id}/status", middleware.Wrap(d.Users.SetStatus))
 			admin.Get("/admin/audit-logs", middleware.Wrap(d.Audit.List))
-			// 角色的写操作属于"改权限"，只对超管开放
+			// 角色管理整块归超管：它决定"谁能做什么"，让持有某个角色的人自己看到角色清单
+			// 等于把权限模型对外公开，也会让"角色管理菜单"成为普通账号的一级入口。
+			// 五个接口（权限目录 + 角色的列表/详情/新建/编辑）都仍要求团队模式：单人空间没有角色概念。
 			admin.Group(func(team chi.Router) {
 				team.Use(authzmw.RequireTeamMode)
+				team.Get("/permissions", middleware.Wrap(d.Roles.Permissions))
+				team.Get("/roles", middleware.Wrap(d.Roles.List))
+				team.Get("/roles/{key}", middleware.Wrap(d.Roles.Get))
 				team.Post("/roles", middleware.Wrap(d.Roles.Create))
 				team.Put("/roles/{key}", middleware.Wrap(d.Roles.Update))
 			})

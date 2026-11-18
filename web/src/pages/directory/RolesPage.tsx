@@ -1,19 +1,19 @@
 /**
  * 角色管理（基础资料 → 角色管理）。
- * 职责：列出角色与各自权限数量，跳转到编辑页；新建入口仅超管可见。
+ * 职责：列出角色与各自权限数量，跳转到编辑页；顶部提供新建入口。
  * 输入：listRoles；输出：DataTable + 角色类型徽标。
- * 边界：只读页面——所有编辑都在独立路由；不内嵌表单、不做权限判定（服务端 403 兜底）。
+ * 边界：只读页面——所有编辑都在独立路由；
+ *       不做"是不是超管"的判断：路由已被 AdminGate 包住，能渲染出来就一定是超管。
  */
 import { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import type { TableColumnsType } from '@seakoi/console-kit';
 import { errorMessage } from '../../api/client';
 import type { Role } from '../../api/roles';
-import { listRoles } from '../../api/roles';
+import { SUPER_ADMIN_ROLE_KEY, listRoles } from '../../api/roles';
 import { Button } from '../../components/Controls';
 import { DataTable } from '../../components/DataTable';
 import { Empty, ErrorState } from '../../components/States';
-import { useMe } from '../../hooks/useMe';
 
 interface PageState {
   items: Role[];
@@ -23,7 +23,6 @@ interface PageState {
 
 export function RolesPage(): JSX.Element {
   const navigate = useNavigate();
-  const { me } = useMe();
   const [state, setState] = useState<PageState>({ items: [], loading: true, error: '' });
   const [version, setVersion] = useState(0);
 
@@ -98,7 +97,7 @@ export function RolesPage(): JSX.Element {
             type="button"
             onClick={() => navigate(`/directory/roles/${role.key}/edit`)}
           >
-            {role.key === 'super-admin' || !me?.isSuperAdmin ? '查看' : '编辑'}
+            {role.key === SUPER_ADMIN_ROLE_KEY ? '查看' : '编辑'}
           </Button>
         </div>
       ),
@@ -114,12 +113,10 @@ export function RolesPage(): JSX.Element {
             共 {state.items.length} 个角色 · 角色决定「能做什么」，分配给人由项目成员管理
           </p>
         </div>
-        {/* 写操作仅超管：非超管不显示入口，服务端也会 403 */}
-        {me?.isSuperAdmin ? (
-          <Link className="button button-primary" to="/directory/roles/new">
-            新建角色
-          </Link>
-        ) : null}
+        {/* 能进到这个页面就一定是超管（路由由 AdminGate 把关），新建入口无条件渲染。 */}
+        <Link className="button button-primary" to="/directory/roles/new">
+          新建角色
+        </Link>
       </div>
 
       <div className="card">

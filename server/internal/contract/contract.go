@@ -468,6 +468,8 @@ type Permission struct {
 }
 
 // Permissions 是全部权限点，按业务模块分组；前端按 Group 渲染勾选矩阵。
+// 角色管理**不在**目录里：它只对超级管理员开放（路由层 RequireSuperAdmin），
+// 不是"勾一下就能给谁"的能力。留一个永远判不过的权限点只会让角色编辑页出现无效选项。
 var Permissions = []Permission{
 	{Key: "build.read", Group: "应用包", Label: "查看应用包与下载"},
 	{Key: "build.write", Group: "应用包", Label: "上传与发布应用包"},
@@ -476,8 +478,6 @@ var Permissions = []Permission{
 	{Key: "project.write", Group: "项目", Label: "新建与编辑项目"},
 	{Key: "directory.read", Group: "基础资料", Label: "查看人员与团队"},
 	{Key: "directory.write", Group: "基础资料", Label: "新建与编辑人员、团队"},
-	{Key: "role.read", Group: "基础资料", Label: "查看角色与权限"},
-	{Key: "role.write", Group: "基础资料", Label: "维护角色与权限"},
 	{Key: "settings.read", Group: "平台设置", Label: "查看平台集成配置"},
 	{Key: "settings.write", Group: "平台设置", Label: "修改 Webhook、轮换 API Key"},
 	{Key: "admin.access", Group: "超级管理", Label: "进入超级管理员专区"},

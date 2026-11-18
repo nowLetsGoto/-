@@ -13,6 +13,7 @@ import { useProjectKey } from '../hooks/useProjects';
 import { AccountMenu } from './AccountMenu';
 import { Icon } from './icons';
 import { NAV_SECTIONS, navHref } from './navigation';
+import type { NavItem } from './navigation';
 
 export function Sidebar(): JSX.Element {
   // 模式来自签名令牌签发时写入的会话，仅用于菜单投影；服务端另有强制边界。
@@ -31,7 +32,11 @@ export function Sidebar(): JSX.Element {
     soloAllowed.add('/admin/audit-logs');
     soloAllowed.add('/settings');
   }
-  const canSee = (item: (typeof NAV_SECTIONS)[number]['items'][number]): boolean => {
+  const canSee = (item: NavItem): boolean => {
+    // 菜单项级的超管门槛先判：角色管理没有权限点（已从权限目录移除），只能靠这一条。
+    if (item.requireSuperAdmin && !isAdmin) {
+      return false;
+    }
     if (mode === 'solo') {
       return soloAllowed.has(item.path);
     }
