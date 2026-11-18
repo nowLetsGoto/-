@@ -3,14 +3,18 @@
  * 职责：只调人员列表接口，关联的团队/项目名字由该接口直接带回。
  * 输入：URL 的 page / pageSize；输出：服务端分页的 DataTable + 「新增人员」入口。
  * 边界：不拉团队或项目列表（那属于对应页面自己的事）、不内嵌表单；
- *       「新增 / 编辑」按 directory.write 隐藏，真正能不能写由服务端判定。
+ *       「新增 / 编辑」按 directory.write 隐藏，「删除」按 directory.delete 隐藏；
+ *       真正能不能写由服务端判定——按钮隐藏只是体验，不是安全边界。
  */
 import { Link, useNavigate } from 'react-router-dom';
 import type { TableColumnsType } from '@seakoi/console-kit';
 import type { Person } from '../../api/people';
+import { deletePerson } from '../../api/people';
 import { Button } from '../../components/Controls';
+import { ConfirmDialog } from '../../components/ConfirmDialog';
 import { DataTable } from '../../components/DataTable';
 import { Empty, ErrorState } from '../../components/States';
+import { useDeleteAction } from '../../hooks/useDeleteAction';
 import { useMe } from '../../hooks/useMe';
 import { usePageState } from '../../hooks/usePageState';
 import { usePeoplePage } from '../../hooks/useDirectory';
@@ -25,6 +29,12 @@ export function PeoplePage(): JSX.Element {
   // 直接下发（team_admin 及以上才有）。所以这里用 can() 依然正确：前端零逻辑，
   // 判的是服务端合成后的权限集，而不是角色勾了什么。
   const writable = can(me, 'directory.write');
+  const deletable = can(me, 'directory.delete');
+  // 删除的确认与错误展示交给统一 hook；成功后 reload 让列表回到服务端真相。
+  const removal = useDeleteAction<{ id: string; label: string }>(
+    (target) => deletePerson(target.id),
+    reload,
+  );
 
   const columns: TableColumnsType<Person> = [
     {
@@ -97,19 +107,34 @@ export function PeoplePage(): JSX.Element {
     {
       title: '',
       key: 'actions',
-      width: 90,
-      render: (_, person) =>
-        writable ? (
+      width: 150,
+      render: (_, person) => {
+        if (!writable && !deletable) {
+          return null;
+        }
+        return (
           <div className="row-actions">
-            <Button
-              className="button button-ghost button-small"
-              type="button"
-              onClick={() => navigate(`/directory/people/${person.id}/edit`)}
-            >
-              编辑
-            </Button>
+            {writable ? (
+              <Button
+                className="button button-ghost button-small"
+                type="button"
+                onClick={() => navigate(`/directory/people/${person.id}/edit`)}
+              >
+                编辑
+              </Button>
+            ) : null}
+            {deletable ? (
+              <Button
+                className="button button-ghost button-small button-danger"
+                type="button"
+                onClick={() => removal.request({ id: person.id, label: person.name })}
+              >
+                删除
+              </Button>
+            ) : null}
           </div>
-        ) : null,
+        );
+      },
     },
   ];
 
@@ -157,6 +182,25 @@ export function PeoplePage(): JSX.Element {
           />
         )}
       </div>
+
+      <ConfirmDialog
+        open={removal.target !== null}
+        title={`删除人员「${removal.target?.label ?? ''}」？`}
+        description={
+          <>
+            <p>删除后该人员从通讯录中移除，无法恢复。</p>
+            <p className="settings-hint">
+              若他仍属于团队、参与项目或被账号绑定，删除会被拒绝并提示还需解除哪些关联。
+            </p>
+            {removal.error ? <p className="field-error">{removal.error}</p> : null}
+          </>
+        }
+        confirmText="删除"
+        danger
+        loading={removal.loading}
+        onConfirm={removal.confirm}
+        onCancel={removal.cancel}
+      />
     </section>
   );
 }

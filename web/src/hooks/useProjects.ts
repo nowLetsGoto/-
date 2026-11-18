@@ -12,33 +12,60 @@ import { useParams } from 'react-router-dom';
 import type { Project } from '../api/projects';
 import { listProjects } from '../api/projects';
 import { errorMessage } from '../api/client';
+import { readSession } from '../api/session';
 
 const RECENT_KEY = 'dandelion.project';
 
-/** 列表很少变，模块级缓存避免侧栏与顶栏各请求一次。 */
-let cache: Project[] | null = null;
-let inflight: Promise<Project[]> | null = null;
+/**
+ * 项目列表的模块级缓存。
+ *
+ * **必须与登录身份绑定**：这是浏览器内存里的模块状态，不随登出清空。
+ * 上一个账号（例如默认公司的成员）留下的列表，会被下一个账号（例如刚建好公司、
+ * 一个项目都没有的平台管理员）直接读走——于是它看到的是别人的项目，
+ * 点进去请求 400「项目不存在」，或首屏带着失效 key 去请求 /builds。
+ *
+ * 因此缓存里存下"这份列表属于谁"，读取时比对；身份变了就重新拉。
+ * owner 由 readSession() 给出（用户名 + 模式）：同一用户换模式看到的数据范围不同，也算换身份。
+ */
+let cache: { owner: string; items: Project[] } | null = null;
+let inflight: { owner: string; promise: Promise<Project[]> } | null = null;
+
+/** 当前缓存归属；未登录时给空串（此时不该有任何列表请求）。 */
+function cacheOwner(): string {
+  const session = readSession();
+  return session ? `${session.username}|${session.mode}` : '';
+}
 
 function loadProjects(): Promise<Project[]> {
-  if (cache) {
-    return Promise.resolve(cache);
+  const owner = cacheOwner();
+  if (cache && cache.owner === owner) {
+    return Promise.resolve(cache.items);
   }
-  if (!inflight) {
-    inflight = listProjects({ pageSize: 0 })
+  // 身份变了：旧缓存立即失效，避免在等新请求期间被别处读到。
+  if (cache && cache.owner !== owner) {
+    cache = null;
+  }
+  if (!inflight || inflight.owner !== owner) {
+    const promise = listProjects({ pageSize: 0 })
       .then((result) => {
-        cache = result.items;
-        return cache;
+        cache = { owner, items: result.items };
+        return result.items;
       })
       .finally(() => {
-        inflight = null;
+        if (inflight?.owner === owner) {
+          inflight = null;
+        }
       });
+    inflight = { owner, promise };
   }
-  return inflight;
+  return inflight.promise;
 }
 
 /** 新增项目后调用，让下一次读取重新拉列表。 */
 export function invalidateProjects(): void {
   cache = null;
+  // 进行中的请求也一起丢弃：否则它 resolve 时会把旧列表写回缓存。
+  inflight = null;
 }
 
 export function rememberProject(key: string): void {
@@ -109,6 +136,7 @@ export function useProjectKey(): string {
 interface CurrentProject {
   key: string;
   project: Project | null;
+  /** 项目列表是否仍在加载。ProjectGate 用它决定"先别渲染 children"，避免用未验证的 key 发请求。 */
   loading: boolean;
   /**
    * 列表已就绪、却按 key 解析不出项目。两种成因：

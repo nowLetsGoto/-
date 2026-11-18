@@ -8,9 +8,12 @@
 import { Link, useNavigate } from 'react-router-dom';
 import type { TableColumnsType } from '@seakoi/console-kit';
 import type { Team } from '../../api/teams';
+import { deleteTeam } from '../../api/teams';
 import { Button } from '../../components/Controls';
+import { ConfirmDialog } from '../../components/ConfirmDialog';
 import { DataTable } from '../../components/DataTable';
 import { Empty, ErrorState } from '../../components/States';
+import { useDeleteAction } from '../../hooks/useDeleteAction';
 import { useMe } from '../../hooks/useMe';
 import { usePageState } from '../../hooks/usePageState';
 import { useTeamsPage } from '../../hooks/useDirectory';
@@ -22,6 +25,11 @@ export function TeamsPage(): JSX.Element {
   const { items: teams, total, loading, error, reload } = useTeamsPage(page, pageSize);
   const { me } = useMe();
   const writable = can(me, 'directory.write');
+  const deletable = can(me, 'directory.delete');
+  const removal = useDeleteAction<{ id: string; label: string }>(
+    (target) => deleteTeam(target.id),
+    reload,
+  );
 
   const columns: TableColumnsType<Team> = [
     {
@@ -69,19 +77,34 @@ export function TeamsPage(): JSX.Element {
     {
       title: '',
       key: 'actions',
-      width: 90,
-      render: (_, team) =>
-        writable ? (
+      width: 150,
+      render: (_, team) => {
+        if (!writable && !deletable) {
+          return null;
+        }
+        return (
           <div className="row-actions">
-            <Button
-              className="button button-ghost button-small"
-              type="button"
-              onClick={() => navigate(`/directory/teams/${team.id}/edit`)}
-            >
-              编辑
-            </Button>
+            {writable ? (
+              <Button
+                className="button button-ghost button-small"
+                type="button"
+                onClick={() => navigate(`/directory/teams/${team.id}/edit`)}
+              >
+                编辑
+              </Button>
+            ) : null}
+            {deletable ? (
+              <Button
+                className="button button-ghost button-small button-danger"
+                type="button"
+                onClick={() => removal.request({ id: team.id, label: team.name })}
+              >
+                删除
+              </Button>
+            ) : null}
           </div>
-        ) : null,
+        );
+      },
     },
   ];
 
@@ -129,6 +152,25 @@ export function TeamsPage(): JSX.Element {
           />
         )}
       </div>
+
+      <ConfirmDialog
+        open={removal.target !== null}
+        title={`删除团队「${removal.target?.label ?? ''}」？`}
+        description={
+          <>
+            <p>删除后该团队从组织架构中移除，无法恢复。</p>
+            <p className="settings-hint">
+              若团队还有成员、还关联项目、或还挂着管理员账号，删除会被拒绝并提示还剩哪些关系。
+            </p>
+            {removal.error ? <p className="field-error">{removal.error}</p> : null}
+          </>
+        }
+        confirmText="删除"
+        danger
+        loading={removal.loading}
+        onConfirm={removal.confirm}
+        onCancel={removal.cancel}
+      />
     </section>
   );
 }

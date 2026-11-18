@@ -66,3 +66,12 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) error {
 	}
 	return handler.OK(w, item)
 }
+
+// Delete 删除团队；只允许删没有任何引用（成员/项目/管理员）的团队。
+// 拒绝原因由 service 写进 400 的 message，这里只做转发。
+func (h *Handler) Delete(w http.ResponseWriter, r *http.Request) error {
+	if err := h.svc.Delete(r.Context(), chi.URLParam(r, "id")); err != nil {
+		return err
+	}
+	return handler.OK(w, nil)
+}

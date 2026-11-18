@@ -5,6 +5,10 @@
  * 输出：createUser / updateUser 请求。
  * 边界：不做字段校验（服务端统一判，返回可读提示）；模式在两个页面都只读展示——
  *       它由登录时选定的模式决定，令牌里带着它，页面上让用户切换只会建出自己看不见的账号。
+ *
+ * 关于「设为超级管理员」：只对超管本人渲染。服务端在 canGrantSuperAdmin 里守死了这条
+ * （非超管传 isSuperAdmin=true 直接 403），但界面上不该给平台管理员一个注定失败的开关——
+ * 那会让人误以为自己真有这个权力，点完才发现被拒。前端隐藏 + 后端拒绝，两层各自负责。
  */
 import { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
@@ -19,6 +23,7 @@ import { FormPage } from '../../components/FormPage';
 import { Select } from '../../components/Select';
 import { ErrorState, Loading } from '../../components/States';
 import { useAllPeople } from '../../hooks/useDirectory';
+import { useMe } from '../../hooks/useMe';
 import { MODE_LABELS } from '../../utils/format';
 
 // 新建表单的初值：角色留空（角色挂在人员身上，没绑人员就没有角色可选）；
@@ -39,6 +44,10 @@ export function AccountFormPage(): JSX.Element {
   const { id } = useParams<{ id: string }>();
   const editing = Boolean(id);
   const navigate = useNavigate();
+
+  const { me } = useMe();
+  // 只有超管本人能授予超管标记；判据与服务端 canGrantSuperAdmin 一致。
+  const canGrantSuperAdmin = me?.isSuperAdmin === true;
 
   const {
     items: people,
@@ -257,16 +266,24 @@ export function AccountFormPage(): JSX.Element {
         </span>
       </div>
 
-      <Checkbox
-        className="field-check field-check-admin"
-        checked={form.isSuperAdmin}
-        onChange={(event) => setForm({ ...form, isSuperAdmin: event.target.checked })}
-      >
-        设为超级管理员
-        <span className="settings-hint">
-          可进入「超级管理员」专区：管理账号与平台配置。请谨慎授予。
-        </span>
-      </Checkbox>
+      {/*
+        仅超管可见。编辑一个「已是超管」的账号时也要显示（哪怕编辑者不是超管），
+        否则超管把自己降级后再也看不到这个开关——那种场景下它更需要被看见。
+        实际上非超管编辑超管账号本身会被服务端拒绝，这里只需保证不误导。
+      */}
+      {canGrantSuperAdmin ? (
+        <Checkbox
+          className="field-check field-check-admin"
+          checked={form.isSuperAdmin}
+          onChange={(event) => setForm({ ...form, isSuperAdmin: event.target.checked })}
+        >
+          设为超级管理员
+          <span className="settings-hint">
+            可进入「超级管理员」专区：管理公司、账号与平台配置。此标记高于公司管理层级，
+            只有超级管理员本人可以授予或撤销。
+          </span>
+        </Checkbox>
+      ) : null}
     </FormPage>
   );
 }

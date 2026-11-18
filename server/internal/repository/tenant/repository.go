@@ -49,11 +49,124 @@ func (r *Repository) NameByID(ctx context.Context, id string) (string, error) {
 	return name, nil
 }
 
+// IsActive 判断公司是否处于启用状态。
+//
+// 空 id（超管没有公司）返回 true：超管不属于任何公司，不该被"公司停用"影响。
+// 公司不存在也返回 true：那属于数据不一致，由别的路径暴露；
+// 在登录链路上把"查不到公司"当成"被禁用"会让故障表现成一个莫名的登录失败。
+func (r *Repository) IsActive(ctx context.Context, id string) (bool, error) {
+	if id == "" {
+		return true, nil
+	}
+	var status string
+	err := r.db.QueryRowContext(ctx, `SELECT status FROM tenants WHERE id = $1`, id).Scan(&status)
+	if errors.Is(err, sql.ErrNoRows) || errors.Is(err, pgx.ErrNoRows) {
+		return true, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("查询公司状态失败: %w", err)
+	}
+	return status == "active", nil
+}
+
 // tenantColumns 是列表与详情共用的列；管理员账号名通过子查询取（每公司至多一个 active 平台管理员）。
 const tenantColumns = `t.id::text, t.name, t.code, t.status,
 coalesce((SELECT u.username FROM users u
   WHERE u.tenant_id = t.id AND u.account_level = 'platform_admin' AND u.status = 'active'
   ORDER BY u.created_at LIMIT 1), ''), t.created_at`
+
+// SetStatus 启用 / 停用公司；返回更新后的公司（含管理员账号名）。
+//
+// 停用只改 tenants.status，不直接动该公司的账号：
+// 登录时会校验公司状态（见 service/login），因此停用即刻生效，
+// 而重新启用也不需要恢复任何账号状态——账号自身的 status 保持原样，
+// 两处状态各自表达各自的意图。
+func (r *Repository) SetStatus(ctx context.Context, id, status string) (contract.Tenant, error) {
+	query := `UPDATE tenants SET status = $1 WHERE id = $2 RETURNING id::text`
+	var tenantID string
+	err := r.db.QueryRowContext(ctx, query, status, id).Scan(&tenantID)
+	if errors.Is(err, sql.ErrNoRows) || errors.Is(err, pgx.ErrNoRows) {
+		return contract.Tenant{}, contract.ErrNotFound
+	}
+	if err != nil {
+		return contract.Tenant{}, fmt.Errorf("更新公司状态失败: %w", err)
+	}
+	return r.findByID(ctx, tenantID)
+}
+
+// Usage 统计公司下面的数据量，供删除前判断"能不能删"。
+type Usage struct {
+	Members  int // 人员档案
+	Teams    int
+	Projects int // team 与 solo 两个分区合计
+	Accounts int
+	Roles    int // 自定义角色（内置角色 tenant_id 为空，不算在内）
+}
+
+// Empty 表示公司是空的，可以直接删除。
+func (u Usage) Empty() bool {
+	return u.Members == 0 && u.Teams == 0 && u.Projects == 0 && u.Accounts == 0 && u.Roles == 0
+}
+
+// CountUsage 统计公司下的数据量；一次往返算清五项。
+//
+// 这些表对外键都是 NO ACTION，所以公司的删除天然会被数据库拒绝——
+// 但那会抛出一条只有开发能看懂的外键错误。这里先数清楚，
+// 让调用方可以给出"这家公司还有 X 名人员、Y 个项目，请先清空"这种可操作的话。
+func (r *Repository) CountUsage(ctx context.Context, tenantID string) (Usage, error) {
+	const query = `SELECT
+  (SELECT count(*) FROM people         WHERE tenant_id = $1),
+  (SELECT count(*) FROM teams          WHERE tenant_id = $1),
+  (SELECT count(*) FROM team.projects  WHERE tenant_id = $1)
+    + (SELECT count(*) FROM solo.projects WHERE tenant_id = $1),
+  (SELECT count(*) FROM users          WHERE tenant_id = $1),
+  (SELECT count(*) FROM roles          WHERE tenant_id = $1 AND is_builtin = false)`
+
+	var usage Usage
+	if err := r.db.QueryRowContext(ctx, query, tenantID).
+		Scan(&usage.Members, &usage.Teams, &usage.Projects, &usage.Accounts, &usage.Roles); err != nil {
+		return Usage{}, fmt.Errorf("统计公司数据量失败: %w", err)
+	}
+	return usage, nil
+}
+
+// Delete 删除公司；调用方必须先确认 CountUsage.Empty()。
+//
+// system_settings 那一行由外键……并不级联（同样是 NO ACTION），
+// 因此这里连它一起显式删掉：它是公司的附属配置，不属于"业务数据"，
+// 空公司必然有一条（首次打开设置页时创建），不清就会让删除永远失败。
+func (r *Repository) Delete(ctx context.Context, tenantID string) error {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("开启删除公司事务失败: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	if _, err := tx.ExecContext(ctx,
+		`DELETE FROM system_settings WHERE tenant_id = $1`, tenantID); err != nil {
+		return fmt.Errorf("清理公司配置失败: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM tenants WHERE id = $1`, tenantID); err != nil {
+		return fmt.Errorf("删除公司失败: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("提交删除公司失败: %w", err)
+	}
+	return nil
+}
+
+// findByID 按 id 读单个公司，供 SetStatus 返回更新后的完整行。
+func (r *Repository) findByID(ctx context.Context, id string) (contract.Tenant, error) {
+	row := r.db.QueryRowContext(ctx, `SELECT `+tenantColumns+` FROM tenants t WHERE t.id = $1`, id)
+	item, err := scan(row)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) || errors.Is(err, pgx.ErrNoRows) {
+			return contract.Tenant{}, contract.ErrNotFound
+		}
+		return contract.Tenant{}, fmt.Errorf("读取公司失败: %w", err)
+	}
+	return item, nil
+}
 
 // List 分页返回公司，按创建顺序；只给超管的平台视角使用。
 func (r *Repository) List(ctx context.Context, page contract.PageQuery) ([]contract.Tenant, int, error) {

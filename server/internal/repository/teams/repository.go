@@ -151,6 +151,49 @@ func (r *Repository) FindByID(ctx context.Context, id string, scope contract.Sco
 	return team, nil
 }
 
+// Usage 统计团队的引用数，供删除前判断"能不能删"。
+type Usage struct {
+	// Admins 是关联的管理员账号数。团队管理员关系是 (team_admins) 独立于成员，
+	// 不随 team_members 级联，因此要单独统计——否则删完团队会留下管着空团队的账号。
+	Admins   int
+	Persons  int
+	Projects int
+}
+
+// Empty 表示没有任何引用，可以直接删除。
+func (u Usage) Empty() bool {
+	return u.Admins == 0 && u.Persons == 0 && u.Projects == 0
+}
+
+// CountUsage 统计团队的引用数；一次往返算清三项。
+func (r *Repository) CountUsage(ctx context.Context, teamID string) (Usage, error) {
+	const query = `SELECT
+  (SELECT count(*) FROM team_admins   WHERE team_id = $1),
+  (SELECT count(*) FROM team_members  WHERE team_id = $1),
+  (SELECT count(*) FROM team_projects WHERE team_id = $1)`
+
+	var usage Usage
+	if err := r.db.QueryRowContext(ctx, query, teamID).
+		Scan(&usage.Admins, &usage.Persons, &usage.Projects); err != nil {
+		return Usage{}, fmt.Errorf("统计团队引用失败: %w", err)
+	}
+	return usage, nil
+}
+
+// Delete 删除团队；scope 限定只能删本公司的团队（越界命中 0 行转 404）。
+//
+// 三张关联表都是 ON DELETE CASCADE，但调用方必须先确认 CountUsage 为空：
+// 团队成员与项目关系是"有人正在用这个团队"的证据，静默级联掉等于悄悄改动了
+// 别人的可见范围（成员会突然看不到任何数据）。
+func (r *Repository) Delete(ctx context.Context, teamID string, scope contract.Scope) error {
+	filter := repository.ScopeFilter(0, "t", scope).Add(`t.id = ?`, teamID)
+	result, err := r.db.ExecContext(ctx, `DELETE FROM teams t`+filter.Where(), filter.Args()...)
+	if err != nil {
+		return fmt.Errorf("删除团队失败: %w", err)
+	}
+	return repository.EnsureDeleted(result, "teams")
+}
+
 // Create 新建团队并写入关联；归属公司从 scope 取。
 func (r *Repository) Create(ctx context.Context, in contract.TeamInput, scope contract.Scope) (contract.Team, error) {
 	return r.save(ctx, "", in, scope)

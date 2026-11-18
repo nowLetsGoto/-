@@ -40,7 +40,11 @@ export interface paths {
         /** 编辑项目（名称 / 描述 / 库地址；key 是 URL 段，不可修改） */
         put: operations["updateProject"];
         post?: never;
-        delete?: never;
+        /**
+         * 删除项目
+         * @description 只允许删除没有任何引用（应用包 / 成员 / 团队关联）的项目；有引用时返回 400 并说明剩余数量。
+         */
+        delete: operations["deleteProject"];
         options?: never;
         head?: never;
         patch?: never;
@@ -76,7 +80,11 @@ export interface paths {
         /** 编辑人员（全量覆盖字段与关联） */
         put: operations["updatePerson"];
         post?: never;
-        delete?: never;
+        /**
+         * 删除人员
+         * @description 只允许删除没有任何引用（团队 / 项目 / 绑定账号）的人员；有引用时返回 400 并说明剩余数量。
+         */
+        delete: operations["deletePerson"];
         options?: never;
         head?: never;
         patch?: never;
@@ -112,7 +120,11 @@ export interface paths {
         /** 编辑团队（全量覆盖字段与关联） */
         put: operations["updateTeam"];
         post?: never;
-        delete?: never;
+        /**
+         * 删除团队
+         * @description 只允许删除没有任何引用（成员 / 项目 / 管理员账号）的团队；有引用时返回 400 并说明剩余数量。
+         */
+        delete: operations["deleteTeam"];
         options?: never;
         head?: never;
         patch?: never;
@@ -147,6 +159,46 @@ export interface paths {
         put: operations["changeOwnPassword"];
         post?: never;
         delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/platform/tenants/{id}/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 启用或停用公司（仅平台超级管理员）
+         * @description 停用后该公司所有账号立即无法登录（登录时校验公司状态）。 只改公司状态，不动其账号自身的启停状态，重新启用即可恢复。
+         */
+        post: operations["setTenantStatus"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/platform/tenants/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * 删除空公司（仅平台超级管理员）
+         * @description 只允许删除没有任何业务数据的公司（人员 / 团队 / 项目 / 账号 / 自定义角色）。 有数据时返回 400 并说明还剩什么，需先逐项清空。
+         */
+        delete: operations["deleteTenant"];
         options?: never;
         head?: never;
         patch?: never;
@@ -308,7 +360,11 @@ export interface paths {
         /** 编辑角色名称 / 描述 / 权限（仅超级管理员；超管角色权限不可改） */
         put: operations["updateRole"];
         post?: never;
-        delete?: never;
+        /**
+         * 删除角色
+         * @description 只允许删除本公司自定义角色，且该角色未被任何人员或项目使用。平台内置角色与超管角色不可删除。
+         */
+        delete: operations["deleteRole"];
         options?: never;
         head?: never;
         patch?: never;
@@ -808,6 +864,12 @@ export interface components {
             message: string;
             data: components["schemas"]["TenantResult"];
         };
+        /** @description 统一响应外壳，data 为单个公司 */
+        TenantResponse: {
+            code: number;
+            message: string;
+            data: components["schemas"]["Tenant"];
+        };
         Permission: {
             key: string;
             /** @description 权限点所属模块，前端按它分组渲染 */
@@ -1113,6 +1175,15 @@ export interface components {
                 "application/json": components["schemas"]["ErrorResponse"];
             };
         };
+        /** @description 已登录但无权执行该操作（身份层级或角色权限不足） */
+        Forbidden: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["ErrorResponse"];
+            };
+        };
         /** @description 包不存在或文件缺失 */
         NotFound: {
             headers: {
@@ -1270,6 +1341,30 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
         };
     };
+    deleteProject: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description 项目 key（URL 段） */
+                key: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 删除成功 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
     listPeople: {
         parameters: {
             query?: {
@@ -1372,6 +1467,30 @@ export interface operations {
             };
             400: components["responses"]["BadRequest"];
             401: components["responses"]["Unauthorized"];
+        };
+    };
+    deletePerson: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description 人员 id（UUID） */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 删除成功 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
         };
     };
     listTeams: {
@@ -1478,6 +1597,30 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
         };
     };
+    deleteTeam: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description 团队 id（UUID） */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 删除成功 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
     getMe: {
         parameters: {
             query?: never;
@@ -1521,6 +1664,75 @@ export interface operations {
             };
             400: components["responses"]["BadRequest"];
             401: components["responses"]["Unauthorized"];
+        };
+    };
+    setTenantStatus: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description 公司 id（UUID） */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** @enum {string} */
+                    status: "active" | "disabled";
+                };
+            };
+        };
+        responses: {
+            /** @description 更新后的公司 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TenantResponse"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            /** @description 非超级管理员 */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    deleteTenant: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description 公司 id（UUID） */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 删除成功 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            /** @description 非超级管理员 */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
         };
     };
     listTenants: {
@@ -2024,6 +2236,30 @@ export interface operations {
                 };
                 content?: never;
             };
+        };
+    };
+    deleteRole: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description 角色 key */
+                key: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 删除成功 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
         };
     };
     getSettings: {

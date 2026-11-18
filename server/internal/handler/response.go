@@ -112,6 +112,9 @@ func WriteError(w http.ResponseWriter, r *http.Request, err error) {
 			appErr = &AppError{Status: 400, Code: 400, Message: contract.ErrPlatformMismatch.Error()}
 		case errors.Is(err, contract.ErrInvalidCredentials):
 			appErr = &AppError{Status: 400, Code: 400, Message: contract.ErrInvalidCredentials.Error()}
+		case errors.Is(err, contract.ErrTenantDisabled):
+			// 403：凭据正确、但当前无权进入系统。前端据此提示联系平台管理员。
+			appErr = &AppError{Status: 403, Code: 403, Message: contract.ErrTenantDisabled.Error()}
 		case errors.Is(err, contract.ErrTooManyAttempts):
 			// 429 而不是 400：让外部监控能一眼区分「输错密码」与「被限流」。
 			appErr = &AppError{Status: 429, Code: 429, Message: contract.ErrTooManyAttempts.Error()}

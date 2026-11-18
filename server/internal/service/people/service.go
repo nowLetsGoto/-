@@ -8,6 +8,7 @@ package people
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"unicode/utf8"
 
@@ -96,6 +97,46 @@ func (s *Service) Update(ctx context.Context, id string, in contract.PersonInput
 		return contract.Person{}, translate(err)
 	}
 	return item, nil
+}
+
+// Delete 删除人员。
+//
+// 只允许删**没有任何引用**的人：还挂在团队/项目里、或还被账号绑定时一律拒绝，
+// 并把原因说清楚。这比级联清理安全——删掉一个还绑着账号的人，那个账号会变成
+// 「没有档案的账号」，登录后看不到自己的团队与角色，等于半个僵尸，且无法从界面修复。
+//
+// 拒绝时返回 ValidationError（400）而不是 403：调用者有删除权限，只是当前状态不允许，
+// 前端据此提示"先去解除关联"，而不是误以为权限不足。
+func (s *Service) Delete(ctx context.Context, id string) error {
+	// 先按 scope 取一次：既确认这条记录存在且属于本公司（越界应得 404 而不是 400），
+	// 也让后面的引用检查只针对真实存在的记录。
+	if _, err := s.Get(ctx, id); err != nil {
+		return err
+	}
+	usage, err := s.repo.CountUsage(ctx, id)
+	if err != nil {
+		return err
+	}
+	if !usage.Empty() {
+		return &contract.ValidationError{Message: describePersonUsage(usage)}
+	}
+	return translate(s.repo.Delete(ctx, id, authctx.ScopeFrom(ctx)))
+}
+
+// describePersonUsage 把引用统计翻成一句能指导操作的话。
+// 具体数字比"有依赖"有用得多：用户能据此判断要清几条关系。
+func describePersonUsage(usage peoplerepo.Usage) string {
+	parts := make([]string, 0, 3)
+	if usage.Accounts > 0 {
+		parts = append(parts, fmt.Sprintf("绑定了 %d 个账号", usage.Accounts))
+	}
+	if usage.Teams > 0 {
+		parts = append(parts, fmt.Sprintf("属于 %d 个团队", usage.Teams))
+	}
+	if usage.Projects > 0 {
+		parts = append(parts, fmt.Sprintf("参与 %d 个项目", usage.Projects))
+	}
+	return "该人员" + strings.Join(parts, "、") + "，请先解除关联后再删除"
 }
 
 // Me 返回当前登录人的档案投影。

@@ -93,6 +93,16 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) error {
 	return handler.OK(w, item)
 }
 
+// Delete 删除人员；只允许删没有任何引用（团队/项目/账号）的人。
+// 「能不能删」由 service 判定并把原因写进 400 的 message，这里只做转发——
+// HTTP 层不该知道"人员还挂在几个团队"这种业务事实。
+func (h *Handler) Delete(w http.ResponseWriter, r *http.Request) error {
+	if err := h.svc.Delete(r.Context(), chi.URLParam(r, "id")); err != nil {
+		return err
+	}
+	return handler.OK(w, nil)
+}
+
 // canAssignRole 判断该身份能否给人员分配业务角色。
 // 分配角色是「管人」的一部分：团队管理员及以上都该能做（范围由 scope 限定在本团队），
 // 普通成员不行。角色定义本身能不能改是另一回事，走 /roles 接口（platform_admin 起）。

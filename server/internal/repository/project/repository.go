@@ -213,6 +213,89 @@ func (r *Repository) listRefs(ctx context.Context, query string, projectID strin
 	return refs, nil
 }
 
+// Usage 统计项目被哪些数据引用，供删除前判断"能不能删"。
+type Usage struct {
+	// Builds 是应用包数量。包是**不可恢复的资产**（对应磁盘文件），
+	// 因此有包就拒绝删除，绝不级联。
+	Builds int
+	// Members 是参与该项目的人员数（team 分区的 project_members）。
+	Members int
+	// Teams 是关联该项目数（team 分区的 team_projects）。
+	Teams int
+}
+
+// Empty 表示没有任何引用，可以直接删除。
+func (u Usage) Empty() bool {
+	return u.Builds == 0 && u.Members == 0 && u.Teams == 0
+}
+
+// CountUsage 按项目 key 统计引用数；一次往返算清三项。
+//
+// 单人分区的两张关联表是 team 专属（solo 没有成员与团队关系），
+// 但仍统一查 team 库表：solo 项目的 id 不会出现在那些表里，结果自然是 0。
+// 这样两套分区共用一份实现，不必为 solo 单独写一个"只数包"的分支。
+func (r *Repository) CountUsage(ctx context.Context, key string, ownerUserID string, scope contract.Scope) (Usage, error) {
+	filter := r.ownerFilter(0, ownerUserID)
+	if !r.ownerScoped {
+		repository.ApplyTenant(filter, "p", scope)
+		repository.ApplyTeam(filter, `p.id IN (SELECT tp.project_id FROM team_projects tp WHERE tp.team_id = ANY(?))`, scope)
+	}
+	filter.Add(`p.key = ?`, key)
+
+	// 三个标量子查询都按"本项目 id"关联，因此不会数到别的项目。
+	query := `SELECT
+  (SELECT count(*) FROM ` + r.buildsTable() + ` b WHERE b.project_id = p.id),
+  (SELECT count(*) FROM project_members pm WHERE pm.project_id = p.id),
+  (SELECT count(*) FROM team_projects tp WHERE tp.project_id = p.id)
+FROM ` + r.table + ` p` + filter.Where()
+
+	var usage Usage
+	if err := r.db.QueryRowContext(ctx, query, filter.Args()...).
+		Scan(&usage.Builds, &usage.Members, &usage.Teams); err != nil {
+		if errors.Is(err, sql.ErrNoRows) || errors.Is(err, pgx.ErrNoRows) {
+			return Usage{}, contract.ErrProjectInvalid
+		}
+		return Usage{}, fmt.Errorf("统计项目引用失败: %w", err)
+	}
+	return usage, nil
+}
+
+// buildsTable 返回与当前分区对应的包表名。
+// team.projects 的包在 team.builds，solo.projects 的在 solo.builds——
+// 表名必须跟着分区走，否则单人项目会去数团队分区的包（永远是 0，导致误删）。
+func (r *Repository) buildsTable() string {
+	if r.ownerScoped {
+		return "solo.builds"
+	}
+	return "team.builds"
+}
+
+// Delete 按 key 删除项目；scope / owner 限定只能删自己看得到的那个。
+//
+// 调用方必须先确认 CountUsage.Empty()：包不可恢复，成员与团队关系代表"有人正在用"。
+func (r *Repository) Delete(ctx context.Context, key, ownerUserID string, scope contract.Scope) error {
+	filter := r.ownerFilter(0, ownerUserID)
+	if !r.ownerScoped {
+		repository.ApplyTenant(filter, "p", scope)
+		repository.ApplyTeam(filter, `p.id IN (SELECT tp.project_id FROM team_projects tp WHERE tp.team_id = ANY(?))`, scope)
+	}
+	filter.Add(`p.key = ?`, key)
+
+	result, err := r.db.ExecContext(ctx, `DELETE FROM `+r.table+` p`+filter.Where(), filter.Args()...)
+	if err != nil {
+		return fmt.Errorf("删除项目失败: %w", err)
+	}
+	// 这里的 0 行要翻译成 ErrProjectInvalid（400）而不是 404：
+	// 项目 key 来自 URL / 表单，属于参数问题，与既有 FindByKey 的口径保持一致。
+	if err := repository.EnsureDeleted(result, "projects"); err != nil {
+		if errors.Is(err, contract.ErrNotFound) {
+			return contract.ErrProjectInvalid
+		}
+		return err
+	}
+	return nil
+}
+
 // ownerFilter 生成「只属于该账号」的条件。
 // 团队分区与未指定账号时返回空条件，等价于全量；
 // base 是 WHERE 之前已占用的参数个数（SELECT 传 0，UPDATE 传 SET 的参数数）。

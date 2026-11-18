@@ -5,7 +5,7 @@
  * 边界：不做本地缓存（由 hooks/useDirectory 统一负责）、不拼非契约路径。
  */
 import type { components } from './schema';
-import { get, postJSON, putJSON } from './client';
+import { del, get, postJSON, putJSON } from './client';
 import type { PageQuery, PagedList } from './query';
 import { pageQuery } from './query';
 
@@ -33,4 +33,12 @@ export function createPerson(input: PersonInput): Promise<Person> {
 
 export function updatePerson(id: string, input: PersonInput): Promise<Person> {
   return putJSON<Person>(`${PEOPLE_PATH}/${id}`, input);
+}
+
+/**
+ * 删除人员。只对**没有任何引用**的人有效：
+ * 仍挂在团队/项目里、或仍被账号绑定时，服务端返回 400 并说明还需解除哪些关系。
+ */
+export function deletePerson(id: string): Promise<void> {
+  return del<void>(`${PEOPLE_PATH}/${id}`);
 }

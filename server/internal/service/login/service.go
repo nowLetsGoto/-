@@ -38,9 +38,17 @@ const (
 	hashSaltLength = 16
 )
 
+// tenantStatus 是登录链路需要的最小公司能力。
+// 声明成窄接口而不是直接依赖 tenant 仓储：本包只用"公司还启用着吗"这一个判断，
+// 窄接口让单测可以注入假实现，也不必为一次登录把整个公司模块拉进来。
+type tenantStatus interface {
+	IsActive(ctx context.Context, tenantID string) (bool, error)
+}
+
 // Service 是账号鉴权服务。
 type Service struct {
 	users        *userrepo.Repository
+	tenants      tenantStatus
 	secret       []byte
 	ttl          time.Duration
 	seedUsername string
@@ -49,10 +57,11 @@ type Service struct {
 	limiter *Limiter
 }
 
-// NewService 从配置与账号仓储构造；种子凭据只在首次启动建号时使用。
-func NewService(cfg config.Config, users *userrepo.Repository) *Service {
+// NewService 从配置、账号仓储与公司状态读取器构造；种子凭据只在首次启动建号时使用。
+func NewService(cfg config.Config, users *userrepo.Repository, tenants tenantStatus) *Service {
 	return &Service{
 		users:        users,
+		tenants:      tenants,
 		secret:       []byte(cfg.AuthSecret),
 		ttl:          contract.AuthTokenTTLSeconds * time.Second,
 		seedUsername: cfg.AdminUsername,
@@ -130,14 +139,27 @@ func (s *Service) Authenticate(ctx context.Context, username, password, ip strin
 	if record.User.Status != statusActive {
 		return contract.LoginResult{}, contract.ErrInvalidCredentials
 	}
+	// 公司被停用时，该公司所有账号都不能登录。
+	// 校验放在密码校验**之后**：否则"这家公司被停用了"这个消息会先于密码正确性泄露出去，
+	// 变成一种账号探测手段。密码错了就是密码错，与公司状态无关。
 	if !verifyPassword(record.PasswordHash, password) {
 		if locked := s.limiter.Fail(username, ip); locked {
 			log.Printf("登录失败次数超限，已临时锁定 username=%s ip=%s", strings.TrimSpace(username), ip)
 		}
 		return contract.LoginResult{}, contract.ErrInvalidCredentials
 	}
-	// 密码正确：清掉该组合的失败记录。
+	// 密码正确：清掉该组合的失败记录（公司停用是管理状态，不该让人继续背着失败计数）。
 	s.limiter.Succeed(username, ip)
+
+	active, err := s.tenants.IsActive(ctx, record.TenantID)
+	if err != nil {
+		return contract.LoginResult{}, err
+	}
+	if !active {
+		// 用专门的错误而不是"密码错误"：此时凭据是对的，含糊其辞只会让用户反复重试。
+		// 不泄露敏感信息——能走到这里说明用户名与密码都正确，他本来就是这家公司的人。
+		return contract.LoginResult{}, contract.ErrTenantDisabled
+	}
 
 	mode, err = contract.NormalizeMode(mode)
 	if err != nil {

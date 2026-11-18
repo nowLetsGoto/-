@@ -10,13 +10,16 @@ import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import type { TableColumnsType } from '@seakoi/console-kit';
 import type { Project } from '../../api/projects';
+import { deleteProject } from '../../api/projects';
 import { readSession } from '../../api/session';
 import { Button } from '../../components/Controls';
+import { ConfirmDialog } from '../../components/ConfirmDialog';
 import { DataTable } from '../../components/DataTable';
 import { Empty, ErrorState } from '../../components/States';
+import { useDeleteAction } from '../../hooks/useDeleteAction';
 import { useMe } from '../../hooks/useMe';
 import { usePageState } from '../../hooks/usePageState';
-import { useProjectsPage } from '../../hooks/useProjects';
+import { invalidateProjects, useProjectsPage } from '../../hooks/useProjects';
 import { can } from '../../utils/permission';
 import { ProjectDetailDrawer } from './ProjectDetailDrawer';
 
@@ -27,10 +30,20 @@ export function ProjectsPage(): JSX.Element {
   const solo = (readSession()?.mode ?? 'solo') === 'solo';
   const { me } = useMe();
   const writable = can(me, 'project.write');
+  const deletable = can(me, 'project.delete');
 
   const { projects, total, loading, error, reload } = useProjectsPage(page, pageSize);
   // 详情改用抽屉：null 表示关闭，字符串表示正在看哪个项目。
   const [detailKey, setDetailKey] = useState<string | null>(null);
+  // 删除成功后除了刷新本页列表，还要清掉项目列表的模块级缓存：
+  // 侧栏切换器与设置页的示例都读那份缓存，不清会继续指向已删掉的项目。
+  const removal = useDeleteAction<{ id: string; label: string }>(
+    (target) => deleteProject(target.id),
+    () => {
+      invalidateProjects();
+      reload();
+    },
+  );
 
   const columns: TableColumnsType<Project> = [
     {
@@ -82,19 +95,34 @@ export function ProjectsPage(): JSX.Element {
     {
       title: '',
       key: 'actions',
-      width: 90,
-      render: (_, project) =>
-        writable ? (
+      width: 150,
+      render: (_, project) => {
+        if (!writable && !deletable) {
+          return null;
+        }
+        return (
           <div className="row-actions">
-            <Button
-              className="button button-ghost button-small"
-              type="button"
-              onClick={() => navigate(`/directory/projects/${project.key}/edit`)}
-            >
-              编辑
-            </Button>
+            {writable ? (
+              <Button
+                className="button button-ghost button-small"
+                type="button"
+                onClick={() => navigate(`/directory/projects/${project.key}/edit`)}
+              >
+                编辑
+              </Button>
+            ) : null}
+            {deletable ? (
+              <Button
+                className="button button-ghost button-small button-danger"
+                type="button"
+                onClick={() => removal.request({ id: project.key, label: project.name })}
+              >
+                删除
+              </Button>
+            ) : null}
           </div>
-        ) : null,
+        );
+      },
     },
   ];
 
@@ -146,6 +174,26 @@ export function ProjectsPage(): JSX.Element {
       </div>
 
       <ProjectDetailDrawer projectKey={detailKey} solo={solo} onClose={() => setDetailKey(null)} />
+
+      <ConfirmDialog
+        open={removal.target !== null}
+        title={`删除项目「${removal.target?.label ?? ''}」？`}
+        description={
+          <>
+            <p>删除后该项目的配置从列表中移除，无法恢复。</p>
+            <p className="settings-hint">
+              若项目下还有应用包、还有成员、或被团队关联，删除会被拒绝并提示剩余数量。
+              应用包是不可恢复的资产，不会被级联删除。
+            </p>
+            {removal.error ? <p className="field-error">{removal.error}</p> : null}
+          </>
+        }
+        confirmText="删除"
+        danger
+        loading={removal.loading}
+        onConfirm={removal.confirm}
+        onCancel={removal.cancel}
+      />
     </section>
   );
 }

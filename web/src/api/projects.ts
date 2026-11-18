@@ -6,7 +6,7 @@
  * 边界：不做本地缓存（由 hooks/useProjects 负责）、不拼非契约路径。
  */
 import type { components } from './schema';
-import { get, postJSON, putJSON } from './client';
+import { del, get, postJSON, putJSON } from './client';
 import type { PageQuery, PagedList } from './query';
 import { pageQuery } from './query';
 
@@ -38,4 +38,13 @@ export function createProject(input: ProjectInput): Promise<Project> {
 
 export function updateProject(key: string, input: ProjectInput): Promise<Project> {
   return putJSON<Project>(`${PROJECTS_PATH}/${key}`, input);
+}
+
+/**
+ * 删除项目。只对**没有任何引用**的项目有效：
+ * 下面还有应用包、还有成员、还被团队关联时，服务端返回 400 并说明剩余数量。
+ * 包是不可恢复的资产，因此不会被级联删除。
+ */
+export function deleteProject(key: string): Promise<void> {
+  return del<void>(`${PROJECTS_PATH}/${key}`);
 }

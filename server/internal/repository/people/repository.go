@@ -157,6 +157,55 @@ func (r *Repository) FindByUsername(ctx context.Context, username string, scope 
 	return person, nil
 }
 
+// Usage 统计该人员被哪些关系引用，供删除前判断"能不能删"。
+//
+// 一次查清全部引用而不是逐个接口问：删除是低频操作，一次往返比四次更简单，
+// 也让「为什么不能删」的提示可以在一处拼完整。
+type Usage struct {
+	Teams    int
+	Projects int
+	Accounts int
+}
+
+// Empty 表示没有任何引用，可以直接删除。
+func (u Usage) Empty() bool {
+	return u.Teams == 0 && u.Projects == 0 && u.Accounts == 0
+}
+
+// CountUsage 统计人员的引用数。
+//
+// 用三个标量子查询而不是三次 COUNT：一次往返拿全，SQL 也仍然是"一眼看得出查了什么"。
+// 这里不加 tenant_id 条件——人员 id 是 UUID，已被 FindByID(scope) 限定了归属，
+// 再叠一次只会让 SQL 变长而不增加安全性。
+func (r *Repository) CountUsage(ctx context.Context, personID string) (Usage, error) {
+	const query = `SELECT
+  (SELECT count(*) FROM team_members   WHERE person_id = $1),
+  (SELECT count(*) FROM project_members WHERE person_id = $1),
+  (SELECT count(*) FROM users          WHERE person_id = $1)`
+
+	var usage Usage
+	if err := r.db.QueryRowContext(ctx, query, personID).
+		Scan(&usage.Teams, &usage.Projects, &usage.Accounts); err != nil {
+		return Usage{}, fmt.Errorf("统计人员引用失败: %w", err)
+	}
+	return usage, nil
+}
+
+// Delete 删除人员；scope 限定只能删本公司的人（越界命中 0 行转 404）。
+//
+// 关联表由外键 ON DELETE CASCADE 自动清理（team_members / project_members），
+// users.person_id 是 SET NULL（账号仍在，只是不再绑定人）。
+// 但调用方**必须先确认 CountUsage 为空**：删掉一个还挂着账号的人，
+// 那个账号会变成"没有档案的账号"，登录后看不到自己的团队与角色，等于半个僵尸。
+func (r *Repository) Delete(ctx context.Context, personID string, scope contract.Scope) error {
+	filter := repository.ScopeFilter(0, "people", scope).Add(`people.id = ?`, personID)
+	result, err := r.db.ExecContext(ctx, `DELETE FROM people`+filter.Where(), filter.Args()...)
+	if err != nil {
+		return fmt.Errorf("删除人员失败: %w", err)
+	}
+	return repository.EnsureDeleted(result, "people")
+}
+
 // ListProjectKeys 返回该人员关联的项目 key（按项目创建顺序），供「默认项目」使用。
 // 同样是团队分区：单人空间没有成员关系。
 func (r *Repository) ListProjectKeys(ctx context.Context, personID string) ([]string, error) {

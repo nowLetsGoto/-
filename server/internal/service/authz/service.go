@@ -111,15 +111,16 @@ func managementPermissions(level string) []string {
 	case contract.AccountLevelPlatformAdmin:
 		return []string{
 			"build.read", "build.write", "build.delete",
-			"project.read", "project.write",
-			"directory.read", contract.PermissionDirectoryWrite,
+			"project.read", "project.write", "project.delete",
+			"directory.read", contract.PermissionDirectoryWrite, contract.PermissionDirectoryDelete,
 			contract.PermissionSettingsRead, contract.PermissionSettingsWrite,
+			contract.PermissionRoleDelete,
 		}
 	case contract.AccountLevelTeamAdmin:
 		return []string{
-			"build.read", "build.write",
-			"project.read", "project.write",
-			"directory.read", contract.PermissionDirectoryWrite,
+			"build.read", "build.write", "build.delete",
+			"project.read", "project.write", "project.delete",
+			"directory.read", contract.PermissionDirectoryWrite, contract.PermissionDirectoryDelete,
 		}
 	default:
 		// 超管已由 allPermissions 全量覆盖；普通成员没有管理权限。
@@ -343,13 +344,16 @@ func defaultPermissions() map[string]struct{} {
 // 超管必须同时拥有两者——业务目录精简后，管理点不再出现在 Permissions 里，
 // 若只遍历目录，超管反而会丢掉 settings.write 这类能力。
 func allPermissions() map[string]struct{} {
-	permissions := make(map[string]struct{}, len(contract.Permissions)+4)
+	permissions := make(map[string]struct{}, len(contract.Permissions)+6)
 	for _, permission := range contract.Permissions {
 		permissions[permission.Key] = struct{}{}
 	}
+	// 追加不在可勾选目录里的管理类权限点：超管必须拥有它们，
+	// 否则会出现"没人能改配置/删角色"的死锁。
 	for _, key := range []string{
-		contract.PermissionDirectoryWrite, contract.PermissionSettingsRead,
-		contract.PermissionSettingsWrite, contract.PermissionAdminAccess,
+		contract.PermissionDirectoryWrite, contract.PermissionDirectoryDelete,
+		contract.PermissionSettingsRead, contract.PermissionSettingsWrite,
+		contract.PermissionAdminAccess, contract.PermissionRoleDelete,
 	} {
 		permissions[key] = struct{}{}
 	}

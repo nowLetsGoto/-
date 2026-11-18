@@ -81,3 +81,14 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) error {
 		map[string]any{"name": item.Name, "permissions": item.Permissions}, handler.ClientIP(r))
 	return handler.OK(w, item)
 }
+
+// Delete 删除本公司自定义角色；内置角色、超管角色、有引用的角色都会被 service 拒绝。
+func (h *Handler) Delete(w http.ResponseWriter, r *http.Request) error {
+	key := chi.URLParam(r, "key")
+	if err := h.svc.Delete(r.Context(), key, authctx.ScopeFrom(r.Context())); err != nil {
+		return err
+	}
+	h.audit.Record(r.Context(), authctx.From(r.Context()), "role.deleted", "role", key,
+		nil, handler.ClientIP(r))
+	return handler.OK(w, nil)
+}

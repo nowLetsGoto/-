@@ -101,3 +101,16 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) error {
 	}
 	return handler.OK(w, item)
 }
+
+// Delete 按 key 删除项目；有包/成员/团队关联时由 service 拒绝并说明原因。
+//
+// 这里不记审计：项目的创建与编辑本来就不记（Handler 没有 audit 依赖），
+// 只为"删除"单独引入会让审计日志出现残缺的单一事件——要么整套补，要么都不记。
+// 删除是破坏性操作，确实该有审计，但那属于"给项目模块整体接审计"的独立改动。
+func (h *Handler) Delete(w http.ResponseWriter, r *http.Request) error {
+	key := chi.URLParam(r, "key")
+	if err := h.svc.Delete(r.Context(), key, projectView(authctx.From(r.Context()))); err != nil {
+		return err
+	}
+	return handler.OK(w, nil)
+}

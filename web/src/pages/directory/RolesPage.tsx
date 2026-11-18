@@ -10,10 +10,14 @@ import { Link, useNavigate } from 'react-router-dom';
 import type { TableColumnsType } from '@seakoi/console-kit';
 import { errorMessage } from '../../api/client';
 import type { Role } from '../../api/roles';
-import { SUPER_ADMIN_ROLE_KEY, listRoles } from '../../api/roles';
+import { SUPER_ADMIN_ROLE_KEY, deleteRole, listRoles } from '../../api/roles';
 import { Button } from '../../components/Controls';
+import { ConfirmDialog } from '../../components/ConfirmDialog';
 import { DataTable } from '../../components/DataTable';
 import { Empty, ErrorState } from '../../components/States';
+import { useDeleteAction } from '../../hooks/useDeleteAction';
+import { useMe } from '../../hooks/useMe';
+import { can } from '../../utils/permission';
 
 interface PageState {
   items: Role[];
@@ -23,8 +27,15 @@ interface PageState {
 
 export function RolesPage(): JSX.Element {
   const navigate = useNavigate();
+  const { me } = useMe();
   const [state, setState] = useState<PageState>({ items: [], loading: true, error: '' });
   const [version, setVersion] = useState(0);
+  // 只能删自定义角色（内置角色后端也会拒绝）；成功后递增 version 让列表重拉。
+  const deletable = can(me, 'role.delete');
+  const removal = useDeleteAction<{ id: string; label: string }>(
+    (target) => deleteRole(target.id),
+    () => setVersion((value) => value + 1),
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -89,7 +100,7 @@ export function RolesPage(): JSX.Element {
     {
       title: '',
       key: 'actions',
-      width: 90,
+      width: 150,
       render: (_, role) => (
         <div className="row-actions">
           <Button
@@ -99,6 +110,19 @@ export function RolesPage(): JSX.Element {
           >
             {role.key === SUPER_ADMIN_ROLE_KEY ? '查看' : '编辑'}
           </Button>
+          {/*
+            内置角色与超管角色不显示删除：后端也会拒绝，但先把不可能成功的按钮藏起来，
+            比让用户点了才收到"不可删除"要好。判据与后端一致（isBuiltin / 超管 key）。
+          */}
+          {deletable && !role.isBuiltin && role.key !== SUPER_ADMIN_ROLE_KEY ? (
+            <Button
+              className="button button-ghost button-small button-danger"
+              type="button"
+              onClick={() => removal.request({ id: role.key, label: role.name })}
+            >
+              删除
+            </Button>
+          ) : null}
         </div>
       ),
     },
@@ -132,6 +156,26 @@ export function RolesPage(): JSX.Element {
           />
         )}
       </div>
+
+      <ConfirmDialog
+        open={removal.target !== null}
+        title={`删除角色「${removal.target?.label ?? ''}」？`}
+        description={
+          <>
+            <p>删除后该角色从列表中移除，无法恢复。</p>
+            <p className="settings-hint">
+              若该角色已分配给人员或项目，删除会被拒绝并提示还有多少个在用；
+              请先给他们改挂其他角色。
+            </p>
+            {removal.error ? <p className="field-error">{removal.error}</p> : null}
+          </>
+        }
+        confirmText="删除"
+        danger
+        loading={removal.loading}
+        onConfirm={removal.confirm}
+        onCancel={removal.cancel}
+      />
     </section>
   );
 }

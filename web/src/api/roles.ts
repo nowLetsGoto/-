@@ -6,7 +6,7 @@
  *       写操作仅超管可用（普通账号会拿到 403）。
  */
 import type { components } from './schema';
-import { get, postJSON, putJSON } from './client';
+import { del, get, postJSON, putJSON } from './client';
 
 type Schemas = components['schemas'];
 
@@ -38,4 +38,12 @@ export function createRole(input: RoleInput): Promise<Role> {
 
 export function updateRole(key: string, input: RoleInput): Promise<Role> {
   return putJSON<Role>(`${ROLES_PATH}/${key}`, input);
+}
+
+/**
+ * 删除本公司自定义角色。平台内置角色、超管角色、以及已被人员/项目使用的角色
+ * 都会被服务端拒绝（400 并说明原因），前端只需展示那条 message。
+ */
+export function deleteRole(key: string): Promise<void> {
+  return del<void>(`${ROLES_PATH}/${key}`);
 }

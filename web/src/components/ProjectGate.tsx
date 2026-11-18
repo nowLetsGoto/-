@@ -12,7 +12,7 @@ import type { ReactNode } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { recentProjectKey, useCurrentProject, useProjects } from '../hooks/useProjects';
 import { Button } from './Controls';
-import { Empty } from './States';
+import { Empty, Loading } from './States';
 
 export function ProjectGate({ children }: { children: ReactNode }): JSX.Element {
   const { pathname } = useLocation();
@@ -27,8 +27,18 @@ export function ProjectGate({ children }: { children: ReactNode }): JSX.Element 
 
 /** 只会在 /p/* 下挂载，因此这里的取数是必要的。 */
 function ProjectScopedGate({ children }: { children: ReactNode }): JSX.Element {
-  const { key, notFound, empty } = useCurrentProject();
+  const { key, loading, notFound, empty } = useCurrentProject();
 
+  // 列表还没就绪时**不要渲染 children**。
+  //
+  // 原因：概览页/应用包页一挂载就拿 key 去请求 /builds，而此时的 key 可能来自
+  // URL 或 localStorage 的失效值（换账号后残留上一个账号的项目）。若放行，
+  // 用户会先看到一条「项目不存在」的红色错误，随后才被这里替换成友好空态——
+  // 中间那一下闪错既没必要也让人以为系统坏了。等列表就绪再决定渲染什么，
+  // 代价只是多一个 loading 帧，换来"错误提示只在真正需要时出现"。
+  if (loading) {
+    return <Loading text="正在读取项目…" />;
+  }
   if (!notFound) {
     return <>{children}</>;
   }

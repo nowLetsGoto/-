@@ -29,6 +29,11 @@ var (
 	// 所以「被锁定」不能用来判断账号是否存在。反过来，含糊其辞会让真实用户
 	// 以为密码记错了而反复重试，把 15 分钟锁死得更彻底——这是安全与可用性的正确取舍。
 	ErrTooManyAttempts = errors.New("登录尝试过于频繁，请稍后再试")
+	// ErrTenantDisabled 账号所属公司已被停用 → 403。
+	//
+	// 这条在密码校验**之后**才判定，因此能走到这里的调用方本来就是该公司的人，
+	// 不存在账号存在性泄露；说清原因反而能让对方知道"去找公司管理员"而不是反复试密码。
+	ErrTenantDisabled = errors.New("所属公司已停用，请联系平台管理员")
 	// ErrUnauthorized 未携带令牌或令牌失效 → 401：前端据此清空会话并回到登录页。
 	ErrUnauthorized = errors.New("登录状态已失效，请重新登录")
 	// ErrAPIKeyInvalid 外部接口的 Key 缺失 / 未配置 / 不匹配 → 401。
@@ -163,6 +168,10 @@ const (
 	RouteAdminAuditLogs    = APIPrefix + "/admin/audit-logs"
 	// RoutePlatformTenants 是超管的公司管理入口（列表 + 新建，同一路径不同方法）。
 	RoutePlatformTenants = APIPrefix + "/platform/tenants"
+	// RoutePlatformTenantByID 是单家公司的操作入口（删除）。
+	RoutePlatformTenantByID = APIPrefix + "/platform/tenants/{id}"
+	// RoutePlatformTenantStatus 启停公司；与 ByID 分开是因为它是"改状态"而非"改资料"。
+	RoutePlatformTenantStatus = APIPrefix + "/platform/tenants/{id}/status"
 	RouteSettings          = APIPrefix + "/settings"
 	RouteWebhookTest       = APIPrefix + "/settings/webhook/test"
 	RouteAPIKeyRotate      = APIPrefix + "/settings/api-key/rotate"
@@ -213,7 +222,7 @@ var APIRoutes = []string{
 	RouteLogin, RouteMe, RouteMePassword,
 	RouteAdminUsers, RouteAdminUserByID, RouteAdminUserPassword, RouteAdminUserStatus,
 	RouteAdminAuditLogs,
-	RoutePlatformTenants,
+	RoutePlatformTenants, RoutePlatformTenantByID, RoutePlatformTenantStatus,
 	RouteProjects, RouteProjectByKey,
 	RoutePeople, RoutePersonByID, RouteTeams, RouteTeamByID,
 	RoutePermissions, RouteRoles, RouteRoleByKey,
@@ -572,7 +581,9 @@ var Permissions = []Permission{
 	{Key: "build.delete", Group: "应用包", Label: "删除应用包"},
 	{Key: "project.read", Group: "项目", Label: "查看项目"},
 	{Key: "project.write", Group: "项目", Label: "新建与编辑项目"},
+	{Key: "project.delete", Group: "项目", Label: "删除项目"},
 	{Key: "directory.read", Group: "基础资料", Label: "查看人员与团队"},
+	{Key: "directory.delete", Group: "基础资料", Label: "删除人员与团队"},
 }
 
 // ManagementPermissions 是「已从角色目录移除、但历史上可能存在」的管理类权限点。
@@ -581,10 +592,19 @@ var Permissions = []Permission{
 //   - managementPermissions 仍需要这些 key 字符串来赋予管理层级。
 // 它们不出现在 Permissions 里，所以前端勾选矩阵看不到，也无法通过接口新勾上去。
 const (
-	PermissionDirectoryWrite = "directory.write"
-	PermissionSettingsRead   = "settings.read"
-	PermissionSettingsWrite  = "settings.write"
-	PermissionAdminAccess    = "admin.access"
+	PermissionDirectoryWrite  = "directory.write"
+	PermissionDirectoryDelete = "directory.delete"
+	PermissionSettingsRead    = "settings.read"
+	PermissionSettingsWrite   = "settings.write"
+	PermissionAdminAccess     = "admin.access"
+	// PermissionRoleDelete 允许删除**本公司自定义**角色（平台内置角色永远不可删）。
+	//
+	// 为什么不放进 Permissions 可勾选目录：那一栏是"业务角色能具备什么能力"，
+	// 而"删角色"是治理角色定义本身。若可勾选，会出现「某人挂着 A 角色、
+	// 又把 A 角色删掉」的自我指涉，也让勾选矩阵多出一项反直觉的能力。
+	// 它改由 account_level 直接赋予 platform_admin，与角色管理的入口门槛保持一致：
+	// 能定义角色的人才能删除角色，且只能删自己公司的。
+	PermissionRoleDelete = "role.delete"
 )
 
 // IsValidPermission 判断权限点是否在**可勾选**目录里，写入角色时用它挡住拼错/伪造的值。

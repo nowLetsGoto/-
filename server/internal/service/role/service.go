@@ -9,6 +9,7 @@ package role
 import (
 	"context"
 	"errors"
+	"fmt"
 	"regexp"
 	"strings"
 	"unicode/utf8"
@@ -46,8 +47,11 @@ var builtinRoles = []builtinRole{
 		permissions: allPermissionKeys(),
 	},
 	{
-		key: "developer", name: "开发", description: "可以上传与发布应用包，不能删除",
-		permissions: []string{"build.read", "build.write", "project.read", "directory.read"},
+		key: "developer", name: "开发", description: "可以上传、发布与删除应用包",
+		permissions: []string{
+			"build.read", "build.write", "build.delete",
+			"project.read", "directory.read",
+		},
 	},
 	{
 		key: "tester", name: "测试", description: "可以查看与下载应用包",
@@ -137,6 +141,53 @@ func (s *Service) Update(ctx context.Context, key string, in contract.RoleInput,
 		return contract.Role{}, err
 	}
 	return s.repo.Update(ctx, key, normalized, scope)
+}
+
+// Delete 删除本公司自定义角色。
+//
+// 三条前置条件，任一不满足都拒绝并说清原因：
+//  1. 不是平台内置角色 —— 内置角色属于所有公司，删掉会让别家公司的成员瞬间失去权限；
+//  2. 不是超管角色 —— 它的权限恒为全量，删掉等于拆掉"能改配置"的唯一入口，
+//     会形成谁也改不了角色/设置的死锁；
+//  3. 没有任何人员/项目在用 —— role_id 是 SET NULL，静默删除会把那些人降权到"无角色"，
+//     而界面上看不出发生过什么。
+//
+// 前两条用 ValidationError（业务上不允许），第三条也用它——调用者有删除权限，
+// 只是当前状态不允许，前端据此提示"先解除引用"而不是"权限不足"。
+func (s *Service) Delete(ctx context.Context, key string, scope contract.Scope) error {
+	if key == SuperAdminKey {
+		return &contract.ValidationError{Message: "超级管理员角色不可删除"}
+	}
+	// 用 FindByKey（带 scope）而不是 FindByKeyAny：越权（删别家公司的角色）应得 404，
+	// 与"这个 key 不存在"同一个答案，不透露别家公司有没有这个角色。
+	role, err := s.repo.FindByKey(ctx, key, scope)
+	if err != nil {
+		return err
+	}
+	if role.IsBuiltin {
+		return &contract.ValidationError{Message: "平台内置角色不可删除，如需限制权限请改用自定义角色"}
+	}
+
+	usage, err := s.repo.CountUsage(ctx, role.ID)
+	if err != nil {
+		return err
+	}
+	if !usage.Empty() {
+		return &contract.ValidationError{Message: describeRoleUsage(usage)}
+	}
+	return s.repo.Delete(ctx, key, scope)
+}
+
+// describeRoleUsage 把引用统计翻成一句能指导操作的话。
+func describeRoleUsage(usage rolerepo.Usage) string {
+	parts := make([]string, 0, 2)
+	if usage.Persons > 0 {
+		parts = append(parts, fmt.Sprintf("%d 名人员", usage.Persons))
+	}
+	if usage.Projects > 0 {
+		parts = append(parts, fmt.Sprintf("%d 个项目", usage.Projects))
+	}
+	return "该角色已分配给 " + strings.Join(parts, "、") + "，请先改掉他们的角色后再删除"
 }
 
 // normalize 去空白、校验格式与权限点合法性；withKey 为 false 时忽略 key（编辑场景）。

@@ -165,7 +165,7 @@ func run() error {
 	// 公司管理：建公司时原子地建其平台管理员；只有超管可达（路由层把关）。
 	tenantService := tenantsvc.NewService(tenantRepository)
 
-	loginService := loginsvc.NewService(cfg, usersRepository)
+	loginService := loginsvc.NewService(cfg, usersRepository, tenantRepository)
 	if err := loginService.EnsureAdmin(context.Background()); err != nil {
 		return err
 	}

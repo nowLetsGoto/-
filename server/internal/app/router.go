@@ -159,16 +159,19 @@ func NewRouter(d Deps) http.Handler {
 			// 不需要管理员先建好；数据落在各自的分区，越权由分区与 owner 过滤兜住。
 			private.With(authzmw.RequirePermission(d.Authz, "project.write")).Post("/projects", middleware.Wrap(d.Projects.Create))
 			private.With(authzmw.RequirePermission(d.Authz, "project.write")).Put("/projects/{key}", middleware.Wrap(d.Projects.Update))
+			private.With(authzmw.RequirePermission(d.Authz, "project.delete")).Delete("/projects/{key}", middleware.Wrap(d.Projects.Delete))
 			private.Group(func(team chi.Router) {
 				team.Use(authzmw.RequireTeamMode)
 				team.With(authzmw.RequirePermission(d.Authz, "directory.read")).Get("/people", middleware.Wrap(d.People.List))
 				team.With(authzmw.RequirePermission(d.Authz, "directory.write")).Post("/people", middleware.Wrap(d.People.Create))
 				team.With(authzmw.RequirePermission(d.Authz, "directory.read")).Get("/people/{id}", middleware.Wrap(d.People.Get))
 				team.With(authzmw.RequirePermission(d.Authz, "directory.write")).Put("/people/{id}", middleware.Wrap(d.People.Update))
+				team.With(authzmw.RequirePermission(d.Authz, contract.PermissionDirectoryDelete)).Delete("/people/{id}", middleware.Wrap(d.People.Delete))
 				team.With(authzmw.RequirePermission(d.Authz, "directory.read")).Get("/teams", middleware.Wrap(d.Teams.List))
 				team.With(authzmw.RequirePermission(d.Authz, "directory.write")).Post("/teams", middleware.Wrap(d.Teams.Create))
 				team.With(authzmw.RequirePermission(d.Authz, "directory.read")).Get("/teams/{id}", middleware.Wrap(d.Teams.Get))
 				team.With(authzmw.RequirePermission(d.Authz, "directory.write")).Put("/teams/{id}", middleware.Wrap(d.Teams.Update))
+				team.With(authzmw.RequirePermission(d.Authz, contract.PermissionDirectoryDelete)).Delete("/teams/{id}", middleware.Wrap(d.Teams.Delete))
 				// 角色管理不在这里：它只对超级管理员开放，见下面的 admin 专区。
 			})
 		})
@@ -196,6 +199,9 @@ func NewRouter(d Deps) http.Handler {
 			// 公司管理：建公司与它的平台管理员、列出公司。仅超管（admin 组本身已经是超管门槛）。
 			admin.Get("/platform/tenants", middleware.Wrap(d.Tenants.List))
 			admin.Post("/platform/tenants", middleware.Wrap(d.Tenants.Create))
+			// 启停与删除公司：比"建"更危险（影响面是整家公司），因此同样只在超管专区。
+			admin.Post("/platform/tenants/{id}/status", middleware.Wrap(d.Tenants.SetStatus))
+			admin.Delete("/platform/tenants/{id}", middleware.Wrap(d.Tenants.Delete))
 			admin.Get("/admin/audit-logs", middleware.Wrap(d.Audit.List))
 		})
 
@@ -226,6 +232,9 @@ func NewRouter(d Deps) http.Handler {
 			roles.Get("/roles/{key}", middleware.Wrap(d.Roles.Get))
 			roles.Post("/roles", middleware.Wrap(d.Roles.Create))
 			roles.Put("/roles/{key}", middleware.Wrap(d.Roles.Update))
+			// 删角色额外要求 role.delete：它是"治理角色定义"而不是业务能力，
+			// 平台管理员固有该权限；团队管理员连这个路由组都进不来。
+			roles.With(authzmw.RequirePermission(d.Authz, contract.PermissionRoleDelete)).Delete("/roles/{key}", middleware.Wrap(d.Roles.Delete))
 		})
 	})
 	r.Get(contract.RouteHealth, middleware.Wrap(d.Health.Health))

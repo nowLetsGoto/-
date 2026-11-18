@@ -7,6 +7,7 @@ package teams
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"unicode/utf8"
 
@@ -71,6 +72,42 @@ func (s *Service) Update(ctx context.Context, id string, in contract.TeamInput) 
 		return contract.Team{}, translate(err)
 	}
 	return item, nil
+}
+
+// Delete 删除团队。
+//
+// 只允许删**没有任何引用**的团队：还有成员、还关联项目、还挂着管理员账号时一律拒绝。
+// 拒绝而不是级联，是因为这三种关系都代表"有人正在用它"——静默断开会悄悄改变
+// 别人的可见范围（团队成员会突然什么都看不到），而界面上看不出发生过什么。
+func (s *Service) Delete(ctx context.Context, id string) error {
+	// 先按 scope 取一次：既确认存在且属于本公司（越界得 404，而非 400），
+	// 也让引用检查只针对真实存在的记录。
+	if _, err := s.Get(ctx, id); err != nil {
+		return err
+	}
+	usage, err := s.repo.CountUsage(ctx, id)
+	if err != nil {
+		return err
+	}
+	if !usage.Empty() {
+		return &contract.ValidationError{Message: describeTeamUsage(usage)}
+	}
+	return translate(s.repo.Delete(ctx, id, authctx.ScopeFrom(ctx)))
+}
+
+// describeTeamUsage 把引用统计翻成一句能指导操作的话。
+func describeTeamUsage(usage teamsrepo.Usage) string {
+	parts := make([]string, 0, 3)
+	if usage.Persons > 0 {
+		parts = append(parts, fmt.Sprintf("有 %d 名成员", usage.Persons))
+	}
+	if usage.Projects > 0 {
+		parts = append(parts, fmt.Sprintf("关联 %d 个项目", usage.Projects))
+	}
+	if usage.Admins > 0 {
+		parts = append(parts, fmt.Sprintf("有 %d 个管理员", usage.Admins))
+	}
+	return "该团队" + strings.Join(parts, "、") + "，请先解除关联后再删除"
 }
 
 // translate 把外键冲突翻译成可上屏的中文提示。

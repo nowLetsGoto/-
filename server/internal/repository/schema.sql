@@ -294,6 +294,14 @@ INSERT INTO role_permissions (role_id, permission)
 SELECT id, 'directory.read' FROM roles WHERE key = 'guest'
 ON CONFLICT DO NOTHING;
 
+-- developer 的内置定义新增了 build.delete（"能传就能删"），但 EnsureBuiltin 刻意不覆盖
+-- 已存在的角色（用户的调整不该被重启冲掉），所以存量库只能靠这条补。
+-- 只补这一个点、只对内置 developer：新增权限点是"扩大默认能力"，与上面的 guest 同理，
+-- 属于一次性回填，不是每次启动都重新授予。
+INSERT INTO role_permissions (role_id, permission)
+SELECT id, 'build.delete' FROM roles WHERE key = 'developer' AND tenant_id IS NULL
+ON CONFLICT DO NOTHING;
+
 -- people：人员档案。username 为空表示"只在通讯录里，不能登录"。
 -- 一个人只挂一个角色（权限取单一集合，避免"多角色取并集"的歧义）。
 CREATE TABLE IF NOT EXISTS people (

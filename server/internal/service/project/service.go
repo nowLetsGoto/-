@@ -8,6 +8,7 @@ package project
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"unicode/utf8"
 
@@ -117,6 +118,43 @@ func (s *Service) Update(ctx context.Context, key string, in contract.ProjectInp
 		return contract.Project{}, updateErr
 	}
 	return item, nil
+}
+
+// Delete 按 key 删除项目。
+//
+// 只允许删**没有任何引用**的项目：下面还有包、还有成员、还被团队关联时一律拒绝。
+// 包尤其不能级联——它是不可恢复的资产（对应磁盘文件），静默删掉等于丢数据；
+// 成员与团队关系则代表"有人正在用"，删掉会悄悄改变别人的可见范围。
+//
+// 拒绝返回 ValidationError（400）：调用者有删除权限，只是当前状态不允许，
+// 前端据此提示"先去清理"，而不是误以为权限不足。
+func (s *Service) Delete(ctx context.Context, key string, view View) error {
+	repo := s.repos.For(view.Mode)
+	scope := authctx.ScopeFrom(ctx)
+
+	usage, err := repo.CountUsage(ctx, key, view.OwnerUserID, scope)
+	if err != nil {
+		return err
+	}
+	if !usage.Empty() {
+		return &contract.ValidationError{Message: describeProjectUsage(usage)}
+	}
+	return repo.Delete(ctx, key, view.OwnerUserID, scope)
+}
+
+// describeProjectUsage 把引用统计翻成一句能指导操作的话。
+func describeProjectUsage(usage projectrepo.Usage) string {
+	parts := make([]string, 0, 3)
+	if usage.Builds > 0 {
+		parts = append(parts, fmt.Sprintf("有 %d 个应用包", usage.Builds))
+	}
+	if usage.Members > 0 {
+		parts = append(parts, fmt.Sprintf("有 %d 名成员", usage.Members))
+	}
+	if usage.Teams > 0 {
+		parts = append(parts, fmt.Sprintf("被 %d 个团队关联", usage.Teams))
+	}
+	return "该项目" + strings.Join(parts, "、") + "，请先清理后再删除"
 }
 
 // hideProjectMeta 清空单人视图不应展示的角色字段，避免列表响应里仍带着敏感配置。

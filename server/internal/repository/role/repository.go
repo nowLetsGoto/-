@@ -202,6 +202,49 @@ func (r *Repository) save(ctx context.Context, id string, in contract.RoleInput,
 	return r.findByID(ctx, roleID)
 }
 
+// Usage 统计角色被多少人员与项目在用，供删除前判断"能不能删"。
+type Usage struct {
+	Persons  int
+	Projects int
+}
+
+// Empty 表示没有任何引用，可以直接删除。
+func (u Usage) Empty() bool { return u.Persons == 0 && u.Projects == 0 }
+
+// CountUsage 统计角色的引用数。
+//
+// 两张表分别按 role_id 关联（改名后不再按 key 关联，见 schema.sql 的说明）；
+// 单人分区的项目恒无角色，所以只数 team.projects 就够。
+func (r *Repository) CountUsage(ctx context.Context, roleID string) (Usage, error) {
+	const query = `SELECT
+  (SELECT count(*) FROM people        WHERE role_id = $1),
+  (SELECT count(*) FROM team.projects WHERE role_id = $1)`
+
+	var usage Usage
+	if err := r.db.QueryRowContext(ctx, query, roleID).Scan(&usage.Persons, &usage.Projects); err != nil {
+		return Usage{}, fmt.Errorf("统计角色引用失败: %w", err)
+	}
+	return usage, nil
+}
+
+// Delete 删除角色；scope 限定只能删本公司自定义角色（内置角色 tenant_id 为空，必然落空）。
+//
+// role_permissions 由外键 ON DELETE CASCADE 自动清掉，不需要单独删。
+// people.role_id / projects.role_id 是 SET NULL，但调用方**必须先用 CountUsage 拦掉**
+// 有引用的角色：SET NULL 会把那些人/项目静默降权（权限从有变无），
+// 这种"删角色顺便改变他人权限"的副作用不能在界面上不可见地发生。
+func (r *Repository) Delete(ctx context.Context, key string, scope contract.Scope) error {
+	filter := visibleFilter(0, scope).Add(`key = ?`, key)
+	// 双保险：内置角色永远不可删（即使超管 scope.All 让 visibleFilter 放行）。
+	filter.AddRaw(`is_builtin = false`)
+
+	result, err := r.db.ExecContext(ctx, `DELETE FROM roles`+filter.Where(), filter.Args()...)
+	if err != nil {
+		return fmt.Errorf("删除角色失败: %w", err)
+	}
+	return repository.EnsureDeleted(result, "roles")
+}
+
 // ClearBuiltinTenant 把内置角色的 tenant_id 归零（NULL），表示"平台级、所有公司共享"。
 // P1 的存量回填曾把角色一律归到默认公司；不修正的话，其他公司将看不到任何内置角色，
 // 连 developer / tester 都选不到。幂等，只动 is_builtin=true 的行。

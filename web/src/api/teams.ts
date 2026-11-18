@@ -5,7 +5,7 @@
  * 边界：不做本地缓存（由 hooks/useDirectory 统一负责）、不拼非契约路径。
  */
 import type { components } from './schema';
-import { get, postJSON, putJSON } from './client';
+import { del, get, postJSON, putJSON } from './client';
 import type { PageQuery, PagedList } from './query';
 import { pageQuery } from './query';
 
@@ -33,4 +33,12 @@ export function createTeam(input: TeamInput): Promise<Team> {
 
 export function updateTeam(id: string, input: TeamInput): Promise<Team> {
   return putJSON<Team>(`${TEAMS_PATH}/${id}`, input);
+}
+
+/**
+ * 删除团队。只对**没有任何引用**的团队有效：
+ * 还有成员、还关联项目、还挂着管理员账号时，服务端返回 400 并说明还剩哪些关系。
+ */
+export function deleteTeam(id: string): Promise<void> {
+  return del<void>(`${TEAMS_PATH}/${id}`);
 }
