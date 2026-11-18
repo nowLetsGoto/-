@@ -66,8 +66,10 @@ func (r *Repository) FindByID(ctx context.Context, id string) (Record, error) {
 
 // List 返回指定模式的账号页与总数；keyword 同时匹配登录名与绑定人员姓名。
 // mode 是硬筛选：账号管理的视图跟着登录模式走，单人模式看不到团队账号，反之亦然。
-func (r *Repository) List(ctx context.Context, page contract.PageQuery, mode contract.SessionMode, keyword string) ([]contract.User, int, error) {
+// scope 叠加租户边界：公司账号只看本公司的账号，超管（All）看全部。
+func (r *Repository) List(ctx context.Context, page contract.PageQuery, mode contract.SessionMode, keyword string, scope contract.Scope) ([]contract.User, int, error) {
 	filter := accountFilter(mode, keyword)
+	repository.ApplyTenant(filter, "u", scope)
 
 	var total int
 	countSQL := `SELECT count(*)` + fromClause + filter.Where()
@@ -102,19 +104,76 @@ func (r *Repository) List(ctx context.Context, page contract.PageQuery, mode con
 }
 
 // Create 新建账号；用户名冲突由唯一索引拒绝，service 翻译成可读提示。
-// 插入后按 id 重查一次：columns 里有 JOIN people 取姓名，RETURNING 拿不到。
-func (r *Repository) Create(ctx context.Context, username, passwordHash string, mode contract.SessionMode, personID string, isSuperAdmin bool) (Record, error) {
-	row := r.db.QueryRowContext(ctx,
-		`INSERT INTO users (username, password_hash, mode, person_id, is_super_admin)
-		 VALUES ($1, $2, $3, NULLIF($4, '')::uuid, $5)
+// accountLevel / tenantID 由 service 按调用者层级推导后传入，仓储不自行判断。
+// teamIDs 仅在 team_admin 时写入 team_admins——团队管理员与团队是多对多，关联与账号同事务。
+func (r *Repository) Create(ctx context.Context, username, passwordHash string, mode contract.SessionMode, personID string, isSuperAdmin bool, accountLevel, tenantID string, teamIDs []string) (Record, error) {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return Record{}, fmt.Errorf("开启账号创建事务失败: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	level := accountLevel
+	if level == "" {
+		level = contract.AccountLevelMember
+	}
+	row := tx.QueryRowContext(ctx,
+		`INSERT INTO users (username, password_hash, mode, person_id, is_super_admin, account_level, tenant_id)
+		 VALUES ($1, $2, $3, NULLIF($4, '')::uuid, $5, $6, NULLIF($7, '')::uuid)
 		 RETURNING id::text`,
-		username, passwordHash, mode, personID, isSuperAdmin)
+		username, passwordHash, mode, personID, isSuperAdmin, level, tenantID)
 
 	var id string
 	if err := row.Scan(&id); err != nil {
 		return Record{}, fmt.Errorf("创建账号失败: %w", err)
 	}
+	if err := replaceAdminTeams(ctx, tx, id, teamIDs, tenantID); err != nil {
+		return Record{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return Record{}, fmt.Errorf("提交账号创建失败: %w", err)
+	}
 	return r.FindByID(ctx, id)
+}
+
+// replaceAdminTeams 写入团队管理员的关联团队；tenantID 非空时团队必须同属该公司。
+// 非 team_admin 传空 teamIDs，等同一句空操作。
+func replaceAdminTeams(ctx context.Context, tx *sql.Tx, userID string, teamIDs []string, tenantID string) error {
+	for _, teamID := range teamIDs {
+		if _, err := tx.ExecContext(ctx,
+			`INSERT INTO team_admins (team_id, user_id)
+			 SELECT id, $2::uuid FROM teams WHERE id = $1::uuid AND tenant_id = $3::uuid
+			 ON CONFLICT DO NOTHING`,
+			teamID, userID, tenantID); err != nil {
+			return fmt.Errorf("写入团队管理员关联失败: %w", err)
+		}
+	}
+	return nil
+}
+
+// AdminTeamIDs 返回团队管理员账号关联的团队 id（有序、空结果返回空切片）。
+// 与写入端 replaceAdminTeams 成对放在本仓储：team_admins 的读写都归账号侧，
+// 团队仓储的 AdminTeamIDs 是给 scope 推导用的另一条只读路径，二者查的是同一张表。
+func (r *Repository) AdminTeamIDs(ctx context.Context, userID string) ([]string, error) {
+	rows, err := r.db.QueryContext(ctx,
+		`SELECT team_id::text FROM team_admins WHERE user_id = $1 ORDER BY team_id`, userID)
+	if err != nil {
+		return nil, fmt.Errorf("查询管理员关联团队失败: %w", err)
+	}
+	defer rows.Close()
+
+	ids := make([]string, 0)
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("读取管理员关联团队失败: %w", err)
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("遍历管理员关联团队失败: %w", err)
+	}
+	return ids, nil
 }
 
 // Update 改绑定人员与超管标记（登录名与模式都不可改）。
@@ -273,5 +332,9 @@ func scanRecord(row scanner) (Record, error) {
 	if lastLogin.Valid {
 		record.User.LastLoginAt = lastLogin.Time.UTC().Format(time.RFC3339)
 	}
+	// 层级与租户同时投影到 DTO 和 Record：账号列表要显示身份，鉴权要读原始值。
+	record.User.AccountLevel = record.AccountLevel
+	record.User.TenantID = record.TenantID
+	record.User.TeamIDs = []string{}
 	return record, nil
 }

@@ -17,8 +17,8 @@ import (
 	"os"
 	"regexp"
 	"strings"
-	"unicode/utf8"
 
+	"dandelion/server/internal/authctx"
 	"dandelion/server/internal/contract"
 	"dandelion/server/internal/repository"
 	userrepo "dandelion/server/internal/repository/user"
@@ -29,9 +29,6 @@ import (
 const (
 	statusActive   = "active"
 	statusDisabled = "disabled"
-
-	minPasswordLen = 8
-	maxPasswordLen = 64
 )
 
 // 账号名会进令牌载荷（用 | 分段）与 URL，因此只允许安全字符。
@@ -46,19 +43,93 @@ const tempPasswordAlphabet = "abcdefghijkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23
 
 // Service 是账号管理的唯一业务入口。
 type Service struct {
-	repo    *userrepo.Repository
+	repo   *userrepo.Repository
 	cleanup *repository.AccountCleanup
-	paths   *storage.Paths
+	paths  *storage.Paths
+	// teams 只用于校验 team_admin 的关联团队落在自己可见范围内；窄接口便于单测。
+	teams teamLookup
 }
 
-func NewService(repo *userrepo.Repository, cleanup *repository.AccountCleanup, paths *storage.Paths) *Service {
-	return &Service{repo: repo, cleanup: cleanup, paths: paths}
+// teamLookup 是账号创建时校验团队归属所需的最小读取面。
+type teamLookup interface {
+	AdminTeamIDs(ctx context.Context, userID string) ([]string, error)
+}
+
+func NewService(repo *userrepo.Repository, cleanup *repository.AccountCleanup, paths *storage.Paths, teams teamLookup) *Service {
+	return &Service{repo: repo, cleanup: cleanup, paths: paths, teams: teams}
+}
+
+// resolveCreateLevel 校验调用者能否创建指定层级，并归一化默认值。
+// 这是三级账号体系的安全核心：层级只能往下建、归属只能留在自己公司。
+//
+// 规则（按调用者层级）：
+//   - super_admin：可建 platform_admin / team_admin / member；不能建另一个 super_admin
+//     （平台管理员必须走「建公司」流程，与公司原子创建，避免孤儿公司）；
+//   - platform_admin：只能建 team_admin / member，归属本公司；
+//   - team_admin：只能建 member，归属本公司且团队落在自己关联团队内；
+//   - member：不能建账号（路由层已挡，这里再挡一次， defense in depth）。
+//
+// 返回的 teamIDs 已经过归属校验，未指定的 team_admin 返回空切片（可后续在编辑页分配）。
+func resolveCreateLevel(caller contract.Identity, requested string, teamIDs []string, visibleTeamIDs []string) (string, []string, error) {
+	callerLevel := caller.Level()
+	level := strings.TrimSpace(requested)
+	if level == "" {
+		// 缺省层级：平台管理员建的是团队管理员之外的普通账号，团队管理员建的也是普通账号。
+		level = contract.AccountLevelMember
+	}
+	if !contract.IsAccountLevel(level) {
+		return "", nil, &contract.ValidationError{Message: "账号层级不合法"}
+	}
+
+	// 任何人都不能通过账号接口创建超管：那是最高的平台身份，不在本链路里。
+	if level == contract.AccountLevelSuperAdmin {
+		return "", nil, contract.ErrForbidden
+	}
+	// 平台管理员随公司创建，不能单独建——否则会出现没有公司的平台管理员。
+	if level == contract.AccountLevelPlatformAdmin && callerLevel != contract.AccountLevelSuperAdmin {
+		return "", nil, contract.ErrForbidden
+	}
+
+	switch callerLevel {
+	case contract.AccountLevelSuperAdmin:
+		// 超管建账号时归属由请求指定（建公司流程另走 service/tenant，这里仅保留能力）。
+	case contract.AccountLevelPlatformAdmin:
+		if caller.TenantID == "" {
+			return "", nil, contract.ErrForbidden
+		}
+	case contract.AccountLevelTeamAdmin:
+		if level != contract.AccountLevelMember {
+			return "", nil, contract.ErrForbidden
+		}
+		if caller.TenantID == "" {
+			return "", nil, contract.ErrForbidden
+		}
+		// 团队管理员指定的团队必须是自己关联团队的子集，防止跨团队授权。
+		allowed := make(map[string]struct{}, len(visibleTeamIDs))
+		for _, id := range visibleTeamIDs {
+			allowed[id] = struct{}{}
+		}
+		for _, id := range teamIDs {
+			if _, ok := allowed[id]; !ok {
+				return "", nil, contract.ErrForbidden
+			}
+		}
+	default:
+		return "", nil, contract.ErrForbidden
+	}
+
+	// 只有 team_admin 才有团队关联；其他层级即使传了 teamIds 也忽略，避免脏数据。
+	if level != contract.AccountLevelTeamAdmin {
+		teamIDs = nil
+	}
+	return level, teamIDs, nil
 }
 
 // List 返回该模式的账号页；keyword 同时匹配登录名与绑定人员姓名。
 // 账号跟着登录模式分流：单人模式管单人账号，团队模式管团队账号，两个视图互不干扰。
 func (s *Service) List(ctx context.Context, page contract.PageQuery, mode contract.SessionMode, keyword string) (contract.UserList, error) {
-	items, total, err := s.repo.List(ctx, page, mode, keyword)
+	// 公司账号只看本公司；超管（All）看全部。归属是硬边界，不接受请求参数覆盖。
+	items, total, err := s.repo.List(ctx, page, mode, keyword, authctx.ScopeFrom(ctx))
 	if err != nil {
 		return contract.UserList{}, err
 	}
@@ -84,12 +155,26 @@ func (s *Service) Create(ctx context.Context, caller contract.Identity, in contr
 		return contract.User{}, err
 	}
 
+	// 层级与归属从调用者推导，请求体无法越权指定。
+	// team_admin 建普通账号时，其可见团队由 ScopeOf 注入的 scope 提供。
+	scope := authctx.ScopeFrom(ctx)
+	level, teamIDs, err := resolveCreateLevel(caller, in.AccountLevel, in.TeamIDs, scope.TeamIDs)
+	if err != nil {
+		return contract.User{}, err
+	}
+	// isSuperAdmin 是比 account_level 更高的平台身份，任何非超管都不能借建账号把自己提权。
+	if in.IsSuperAdmin && !canGrantSuperAdmin(caller) {
+		return contract.User{}, contract.ErrForbidden
+	}
+
 	hash, err := loginsvc.HashPassword(in.Password)
 	if err != nil {
 		return contract.User{}, err
 	}
 
-	record, err := s.repo.Create(ctx, username, hash, caller.Mode, strings.TrimSpace(in.PersonID), in.IsSuperAdmin)
+	// 归属固定为调用者所属公司：平台管理员与团队管理员都只能在本公司建账号。
+	record, err := s.repo.Create(ctx, username, hash, caller.Mode, strings.TrimSpace(in.PersonID),
+		in.IsSuperAdmin, level, caller.TenantID, teamIDs)
 	if err != nil {
 		if repository.IsUniqueViolation(err) {
 			return contract.User{}, &contract.ValidationError{Message: "该账号名已存在"}
@@ -99,7 +184,34 @@ func (s *Service) Create(ctx context.Context, caller contract.Identity, in contr
 		}
 		return contract.User{}, err
 	}
+	// 响应里带出团队关联：仓储读的是 users 表，team_admins 的关联由本层补齐，
+	// 否则前端建完团队管理员会看到空的 teamIds，与 /me 的结果不一致。
+	if level == contract.AccountLevelTeamAdmin {
+		record.User.TeamIDs, err = s.repo.AdminTeamIDs(ctx, record.User.ID)
+		if err != nil {
+			return contract.User{}, err
+		}
+	}
 	return record.User, nil
+}
+
+// canGrantSuperAdmin 判断调用者能否给用户设置超管标记（新建与编辑共用）。
+// 只有平台超管本人可以——这是比 account_level 更高的身份，
+// 任何管理层级借建账号设这个标记都能把自己/他人提成超管，必须单独守死。
+func canGrantSuperAdmin(caller contract.Identity) bool {
+	return caller.Level() == contract.AccountLevelSuperAdmin
+}
+
+// ensureInScope 校验目标账号在当前调用者的可见范围内。
+// 超管看全部；公司账号只能碰本公司账号，跨公司按「不存在」处理，不泄漏对方是否有这个 id。
+func ensureInScope(caller contract.Identity, target userrepo.Record) error {
+	if caller.Level() == contract.AccountLevelSuperAdmin {
+		return nil
+	}
+	if caller.TenantID == "" || target.TenantID != caller.TenantID {
+		return errAccountNotFound
+	}
+	return nil
 }
 
 // Update 改绑定人员、角色与超管标记；账号名与模式不可改。
@@ -108,9 +220,17 @@ func (s *Service) Update(ctx context.Context, caller contract.Identity, id strin
 	if err != nil {
 		return contract.User{}, err
 	}
+	if err := ensureInScope(caller, current); err != nil {
+		return contract.User{}, err
+	}
 	// 与删除同一条边界：跨模式的账号在这个视图里不存在，也就不能被编辑。
 	if current.User.Mode != caller.Mode {
 		return contract.User{}, errAccountNotFound
+	}
+
+	// 非超管不能把目标账号提成超管：isSuperAdmin 是平台最高身份，不在公司管理链路里。
+	if in.IsSuperAdmin && !canGrantSuperAdmin(caller) {
+		return contract.User{}, contract.ErrForbidden
 	}
 
 	// 红线一：不能取消自己的超管身份，否则会当场把自己锁在门外。
@@ -143,6 +263,15 @@ func (s *Service) Get(ctx context.Context, caller contract.Identity, id string) 
 	if record.User.Mode != caller.Mode {
 		return contract.User{}, errAccountNotFound
 	}
+	if err := ensureInScope(caller, record); err != nil {
+		return contract.User{}, err
+	}
+	if record.AccountLevel == contract.AccountLevelTeamAdmin {
+		record.User.TeamIDs, err = s.repo.AdminTeamIDs(ctx, record.User.ID)
+		if err != nil {
+			return contract.User{}, err
+		}
+	}
 	return record.User, nil
 }
 
@@ -153,6 +282,9 @@ func (s *Service) SetStatus(ctx context.Context, caller contract.Identity, id, s
 	}
 	current, err := s.repo.FindByID(ctx, id)
 	if err != nil {
+		return contract.User{}, err
+	}
+	if err := ensureInScope(caller, current); err != nil {
 		return contract.User{}, err
 	}
 	if status == statusDisabled {
@@ -178,8 +310,12 @@ func (s *Service) SetStatus(ctx context.Context, caller contract.Identity, id, s
 }
 
 // ResetPassword 生成一次性临时密码并返回明文（只在本次响应里出现一次）。
-func (s *Service) ResetPassword(ctx context.Context, id string) (string, error) {
-	if _, err := s.repo.FindByID(ctx, id); err != nil {
+func (s *Service) ResetPassword(ctx context.Context, caller contract.Identity, id string) (string, error) {
+	current, err := s.repo.FindByID(ctx, id)
+	if err != nil {
+		return "", err
+	}
+	if err := ensureInScope(caller, current); err != nil {
 		return "", err
 	}
 	password, err := generateTempPassword()
@@ -216,6 +352,9 @@ func (s *Service) Delete(ctx context.Context, caller contract.Identity, id strin
 	}
 	if current.User.Mode != caller.Mode {
 		return contract.User{}, errAccountNotFound
+	}
+	if err := ensureInScope(caller, current); err != nil {
+		return contract.User{}, err
 	}
 	// 红线四：不能删自己——删完当场失去登录能力，且没有撤销入口。
 	if current.User.ID == caller.UserID {
@@ -301,10 +440,7 @@ func (s *Service) ensureAnotherSuperAdmin(ctx context.Context, excludingID strin
 }
 
 func validatePassword(password string) error {
-	if utf8.RuneCountInString(password) < minPasswordLen || utf8.RuneCountInString(password) > maxPasswordLen {
-		return &contract.ValidationError{Message: "密码长度需在 8-64 位之间"}
-	}
-	return nil
+	return contract.ValidatePassword(password)
 }
 
 // generateTempPassword 生成 12 位临时密码，字符集剔除了易混淆字符。

@@ -152,6 +152,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/platform/tenants": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 公司列表（仅平台超级管理员） */
+        get: operations["listTenants"];
+        put?: never;
+        /**
+         * 新建公司及其平台管理员（仅平台超级管理员）
+         * @description 公司与平台管理员账号原子创建；响应里的 password 是该管理员的一次性明文密码
+         */
+        post: operations["createTenant"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/admin/users": {
         parameters: {
             query?: never;
@@ -159,7 +180,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** 账号列表（仅超级管理员） */
+        /** 账号列表（团队管理员及以上；范围由身份层级决定） */
         get: operations["listUsers"];
         put?: never;
         /** 新建账号（仅超级管理员） */
@@ -713,14 +734,23 @@ export interface components {
             lastLoginIp: string;
             /** Format: date-time */
             createdAt: string;
+            /** @description 管理身份层级，与业务角色正交 */
+            accountLevel: components["schemas"]["AccountLevel"];
+            /** @description 账号归属公司；超管为空 */
+            tenantId: string;
+            /** @description 团队管理员可管的团队 id；其它层级为空数组 */
+            teamIds: string[];
         };
-        /** @description 新建账号。没有 mode 字段：账号归属模式由创建者的登录模式决定， 登录时已选定模式，页面上只做只读展示。 */
+        /** @description 新建账号。没有 mode 字段：账号归属模式由创建者的登录模式决定， 登录时已选定模式，页面上只做只读展示。 accountLevel 只能传比调用者低的层级，越权由服务端拒绝；归属公司从调用者推导，不接受请求指定。 */
         UserInput: {
             username: string;
             password: string;
             /** @description 绑定的人员档案 id，可留空（之后再绑定） */
             personId: string;
             isSuperAdmin: boolean;
+            accountLevel: components["schemas"]["AccountLevel"];
+            /** @description 仅 accountLevel=team_admin 时有意义，且必须落在调用者可见的团队内 */
+            teamIds: string[];
         };
         /** @description 编辑账号（登录名与模式都不可改）。roleKey 写的是绑定人员的角色（people.role_key）， 因此「在这里改角色」与「在人员管理里改角色」是同一件事。 */
         UserUpdate: {
@@ -729,6 +759,51 @@ export interface components {
             /** @description 绑定人员的角色 key；空串表示不分配角色 */
             roleKey: string;
             isSuperAdmin: boolean;
+        };
+        /** @description 新建公司及其平台管理员；两者原子创建，明文密码只在响应里返回一次 */
+        TenantInput: {
+            /** @description 公司名称 */
+            name: string;
+            /** @description 公司标识，小写字母/数字/短横线 */
+            code: string;
+            /** @description 平台管理员账号名 */
+            adminUsername: string;
+            /** @description 平台管理员初始密码 */
+            adminPassword: string;
+        };
+        /** @description 公司视图（含其平台管理员账号名） */
+        Tenant: {
+            /** Format: uuid */
+            id: string;
+            name: string;
+            code: string;
+            /** @enum {string} */
+            status: "active" | "disabled";
+            adminUsername: string;
+            /** Format: date-time */
+            createdAt: string;
+        };
+        /** @description 新建公司的结果；password 是平台管理员的一次性明文密码 */
+        TenantResult: {
+            tenant: components["schemas"]["Tenant"];
+            password: string;
+        };
+        /** @description 统一响应外壳，data 为公司分页列表 */
+        TenantListResponse: {
+            code: number;
+            message: string;
+            data: {
+                items: components["schemas"]["Tenant"][];
+                page: number;
+                pageSize: number;
+                total: number;
+            };
+        };
+        /** @description 统一响应外壳，data 为新建公司结果 */
+        TenantCreateResponse: {
+            code: number;
+            message: string;
+            data: components["schemas"]["TenantResult"];
         };
         Permission: {
             key: string;
@@ -1440,6 +1515,78 @@ export interface operations {
             };
             400: components["responses"]["BadRequest"];
             401: components["responses"]["Unauthorized"];
+        };
+    };
+    listTenants: {
+        parameters: {
+            query?: {
+                /** @description 页码，从 1 开始；缺省或非法按 1 处理 */
+                page?: components["parameters"]["PageParam"];
+                /** @description 每页条数，默认 10、上限 200；显式传 0 表示不分页（返回全量，供下拉选项与聚合使用） */
+                pageSize?: components["parameters"]["PageSizeParam"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 公司列表 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TenantListResponse"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            /** @description 非超级管理员 */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    createTenant: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TenantInput"];
+            };
+        };
+        responses: {
+            /** @description 创建成功 */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TenantCreateResponse"];
+                };
+            };
+            /** @description 参数不合法或名称/标识/账号名被占用 */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthorized"];
+            /** @description 非超级管理员 */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
         };
     };
     listUsers: {

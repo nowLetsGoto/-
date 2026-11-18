@@ -50,6 +50,8 @@ JOIN team.projects p ON p.id = pm.project_id`
 // 条件拼装顺序固定：租户 → 业务筛选，配合 (tenant_id, created_at) 索引。
 func (r *Repository) List(ctx context.Context, page contract.PageQuery, scope contract.Scope) ([]contract.Person, int, error) {
 	filter := repository.ScopeFilter(0, "p", scope)
+	// 团队级边界：team_admin / member 只能看关联团队的人员；平台管理员 TeamIDs 为空不受限。
+	repository.ApplyTeam(filter, `p.id IN (SELECT tm.person_id FROM team_members tm WHERE tm.team_id = ANY(?))`, scope)
 
 	var total int
 	countSQL := `SELECT count(*) FROM people p` + filter.Where()
@@ -103,6 +105,7 @@ func (r *Repository) List(ctx context.Context, page contract.PageQuery, scope co
 // 避免借 id 探测其它公司是否有人。
 func (r *Repository) FindByID(ctx context.Context, id string, scope contract.Scope) (contract.Person, error) {
 	filter := repository.ScopeFilter(0, "p", scope).Add(`p.id = ?`, id)
+	repository.ApplyTeam(filter, `p.id IN (SELECT tm.person_id FROM team_members tm WHERE tm.team_id = ANY(?))`, scope)
 	row := r.db.QueryRowContext(ctx, `SELECT `+selectColumns+fromClause+filter.Where(), filter.Args()...)
 	person, err := scan(row)
 	if err != nil {

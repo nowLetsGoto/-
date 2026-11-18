@@ -409,10 +409,56 @@ paths:
         '401':
           $ref: '#/components/responses/Unauthorized'
 
+  /platform/tenants:
+    get:
+      operationId: listTenants
+      summary: 公司列表（仅平台超级管理员）
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/PageParam'
+        - $ref: '#/components/parameters/PageSizeParam'
+      responses:
+        '200':
+          description: 公司列表
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TenantListResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          description: 非超级管理员
+    post:
+      operationId: createTenant
+      summary: 新建公司及其平台管理员（仅平台超级管理员）
+      description: 公司与平台管理员账号原子创建；响应里的 password 是该管理员的一次性明文密码
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TenantInput'
+      responses:
+        '201':
+          description: 创建成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TenantCreateResponse'
+        '400':
+          description: 参数不合法或名称/标识/账号名被占用
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          description: 非超级管理员
+
   /admin/users:
     get:
       operationId: listUsers
-      summary: 账号列表（仅超级管理员）
+      summary: 账号列表（团队管理员及以上；范围由身份层级决定）
       security:
         - bearerAuth: []
       parameters:
@@ -1583,7 +1629,7 @@ components:
     User:
       type: object
       description: 账号视图（不含任何密码字段）
-      required: [id, username, mode, personId, personName, roleKey, roleName, isSuperAdmin, status, lastLoginAt, lastLoginIp, createdAt]
+      required: [id, username, mode, personId, personName, roleKey, roleName, isSuperAdmin, status, lastLoginAt, lastLoginIp, createdAt, accountLevel, tenantId, teamIds]
       properties:
         id:
           type: string
@@ -1616,14 +1662,26 @@ components:
         createdAt:
           type: string
           format: date-time
+        accountLevel:
+          $ref: '#/components/schemas/AccountLevel'
+          description: 管理身份层级，与业务角色正交
+        tenantId:
+          type: string
+          description: 账号归属公司；超管为空
+        teamIds:
+          type: array
+          description: 团队管理员可管的团队 id；其它层级为空数组
+          items:
+            type: string
 
     UserInput:
       type: object
       description: >-
         新建账号。没有 mode 字段：账号归属模式由创建者的登录模式决定，
         登录时已选定模式，页面上只做只读展示。
+        accountLevel 只能传比调用者低的层级，越权由服务端拒绝；归属公司从调用者推导，不接受请求指定。
       additionalProperties: false
-      required: [username, password, personId, isSuperAdmin]
+      required: [username, password, personId, isSuperAdmin, accountLevel, teamIds]
       properties:
         username:
           type: string
@@ -1638,6 +1696,13 @@ components:
           description: 绑定的人员档案 id，可留空（之后再绑定）
         isSuperAdmin:
           type: boolean
+        accountLevel:
+          $ref: '#/components/schemas/AccountLevel'
+        teamIds:
+          type: array
+          description: 仅 accountLevel=team_admin 时有意义，且必须落在调用者可见的团队内
+          items:
+            type: string
 
     UserUpdate:
       type: object
@@ -1655,6 +1720,96 @@ components:
           description: 绑定人员的角色 key；空串表示不分配角色
         isSuperAdmin:
           type: boolean
+
+    TenantInput:
+      type: object
+      description: 新建公司及其平台管理员；两者原子创建，明文密码只在响应里返回一次
+      additionalProperties: false
+      required: [name, code, adminUsername, adminPassword]
+      properties:
+        name:
+          type: string
+          description: 公司名称
+        code:
+          type: string
+          pattern: '^[a-z0-9][a-z0-9-]{1,31}$'
+          description: 公司标识，小写字母/数字/短横线
+        adminUsername:
+          type: string
+          pattern: '^[a-zA-Z0-9._-]{3,32}$'
+          description: 平台管理员账号名
+        adminPassword:
+          type: string
+          minLength: 8
+          maxLength: 64
+          description: 平台管理员初始密码
+
+    Tenant:
+      type: object
+      description: 公司视图（含其平台管理员账号名）
+      required: [id, name, code, status, adminUsername, createdAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        code:
+          type: string
+        status:
+          type: string
+          enum: [active, disabled]
+        adminUsername:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+
+    TenantResult:
+      type: object
+      description: 新建公司的结果；password 是平台管理员的一次性明文密码
+      required: [tenant, password]
+      properties:
+        tenant:
+          $ref: '#/components/schemas/Tenant'
+        password:
+          type: string
+
+    TenantListResponse:
+      type: object
+      description: 统一响应外壳，data 为公司分页列表
+      required: [code, data, message]
+      properties:
+        code:
+          type: integer
+        message:
+          type: string
+        data:
+          type: object
+          required: [items, page, pageSize, total]
+          properties:
+            items:
+              type: array
+              items:
+                $ref: '#/components/schemas/Tenant'
+            page:
+              type: integer
+            pageSize:
+              type: integer
+            total:
+              type: integer
+
+    TenantCreateResponse:
+      type: object
+      description: 统一响应外壳，data 为新建公司结果
+      required: [code, data, message]
+      properties:
+        code:
+          type: integer
+        message:
+          type: string
+        data:
+          $ref: '#/components/schemas/TenantResult'
 
 
 

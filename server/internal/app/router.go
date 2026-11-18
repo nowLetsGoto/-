@@ -29,6 +29,7 @@ import (
 	rolehandler "dandelion/server/internal/handler/role"
 	settingshandler "dandelion/server/internal/handler/settings"
 	teamshandler "dandelion/server/internal/handler/teams"
+	tenanthandler "dandelion/server/internal/handler/tenant"
 	userhandler "dandelion/server/internal/handler/user"
 	"dandelion/server/internal/middleware"
 	"dandelion/server/internal/middleware/apikey"
@@ -49,8 +50,9 @@ type Deps struct {
 	Audit    *audithandler.Handler
 	Roles    *rolehandler.Handler
 	// Authz 提供权限判定，路由层用它给每个接口挂上所需权限点
-	Authz    *authzsvc.Service
-	Teams    *teamshandler.Handler
+	Authz   *authzsvc.Service
+	Teams   *teamshandler.Handler
+	Tenants *tenanthandler.Handler
 	Settings *settingshandler.Handler
 	Verify   loginmw.Verifier
 	// APIKey 每次请求读一次系统设置里的 Key，改配置无需重启。
@@ -171,19 +173,29 @@ func NewRouter(d Deps) http.Handler {
 			})
 		})
 
+		// 账号管理：团队管理员及以上可进入，具体能建谁、管谁由 service/user 按层级与 scope 判定。
+		// 路由只守最低门槛（team_admin），防止普通成员进门；真正的越权拦截在 service 层。
+		api.Group(func(accounts chi.Router) {
+			accounts.Use(loginmw.RequireAuth(d.Verify))
+			accounts.Use(loginmw.InjectScope(d.Authz))
+			accounts.Use(loginmw.RequireMinLevel(contract.AccountLevelTeamAdmin))
+			accounts.Get("/admin/users", middleware.Wrap(d.Users.List))
+			accounts.Post("/admin/users", middleware.Wrap(d.Users.Create))
+			accounts.Get("/admin/users/{id}", middleware.Wrap(d.Users.Get))
+			accounts.Put("/admin/users/{id}", middleware.Wrap(d.Users.Update))
+			accounts.Delete("/admin/users/{id}", middleware.Wrap(d.Users.Delete))
+			accounts.Post("/admin/users/{id}/reset-password", middleware.Wrap(d.Users.ResetPassword))
+			accounts.Post("/admin/users/{id}/status", middleware.Wrap(d.Users.SetStatus))
+		})
+
 		// 超级管理员专区：RequireAuth 之后再叠一层 RequireSuperAdmin，
 		// 前端隐藏菜单只是体验，这里的 403 才是真正的边界。
 		api.Group(func(admin chi.Router) {
 			admin.Use(loginmw.RequireAuth(d.Verify))
 			admin.Use(loginmw.RequireSuperAdmin)
-			// 账号管理对超管全模式开放：单人管理员也需要管理自己的账号与成员入口。
-			admin.Get("/admin/users", middleware.Wrap(d.Users.List))
-			admin.Post("/admin/users", middleware.Wrap(d.Users.Create))
-			admin.Get("/admin/users/{id}", middleware.Wrap(d.Users.Get))
-			admin.Put("/admin/users/{id}", middleware.Wrap(d.Users.Update))
-			admin.Delete("/admin/users/{id}", middleware.Wrap(d.Users.Delete))
-			admin.Post("/admin/users/{id}/reset-password", middleware.Wrap(d.Users.ResetPassword))
-			admin.Post("/admin/users/{id}/status", middleware.Wrap(d.Users.SetStatus))
+			// 公司管理：建公司与它的平台管理员、列出公司。仅超管（admin 组本身已经是超管门槛）。
+			admin.Get("/platform/tenants", middleware.Wrap(d.Tenants.List))
+			admin.Post("/platform/tenants", middleware.Wrap(d.Tenants.Create))
 			admin.Get("/admin/audit-logs", middleware.Wrap(d.Audit.List))
 			// 角色管理整块归超管：它决定"谁能做什么"，让持有某个角色的人自己看到角色清单
 			// 等于把权限模型对外公开，也会让"角色管理菜单"成为普通账号的一级入口。

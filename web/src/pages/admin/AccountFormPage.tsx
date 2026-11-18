@@ -21,8 +21,17 @@ import { ErrorState, Loading } from '../../components/States';
 import { useAllPeople } from '../../hooks/useDirectory';
 import { MODE_LABELS } from '../../utils/format';
 
-// 新建表单的初值：角色留空（角色挂在人员身上，没绑人员就没有角色可选）。
-const EMPTY: UserInput = { username: '', password: '', personId: '', isSuperAdmin: false };
+// 新建表单的初值：角色留空（角色挂在人员身上，没绑人员就没有角色可选）；
+// 管理身份默认 member——层级提升属于 P5 的前端能力，当前后端按调用者层级校验，
+// 传 member 总是安全的（不会因为表单缺字段而意外造出高权限账号）。
+const EMPTY: UserInput = {
+  username: '',
+  password: '',
+  personId: '',
+  isSuperAdmin: false,
+  accountLevel: 'member',
+  teamIds: [],
+};
 
 const LIST_PATH = '/admin/accounts';
 
@@ -88,6 +97,8 @@ export function AccountFormPage(): JSX.Element {
           password: '',
           personId: user.personId,
           isSuperAdmin: user.isSuperAdmin,
+          accountLevel: user.accountLevel,
+          teamIds: user.teamIds,
         });
         setRoleKey(user.roleKey);
         setLoading(false);
@@ -119,6 +130,8 @@ export function AccountFormPage(): JSX.Element {
           password: form.password,
           personId: form.personId,
           isSuperAdmin: form.isSuperAdmin,
+          accountLevel: form.accountLevel,
+          teamIds: form.teamIds,
         });
       }
       navigate(LIST_PATH, { replace: true });

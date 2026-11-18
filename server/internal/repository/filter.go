@@ -80,6 +80,30 @@ func ApplyTenant(filter *Filter, alias string, scope contract.Scope) *Filter {
 	return filter.Add(alias+`.tenant_id = ?`, scope.TenantID)
 }
 
+// ApplyTeam 在已有 Filter 上追加团队边界，仅对 TeamScoped 的身份生效。
+// 团队边界的 SQL 形态因实体而异（直接 team_id 列 / 经 team_members / 经 team_projects），
+// 所以这里只负责「有 TeamIDs 就绑定一个 uuid 数组参数」，具体表达式由各仓储传入：
+//
+//	expr 形如 `t.id = ANY(?)`，其中 ? 会被替换为该参数对应的占位符并自动加 ::uuid[]。
+//
+// 两种情况不追加任何条件：
+//   - scope.All（超管平台视角）或 !scope.TeamScoped（平台管理员看全公司）；
+//   - 其它身份若 TeamScoped=true 却没有团队，追加 `1 = 0` 失败关闭——
+//     没团队的团队管理员/成员不该看到任何数据，不能退化成看全公司。
+func ApplyTeam(filter *Filter, expr string, scope contract.Scope) *Filter {
+	if scope.All || !scope.TeamScoped {
+		return filter
+	}
+	if len(scope.TeamIDs) == 0 {
+		return filter.AddRaw(`1 = 0`)
+	}
+	offset := len(filter.args)
+	filter.args = append(filter.args, scope.TeamIDs)
+	filter.conditions = append(filter.conditions,
+		strings.ReplaceAll(expr, "?", filter.Placeholder(offset)+"::uuid[]"))
+	return filter
+}
+
 // AddIf 仅在 ok 为真时追加条件，省掉调用点的 if 包裹（可选筛选条件用）。
 func (f *Filter) AddIf(ok bool, template string, arg any) *Filter {
 	if ok {

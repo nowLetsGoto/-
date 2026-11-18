@@ -39,11 +39,12 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) error {
 	return handler.OK(w, data)
 }
 
-// Create 新建账号；请求体 4 个字段（username / password / personId / isSuperAdmin）。
-// 归属模式不来自请求体，而是取自调用者的登录模式——建出来的账号一定落在自己看得见的视图里。
+// Create 新建账号；请求体 6 个字段（username / password / personId / isSuperAdmin / accountLevel / teamIds）。
+// 归属模式与归属公司都不来自请求体：前者取自调用者登录模式，后者取自调用者归属公司，
+// 这样建出来的账号一定落在调用者能看见的范围里。
 func (h *Handler) Create(w http.ResponseWriter, r *http.Request) error {
 	var in contract.UserInput
-	if err := handler.DecodeJSON(w, r, &in, "username/password/personId/isSuperAdmin"); err != nil {
+	if err := handler.DecodeJSON(w, r, &in, "username/password/personId/isSuperAdmin/accountLevel/teamIds"); err != nil {
 		return err
 	}
 	caller := authctx.From(r.Context())
@@ -87,7 +88,8 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) error {
 
 // ResetPassword 生成一次性临时密码；明文只出现在本次响应里。
 func (h *Handler) ResetPassword(w http.ResponseWriter, r *http.Request) error {
-	password, err := h.svc.ResetPassword(r.Context(), chi.URLParam(r, "id"))
+	caller := authctx.From(r.Context())
+	password, err := h.svc.ResetPassword(r.Context(), caller, chi.URLParam(r, "id"))
 	if err != nil {
 		return err
 	}

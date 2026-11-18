@@ -55,6 +55,8 @@ func (r *Repository) List(ctx context.Context, page contract.PageQuery, ownerUse
 	// 只有团队分区的租户隔离：solo 分区的 tenant_id 恒为空，加条件反而查不到。
 	if !r.ownerScoped {
 		repository.ApplyTenant(filter, "p", scope)
+		// 团队管理员只看关联团队的项目；平台管理员与成员不受此限（见 ApplyTeam 注释）。
+		repository.ApplyTeam(filter, `p.id IN (SELECT tp.project_id FROM team_projects tp WHERE tp.team_id = ANY(?))`, scope)
 	}
 
 	var total int
@@ -93,6 +95,7 @@ func (r *Repository) FindByKey(ctx context.Context, key, ownerUserID string, sco
 	filter := r.ownerFilter(0, ownerUserID)
 	if !r.ownerScoped {
 		repository.ApplyTenant(filter, "p", scope)
+		repository.ApplyTeam(filter, `p.id IN (SELECT tp.project_id FROM team_projects tp WHERE tp.team_id = ANY(?))`, scope)
 	}
 	filter.Add(`p.key = ?`, key)
 	query := `SELECT ` + selectColumns + ` FROM ` + r.table + ` p` + fromClause + filter.Where()
@@ -138,6 +141,7 @@ func (r *Repository) Update(ctx context.Context, key, ownerUserID string, in con
 	filter := r.ownerFilter(4, ownerUserID)
 	if !r.ownerScoped {
 		repository.ApplyTenant(filter, "p", scope)
+		repository.ApplyTeam(filter, `p.id IN (SELECT tp.project_id FROM team_projects tp WHERE tp.team_id = ANY(?))`, scope)
 	}
 	filter.Add(`p.key = ?`, key)
 	query := `UPDATE ` + r.table + ` p

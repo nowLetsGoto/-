@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"regexp"
 	"strings"
+	"unicode/utf8"
 )
 
 // 跨层错误标记：service 不依赖 handler，用 sentinel 表达可预期的业务拒绝，
@@ -105,6 +106,11 @@ func AccountLevelRank(level string) int {
 	default:
 		return 0
 	}
+}
+
+// IsAccountLevel 判断字符串是否四级枚举之一，用于拒绝请求里的脏层级值。
+func IsAccountLevel(level string) bool {
+	return AccountLevelRank(level) > 0
 }
 
 // AccountLevelAtLeast 判断 level 是否不低于 min。
@@ -593,10 +599,19 @@ type RoleList struct {
 //
 // 这是 P0 的唯一产出物：本阶段只负责把它推导出来存进 context，
 // 仓储按 scope 过滤是 P1 的事，本轮不改变任何仓储签名。
+// Scope 是一次请求能访问的数据边界，由身份层级推导，绝不信任请求参数。
+// 三个字段的语义互斥且完备：
+//   - All=true          → 超管，跨全部公司（仅平台管理接口可达，业务接口仍受 tenant 约束）
+//   - TenantID 非空      → 公司边界；TeamIDs 为空表示本公司全部团队
+//   - TeamIDs 非空       → 团队边界；范围是所有关联团队的并集
+//
+// TeamScoped 区分「TeamIDs 为空 = 平台管理员看全公司」与「member 没有团队所以什么都看不到」：
+// 前者为 false（不加团队条件），后者为 true（即使 TeamIDs 为空也要加 1=0 失败关闭）。
 type Scope struct {
-	All      bool
-	TenantID string
-	TeamIDs  []string
+	All        bool
+	TenantID   string
+	TeamIDs    []string
+	TeamScoped bool
 }
 
 // Identity 是鉴权中间件解析出的「当前调用者」，只含判定所需的最小字段。
@@ -620,6 +635,7 @@ func (i Identity) Level() string {
 }
 
 // User 是账号视图：**不含任何密码字段**。
+// User 是账号管理视图里的一条记录。
 type User struct {
 	ID       string `json:"id"`
 	Username string `json:"username"`
@@ -637,16 +653,58 @@ type User struct {
 	LastLoginAt  string `json:"lastLoginAt"`
 	LastLoginIP  string `json:"lastLoginIp"`
 	CreatedAt    string `json:"createdAt"`
+	// AccountLevel 是管理身份层级，与 RoleKey（业务角色）正交。
+	AccountLevel string `json:"accountLevel"`
+	// TenantID 是账号归属公司；超管为空。TeamIDs 只对 team_admin 有意义，是它可管的团队。
+	TenantID string   `json:"tenantId"`
+	TeamIDs  []string `json:"teamIds"`
 }
 
-// UserInput 新建账号：账号名 + 初始密码 + 是否超管（+ 可选绑定人员）。
+// UserInput 新建账号：账号名 + 初始密码 + 可选绑定人员 + 管理身份层级。
 // **没有 mode 字段**：账号归属由创建者的登录模式决定，页面上的模式是只读展示。
 // **也没有 roleKey**：角色挂在人员身上，先建好账号、绑定了人员，再去编辑页设角色。
+//
+// accountLevel 只能传比调用者低的层级，具体规则由 service/user 判定——
+// 请求里传 super_admin 不会让任何人变成超管，那是越权尝试。
+// teamIds 仅在 accountLevel=team_admin 时有意义，且必须落在调用者可见的团队内。
 type UserInput struct {
-	Username     string `json:"username"`
-	Password     string `json:"password"`
-	PersonID     string `json:"personId"`
-	IsSuperAdmin bool   `json:"isSuperAdmin"`
+	Username     string   `json:"username"`
+	Password     string   `json:"password"`
+	PersonID     string   `json:"personId"`
+	IsSuperAdmin bool     `json:"isSuperAdmin"`
+	AccountLevel string   `json:"accountLevel"`
+	TeamIDs      []string `json:"teamIds"`
+}
+
+// TenantInput 新建公司：公司名 + 公司标识 + 平台管理员的初始账号与密码。
+// 公司的平台管理员随公司在同一事务里创建，初始密码只在响应里返回一次。
+type TenantInput struct {
+	Name            string `json:"name"`
+	Code            string `json:"code"`
+	AdminUsername   string `json:"adminUsername"`
+	AdminPassword   string `json:"adminPassword"`
+}
+
+// Tenant 是账号管理视角的一家公司（含其平台管理员账号名）。
+type Tenant struct {
+	ID            string `json:"id"`
+	Name          string `json:"name"`
+	Code          string `json:"code"`
+	Status        string `json:"status"`
+	AdminUsername string `json:"adminUsername"`
+	CreatedAt     string `json:"createdAt"`
+}
+
+// TenantResult 是新建公司的结果：公司信息 + 一次性明文密码。
+type TenantResult struct {
+	Tenant   Tenant `json:"tenant"`
+	Password string `json:"password"`
+}
+
+// TenantList 是分页的公司列表。
+type TenantList struct {
+	Items []Tenant `json:"items"`
+	Page
 }
 
 // UserUpdate 编辑账号：账号名与模式都不可改，只允许改绑定人员、角色与超管标记。
@@ -849,6 +907,22 @@ func PlatformOfExt(ext string) (string, bool) {
 		}
 	}
 	return "", false
+}
+
+// MinAccountPasswordLen / MaxAccountPasswordLen 是账号密码长度的契约上限，账号创建与公司创建共用。
+// 注意与上面的 MaxPasswordLen（128，webhook 等其它字段上限）区分。
+const (
+	MinAccountPasswordLen = 8
+	MaxAccountPasswordLen = 64
+)
+
+// ValidatePassword 校验账号密码长度；返回 ValidationError 可直接上屏。
+// 放在 contract 是因为账号管理与公司管理都要用它，规则必须只有一份。
+func ValidatePassword(password string) error {
+	if n := utf8.RuneCountInString(password); n < MinAccountPasswordLen || n > MaxAccountPasswordLen {
+		return &ValidationError{Message: "密码长度需在 8-64 位之间"}
+	}
+	return nil
 }
 
 var uuidPattern = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)

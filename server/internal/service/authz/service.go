@@ -83,7 +83,52 @@ func NewService(
 
 // Permissions 返回该身份在指定项目下的权限集合；projectKey 为空表示"平台级请求"。
 // 项目不存在时返回仓储的错误（通常是 ErrProjectInvalid → 400），与既有列表行为一致。
+//
+// 最终权限 = 业务角色权限 ∪ 管理身份的固有权限。
+// 后者由 account_level 直接赋予（见 managementPermissions），不通过角色勾选——
+// 这样「管人」永远是身份属性，不会出现「给某人勾了 directory.write 就越权管全公司」。
 func (s *Service) Permissions(ctx context.Context, identity contract.Identity, projectKey string) (map[string]struct{}, error) {
+	permissions, err := s.permissionsOf(ctx, identity, projectKey)
+	if err != nil {
+		return nil, err
+	}
+	// 管理权限只在团队模式下生效：单人模式是个人工作台，不参与任何公司/团队管理。
+	// 否则有人用管理账号选 solo 登录就能拿到公司管理权，绕过模式隔离。
+	if identity.Mode == contract.ModeTeam {
+		for _, permission := range managementPermissions(identity.Level()) {
+			permissions[permission] = struct{}{}
+		}
+	}
+	return permissions, nil
+}
+
+// managementPermissions 返回管理身份层级固有的权限点。
+// 只授予完成该层级职责所需的最小集合；团队管理员只看/管自己团队的数据，
+// 范围限制由 scope 保证，这里只管「能不能」。
+func managementPermissions(level string) []string {
+	switch level {
+	case contract.AccountLevelPlatformAdmin:
+		return []string{
+			"build.read", "build.write", "build.delete",
+			"project.read", "project.write",
+			"directory.read", "directory.write",
+			"settings.read", "settings.write",
+		}
+	case contract.AccountLevelTeamAdmin:
+		return []string{
+			"build.read", "build.write",
+			"project.read", "project.write",
+			"directory.read", "directory.write",
+		}
+	default:
+		// 超管已由 allPermissions 全量覆盖；普通成员没有管理权限。
+		return nil
+	}
+}
+
+// permissionsOf 是权限判定的业务部分：超管全量 → solo 基线 → 角色权限 → 默认基线。
+// 从 Permissions 拆出来，是为了让「叠加管理权限」只有一个出口，不会漏掉某条 return。
+func (s *Service) permissionsOf(ctx context.Context, identity contract.Identity, projectKey string) (map[string]struct{}, error) {
 	// 1) 超管恒为全量
 	if identity.IsSuperAdmin {
 		return allPermissions(), nil
@@ -156,7 +201,8 @@ func (s *Service) ScopeOf(ctx context.Context, identity contract.Identity) (cont
 		if err != nil {
 			return contract.Scope{}, err
 		}
-		return contract.Scope{TenantID: identity.TenantID, TeamIDs: teamIDs}, nil
+		// TeamScoped=true：即使没关联任何团队，也只能看到空集，不能退化成看全公司。
+		return contract.Scope{TenantID: identity.TenantID, TeamIDs: teamIDs, TeamScoped: true}, nil
 
 	case contract.AccountLevelMember:
 		// 成员关系挂在人身上，先复用 /me 与权限判定共用的解析入口，
@@ -166,6 +212,8 @@ func (s *Service) ScopeOf(ctx context.Context, identity contract.Identity) (cont
 			return contract.Scope{}, err
 		}
 		if personID == "" {
+			// 普通成员的可见面由业务角色与项目成员关系决定，不按团队树收紧，
+			// 与 P1 行为一致；否则存量成员（没有团队关联）会突然看不到任何数据。
 			return contract.Scope{TenantID: identity.TenantID, TeamIDs: []string{}}, nil
 		}
 		teamIDs, err := s.teams.MemberTeamIDs(ctx, personID)

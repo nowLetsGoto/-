@@ -84,3 +84,48 @@ func TestApplyTenantAllIsNoop(t *testing.T) {
 		t.Fatalf("超管不应追加租户条件：want %q, got %q", want, got)
 	}
 }
+
+func TestApplyTeam(t *testing.T) {
+	tests := []struct {
+		name     string
+		scope    contract.Scope
+		wantCond string
+		wantArgs []any
+	}{
+		{
+			name:     "超管不受团队边界限制",
+			scope:    contract.Scope{All: true, TeamIDs: []string{"team-a"}},
+			wantCond: "",
+			wantArgs: nil,
+		},
+		{
+			name:     "平台管理员看全公司，不受团队边界限制",
+			scope:    contract.Scope{TenantID: "t-1", TeamIDs: []string{}},
+			wantCond: "",
+			wantArgs: nil,
+		},
+		{
+			name:     "团队管理员按关联团队过滤",
+			scope:    contract.Scope{TenantID: "t-1", TeamScoped: true, TeamIDs: []string{"team-a", "team-b"}},
+			wantCond: "t.id = ANY($1::uuid[])",
+			wantArgs: []any{[]string{"team-a", "team-b"}},
+		},
+		{
+			name:     "团队管理员无关联团队时失败关闭",
+			scope:    contract.Scope{TenantID: "t-1", TeamScoped: true, TeamIDs: []string{}},
+			wantCond: "1 = 0",
+			wantArgs: nil,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := ApplyTeam(NewFilter(0), "t.id = ANY(?)", tt.scope)
+			if got.Cond() != tt.wantCond {
+				t.Fatalf("条件不符：want %q, got %q", tt.wantCond, got.Cond())
+			}
+			if !reflect.DeepEqual(got.Args(), tt.wantArgs) {
+				t.Fatalf("参数不符：want %v, got %v", tt.wantArgs, got.Args())
+			}
+		})
+	}
+}

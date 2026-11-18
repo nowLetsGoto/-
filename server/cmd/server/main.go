@@ -35,6 +35,7 @@ import (
 	rolehandler "dandelion/server/internal/handler/role"
 	settingshandler "dandelion/server/internal/handler/settings"
 	teamshandler "dandelion/server/internal/handler/teams"
+	tenanthandler "dandelion/server/internal/handler/tenant"
 	userhandler "dandelion/server/internal/handler/user"
 	"dandelion/server/internal/repository"
 	auditrepo "dandelion/server/internal/repository/audit"
@@ -54,6 +55,7 @@ import (
 	rolesvc "dandelion/server/internal/service/role"
 	settingssvc "dandelion/server/internal/service/settings"
 	teamssvc "dandelion/server/internal/service/teams"
+	tenantsvc "dandelion/server/internal/service/tenant"
 	usersvc "dandelion/server/internal/service/user"
 	webhooksvc "dandelion/server/internal/service/webhook"
 	"dandelion/server/internal/storage"
@@ -146,7 +148,11 @@ func run() error {
 
 	usersRepository := userRepo.NewRepository(db)
 	// 删账号要顺带清掉它在单人分区的项目与文件，因此账号服务依赖清理器与存储路径。
-	userService := usersvc.NewService(usersRepository, repository.NewAccountCleanup(db), paths)
+	// teams 仓储用于校验团队管理员的团队归属，防止跨公司/跨团队授权。
+	userService := usersvc.NewService(usersRepository, repository.NewAccountCleanup(db), paths, teamsRepository)
+
+	// 公司管理：建公司时原子地建其平台管理员；只有超管可达（路由层把关）。
+	tenantService := tenantsvc.NewService(tenantRepository)
 
 	// 权限判定：超管全量 → 单人业务基线 → 项目角色 → 人员角色 → 空集。
 	// scope 由同一个服务推导：team_admin 查 team_admins，member 查 team_members。
@@ -161,6 +167,7 @@ func run() error {
 	projectHandler := projecthandler.NewHandler(projectService)
 	peopleHandler := peoplehandler.NewHandler(peopleService, authzService)
 	teamsHandler := teamshandler.NewHandler(teamsService)
+	tenantHandler := tenanthandler.NewHandler(tenantService, auditService)
 	userHandler := userhandler.NewHandler(userService, auditService)
 	auditHandler := audithandler.NewHandler(auditService)
 	roleHandler := rolehandler.NewHandler(roleService, auditService)
@@ -177,6 +184,7 @@ func run() error {
 		Projects: projectHandler,
 		People:   peopleHandler,
 		Teams:    teamsHandler,
+		Tenants:  tenantHandler,
 		Users:    userHandler,
 		Audit:    auditHandler,
 		Roles:    roleHandler,

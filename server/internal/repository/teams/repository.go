@@ -80,6 +80,7 @@ func (r *Repository) teamIDs(ctx context.Context, query, arg string) ([]string, 
 // scope 是可见性边界：公司账号只看本公司的团队，超管（All）看全部。
 func (r *Repository) List(ctx context.Context, page contract.PageQuery, scope contract.Scope) ([]contract.Team, int, error) {
 	filter := repository.ScopeFilter(0, "t", scope)
+	repository.ApplyTeam(filter, `t.id = ANY(?)`, scope)
 
 	var total int
 	countSQL := `SELECT count(*) FROM teams t` + filter.Where()
@@ -131,6 +132,7 @@ func (r *Repository) List(ctx context.Context, page contract.PageQuery, scope co
 // scope 限定可见范围：查本公司之外的团队与「不存在」同口径。
 func (r *Repository) FindByID(ctx context.Context, id string, scope contract.Scope) (contract.Team, error) {
 	filter := repository.ScopeFilter(0, "t", scope).Add(`t.id = ?`, id)
+	repository.ApplyTeam(filter, `t.id = ANY(?)`, scope)
 	row := r.db.QueryRowContext(ctx,
 		`SELECT `+columns+` FROM teams t`+filter.Where(), filter.Args()...)
 	team, err := scan(row)

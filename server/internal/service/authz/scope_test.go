@@ -118,7 +118,7 @@ func TestScopeOfFourLevels(t *testing.T) {
 			identity: contract.Identity{
 				AccountLevel: contract.AccountLevelTeamAdmin, TenantID: "tenant-1", UserID: "admin-user",
 			},
-			want: contract.Scope{TenantID: "tenant-1", TeamIDs: []string{"team-a", "team-b"}},
+			want: contract.Scope{TenantID: "tenant-1", TeamIDs: []string{"team-a", "team-b"}, TeamScoped: true},
 		},
 		{
 			name: "普通成员取 team_members 关联并集",
