@@ -26,7 +26,7 @@ const LEVEL_RANK: Record<AccountLevel, number> = {
   member: 1,
 };
 
-/** LEVEL_LABELS 用于账号区与页面上的中文展示。 */
+/** LEVEL_LABELS 用于层级门槛的提示文案（如无权访问页的「需要团队管理员及以上」）。 */
 export const LEVEL_LABELS: Record<AccountLevel, string> = {
   super_admin: '平台超级管理员',
   platform_admin: '平台管理员',
@@ -56,15 +56,4 @@ export function atLeastLevel(me: Me | null, minLevel: AccountLevel): boolean {
     return false;
   }
   return levelRank(me.accountLevel) >= levelRank(minLevel);
-}
-
-/** levelLabel 返回当前身份的中文名；超管在过渡期可能只有 isSuperAdmin 布尔。 */
-export function levelLabel(me: Me | null): string {
-  if (!me) {
-    return '';
-  }
-  if (me.isSuperAdmin && !me.accountLevel) {
-    return LEVEL_LABELS.super_admin;
-  }
-  return LEVEL_LABELS[me.accountLevel as AccountLevel] ?? LEVEL_LABELS.member;
 }

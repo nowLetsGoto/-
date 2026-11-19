@@ -38,7 +38,7 @@ export function LevelGate({
         description={
           description ??
           `该功能需要${LEVEL_LABELS[minLevel]}及以上身份。当前身份：${
-            me ? (LEVEL_LABELS[me.accountLevel as AccountLevel] ?? '普通成员') : '未知'
+            me ? (LEVEL_LABELS[me.accountLevel as AccountLevel] ?? '未知') : '未知'
           }。如需权限，请联系平台管理员。`
         }
         action={
