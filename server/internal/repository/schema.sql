@@ -292,6 +292,19 @@ CREATE TABLE IF NOT EXISTS role_permissions (
   PRIMARY KEY (role_id, permission)
 );
 
+-- role_menus：角色可见的菜单。与 role_permissions 完全对称——
+-- 前者决定"能看哪些页面"，后者决定"能做哪些操作"。
+--
+-- 授权按角色存储，角色按 tenant_id 隔离，因此每家公司的菜单配置天然独立：
+-- 甲公司的 developer 授权了审计日志，不会影响乙公司的 developer。
+-- menu_key 用页面路径（如 /overview），与前端路由和 contract.Menus 一一对应，
+-- 不需要额外维护一套 id ↔ 路径映射。
+CREATE TABLE IF NOT EXISTS role_menus (
+  role_id   UUID NOT NULL REFERENCES roles(id) ON DELETE CASCADE,
+  menu_key  TEXT NOT NULL,
+  PRIMARY KEY (role_id, menu_key)
+);
+
 -- 权限点目录缩减后的存量清理：role_permissions.permission 是裸 TEXT，没有外键，
 -- 目录里删掉一个权限点不会自动从库里消失。留着它只会让角色编辑页统计"已选数量"时
 -- 多出一个不存在的项（前端只渲染目录内的点，勾不上也去不掉）。
@@ -424,6 +437,10 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_people_tenant_username
 ALTER TABLE roles ADD COLUMN IF NOT EXISTS tenant_id UUID REFERENCES tenants(id);
 CREATE INDEX IF NOT EXISTS idx_roles_tenant ON roles (tenant_id);
 -- 角色标识的公司内唯一索引：必须在加完 tenant_id 之后建。
+-- 内置角色的菜单授权由 service/role.EnsureBuiltin 在启动时补齐，
+-- 不在这里硬编码菜单清单——那份清单必须与 contract.Menus 同源，
+-- 写进 SQL 就会出现两份随时可能漂移的定义（真实踩过：加菜单时漏改这里）。
+
 -- coalesce 把内置角色（tenant_id 为空）归到同一个"平台"分组，
 -- 保证 5 个内置角色之间仍然互不重名（否则可能出现两个 developer）。
 CREATE UNIQUE INDEX IF NOT EXISTS idx_roles_tenant_key

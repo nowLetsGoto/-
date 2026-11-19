@@ -829,6 +829,28 @@ paths:
         '403':
           description: 非超级管理员
 
+  /menus:
+    get:
+      operationId: listMenus
+      summary: 菜单资源目录（平台级只读）
+      description: >-
+        返回系统全部可授权菜单，按 group 分组。菜单结构由代码定义，任何公司都不能增删改。
+        角色授权只做减法：菜单可见 = 原有身份/权限判据 ∩ 角色授权菜单；超管不受约束。
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: 菜单目录
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Menu'
+
   /permissions:
     get:
       operationId: listPermissions
@@ -1763,7 +1785,7 @@ components:
     Me:
       type: object
       description: 当前登录人；没有对应人员记录时 personId 为空、projectKeys 为空
-      required: [username, personId, name, roleKey, roleName, projectKeys, isSuperAdmin, tenantId, tenantName, accountLevel, teamIds, permissions]
+      required: [username, personId, name, roleKey, roleName, projectKeys, isSuperAdmin, tenantId, tenantName, accountLevel, teamIds, permissions, menuKeys]
       properties:
         username:
           type: string
@@ -1802,6 +1824,13 @@ components:
         permissions:
           type: array
           description: 平台级权限点（不含项目）；项目内权限可能被项目角色覆盖，由各接口判定
+          items:
+            type: string
+        menuKeys:
+          type: array
+          description: >-
+            当前角色被授权可见的菜单 key，供前端收窄侧栏。不是判定依据，真正边界在后端守卫。
+            超管拿到全部菜单；未分配角色时为空数组。
           items:
             type: string
 
@@ -2010,6 +2039,21 @@ components:
         data:
           $ref: '#/components/schemas/Tenant'
 
+    Menu:
+      type: object
+      description: 平台级菜单资源，路径即 key，与前端路由一一对应
+      required: [key, label, group]
+      properties:
+        key:
+          type: string
+          description: 页面路径，如 /overview、/directory/roles
+        label:
+          type: string
+          description: 上屏名称
+        group:
+          type: string
+          description: 一级分组名，用于渲染授权树
+
     Permission:
       type: object
       required: [key, group, label]
@@ -2027,7 +2071,7 @@ components:
       description: >-
         角色决定「能做什么业务」。超级管理员与平台管理员**不是角色**，
         它们是账号身份（isSuperAdmin / accountLevel），不会出现在角色列表里。
-      required: [id, key, name, description, isBuiltin, tenantId, tenantName, permissions, createdAt]
+      required: [id, key, name, description, isBuiltin, tenantId, tenantName, permissions, menuKeys, createdAt]
       properties:
         id:
           type: string
@@ -2052,6 +2096,11 @@ components:
           type: array
           items:
             type: string
+        menuKeys:
+          type: array
+          description: 该角色被授权可见的菜单 key，按公司隔离存储
+          items:
+            type: string
         createdAt:
           type: string
           format: date-time
@@ -2074,6 +2123,11 @@ components:
           maxLength: 200
         permissions:
           type: array
+          items:
+            type: string
+        menuKeys:
+          type: array
+          description: 本次授权的菜单，全量覆盖；不传则默认全量（兼容旧客户端）
           items:
             type: string
 

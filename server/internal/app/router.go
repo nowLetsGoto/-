@@ -105,7 +105,7 @@ func allowedMethodsFor(req *http.Request) string {
 		return "GET, POST, PUT, DELETE"
 	case path == contract.RouteProjects, path == contract.RoutePeople, path == contract.RouteTeams, path == contract.RouteRoles:
 		return "GET, POST"
-	case path == contract.RoutePermissions:
+	case path == contract.RoutePermissions, path == contract.RouteMenus:
 		return "GET"
 	case strings.HasPrefix(path, contract.RouteProjects+"/"), strings.HasPrefix(path, contract.RoutePeople+"/"):
 		return "GET, PUT"
@@ -153,6 +153,9 @@ func NewRouter(d Deps) http.Handler {
 			// 改自己的密码只要求登录态：任何账号都该能换自己的密码，与是否超管无关。
 			private.Put("/me/password", middleware.Wrap(d.Users.ChangePassword))
 			// 项目读取是单人模式的基础设施：没有项目列表就无法进入自己的应用包页。
+			// 菜单目录对所有登录用户开放：前端需要它把角色授权的菜单投影到侧栏。
+			// 目录本身是平台级静态数据，不含任何公司信息，无需 scope 过滤。
+			private.Get("/menus", middleware.Wrap(d.Roles.Menus))
 			private.With(authzmw.RequirePermission(d.Authz, "project.read")).Get("/projects", middleware.Wrap(d.Projects.List))
 			private.With(authzmw.RequirePermission(d.Authz, "project.read")).Get("/projects/{key}", middleware.Wrap(d.Projects.Get))
 			// 项目写操作对两种模式都开放：单人模式自建项目是上传包的前提，

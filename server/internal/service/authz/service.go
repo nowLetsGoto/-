@@ -382,6 +382,15 @@ func allPermissions() map[string]struct{} {
 //
 // 返回 contract.ErrForbidden 而不是 ValidationError：调用者本来就不该做这件事，
 // 不是请求格式有问题。
+// MenuKeysOf 返回角色被授权的菜单，供 /me 投影侧栏。
+//
+// 这是纯转发：菜单归属的判定在仓储层（按 scope 查角色），
+// authz 不重复实现一遍可见性规则。放在本服务是因为 people 模块把
+// 「角色相关查询」统一依赖到这里（见 people.RoleAssigner），避免它直接认识仓储。
+func (s *Service) MenuKeysOf(ctx context.Context, roleKey string, scope contract.Scope) ([]string, error) {
+	return s.roles.MenuKeysOf(ctx, roleKey, scope)
+}
+
 func (s *Service) ValidateRoleAssignable(ctx context.Context, identity contract.Identity, roleKey string) error {
 	roleKey = strings.TrimSpace(roleKey)
 	if roleKey == "" {

@@ -22,8 +22,15 @@ import (
 // RoleAssigner 校验「调用者能否把某个角色分配出去」。
 // 声明成窄接口而不是直接依赖 authz.Service：本包只用到这一个能力，
 // 窄接口让单测可以注入假实现，也不必为它拉起整套权限判定的依赖。
+// RoleAssigner 是人员模块对角色模块的只读依赖。
+//
+// 两个方法都是"按 key 查角色的某个属性"，放在一起是因为它们的调用方都是
+// 「给人员分配角色」这条链路：前者校验能不能分配，后者取该角色的菜单授权。
+// 窄接口让本模块可以独立单测，不必拉起整套角色服务。
 type RoleAssigner interface {
 	ValidateRoleAssignable(ctx context.Context, identity contract.Identity, roleKey string) error
+	// MenuKeysOf 返回角色被授权的菜单；角色不存在时返回空切片，不报错。
+	MenuKeysOf(ctx context.Context, roleKey string, scope contract.Scope) ([]string, error)
 }
 
 // Service 是人员模块的唯一业务入口。
@@ -162,6 +169,12 @@ func (s *Service) Me(ctx context.Context, identity contract.Identity, personID s
 		AccountLevel: identity.Level(),
 		TeamIDs:      teamIDs,
 	}
+	// 超管不受菜单授权约束（见 contract.Menus 的设计说明）：直接返回全量。
+	// 这一步必须在查人员之前——超管没有业务人员档案。
+	if identity.IsSuperAdmin {
+		me.MenuKeys = contract.AllMenuKeys()
+		return me, nil
+	}
 	if personID == "" {
 		return me, nil
 	}
@@ -185,8 +198,20 @@ func (s *Service) Me(ctx context.Context, identity contract.Identity, personID s
 	me.RoleKey = person.RoleKey
 	me.RoleName = person.RoleName
 	me.ProjectKeys = keys
+
+	// 菜单授权跟随角色：未分配角色时是空数组，前端据此只保留基础菜单。
+	if person.RoleKey != "" {
+		me.MenuKeys, err = s.roles.MenuKeysOf(ctx, person.RoleKey, scope)
+		if err != nil {
+			return contract.Me{}, err
+		}
+	}
+	if me.MenuKeys == nil {
+		me.MenuKeys = []string{}
+	}
 	return me, nil
 }
+
 
 // constraintConflictToMessage 把人员的数据库约束冲突翻译成可上屏的 400 提示。
 //

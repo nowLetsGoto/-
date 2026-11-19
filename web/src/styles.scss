@@ -2237,3 +2237,16 @@ code {
     transition: none !important;
   }
 }
+
+/* 菜单授权树：分组标题在上，菜单项缩进一层体现层级。 */
+.menu-tree .field-block + .field-block {
+  margin-top: var(--spacing-md);
+}
+
+.menu-tree .field-label > label {
+  font-weight: 500;
+}
+
+.menu-tree-children {
+  margin-left: var(--spacing-lg);
+}

@@ -75,3 +75,65 @@ func TestGenericSentinelMessage(t *testing.T) {
 		t.Fatalf("兜底文案不应绑定具体资源：%q", ErrNotFound.Error())
 	}
 }
+
+// TestMenusAreUniqueAndValid 钉住菜单目录的结构约束。
+//
+// 菜单 key 同时是前端路由路径和数据库授权值，一旦重复或为空，
+// 授权树会出现两个同名项、或者拿起一个永远匹配不上路由的 key。
+func TestMenusAreUniqueAndValid(t *testing.T) {
+	seen := make(map[string]struct{}, len(Menus))
+	for _, menu := range Menus {
+		if menu.Key == "" || menu.Key[0] != '/' {
+			t.Fatalf("菜单 key 应是页面路径，实际 %q", menu.Key)
+		}
+		if menu.Label == "" || menu.Group == "" {
+			t.Fatalf("菜单 %q 缺少 label 或 group", menu.Key)
+		}
+		if _, dup := seen[menu.Key]; dup {
+			t.Fatalf("菜单 key 重复: %s", menu.Key)
+		}
+		seen[menu.Key] = struct{}{}
+	}
+}
+
+// TestAllMenuKeysMatchesCatalog 保证"默认全量"与目录始终同源。
+func TestAllMenuKeysMatchesCatalog(t *testing.T) {
+	keys := AllMenuKeys()
+	if len(keys) != len(Menus) {
+		t.Fatalf("全量 key 数=%d 与目录数=%d 不一致", len(keys), len(Menus))
+	}
+	for i, menu := range Menus {
+		if keys[i] != menu.Key {
+			t.Fatalf("第 %d 项：全量=%q 目录=%q", i, keys[i], menu.Key)
+		}
+		if !IsValidMenu(menu.Key) {
+			t.Fatalf("目录里的 %q 应通过合法性校验", menu.Key)
+		}
+	}
+}
+
+// TestIsValidMenuRejectsUnknown 防止伪造的菜单 key 被写入角色。
+func TestIsValidMenuRejectsUnknown(t *testing.T) {
+	for _, key := range []string{"", "/unknown", "overview", "/admin/secret"} {
+		if IsValidMenu(key) {
+			t.Fatalf("非目录菜单 %q 不应通过校验", key)
+		}
+	}
+}
+
+// TestSuperAdminOnlyMenusAreNotAuthorizable 防止有人把超管专属菜单加回授权目录。
+//
+// 「公司管理」只有超管能进，而超管始终全量、不靠角色授权。
+// 把它放进目录只会让平台管理员在授权树里看到一个自己无权进入、
+// 且勾了也不会生效的菜单项（真实收到过这个反馈）。
+func TestSuperAdminOnlyMenusAreNotAuthorizable(t *testing.T) {
+	const superAdminOnly = "/admin/tenants"
+	if IsValidMenu(superAdminOnly) {
+		t.Fatalf("%s 是超管专属菜单，不应出现在可授权目录里", superAdminOnly)
+	}
+	for _, menu := range Menus {
+		if menu.Key == superAdminOnly {
+			t.Fatalf("目录不应包含 %s", superAdminOnly)
+		}
+	}
+}

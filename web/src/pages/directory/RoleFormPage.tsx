@@ -10,15 +10,18 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { errorMessage } from '../../api/client';
-import type { Permission, RoleInput } from '../../api/roles';
-import { createRole, getRole, listPermissions, updateRole } from '../../api/roles';
+import type { Menu, Permission, RoleInput } from '../../api/roles';
+import { createRole, getRole, listMenus, listPermissions, updateRole } from '../../api/roles';
 import { Checkbox, Input } from '../../components/Controls';
 import { FormPage } from '../../components/FormPage';
+import { MenuPermissionTree } from '../../components/MenuPermissionTree';
 import { ErrorState, Loading } from '../../components/States';
 import { useMe } from '../../hooks/useMe';
 import { atLeastLevel } from '../../utils/accountLevel';
 
-const EMPTY: RoleInput = { key: '', name: '', description: '', permissions: [] };
+// menuKeys 留空数组而不是 undefined：新建时"一个菜单都不勾"是管理员的明确选择，
+// 与"旧客户端没传这个字段"要区分开（后端对 nil 会默认全量）。
+const EMPTY: RoleInput = { key: '', name: '', description: '', permissions: [], menuKeys: [] };
 
 const LIST_PATH = '/directory/roles';
 
@@ -30,6 +33,7 @@ export function RoleFormPage(): JSX.Element {
 
   const [form, setForm] = useState<RoleInput>(EMPTY);
   const [permissions, setPermissions] = useState<Permission[]>([]);
+  const [menus, setMenus] = useState<Menu[]>([]);
   // 当前编辑的角色是不是平台内置（tenant_id 为空的那批）。
   // 内置角色可以改（每家公司各持一份副本，改它只影响本公司），只是不能删。
   // 这里保留 isBuiltin 是为了在标题下方说明它的特殊身份，不再用于置灰。
@@ -46,13 +50,14 @@ export function RoleFormPage(): JSX.Element {
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
-    // 权限目录与角色详情并行取：目录决定矩阵长什么样，角色决定勾了哪些。
-    Promise.all([listPermissions(), key ? getRole(key) : Promise.resolve(null)])
-      .then(([catalog, role]) => {
+    // 三份数据并行取：权限目录与菜单目录决定两个矩阵长什么样，角色决定勾了哪些。
+    Promise.all([listPermissions(), listMenus(), key ? getRole(key) : Promise.resolve(null)])
+      .then(([catalog, menuCatalog, role]) => {
         if (cancelled) {
           return;
         }
         setPermissions(catalog.items);
+        setMenus(menuCatalog.items);
         setIsBuiltin(role?.isBuiltin === true);
         setForm(
           role
@@ -61,6 +66,7 @@ export function RoleFormPage(): JSX.Element {
                 name: role.name,
                 description: role.description,
                 permissions: role.permissions,
+                menuKeys: role.menuKeys,
               }
             : EMPTY,
         );
@@ -211,6 +217,20 @@ export function RoleFormPage(): JSX.Element {
           </div>
         </div>
       ))}
+
+      <div className="field-block">
+        <span className="field-label">可见菜单</span>
+        <p className="cell-sub">
+          这里只做减法：取消勾选的菜单该角色一定看不到；保留勾选仍需满足身份层级才能进入。
+          全部取消视为「不限制」（保持基础可见性），超管始终看到全部菜单。
+        </p>
+        <MenuPermissionTree
+          menus={menus}
+          value={form.menuKeys ?? []}
+          disabled={readOnly}
+          onChange={(keys) => setForm((prev) => ({ ...prev, menuKeys: keys }))}
+        />
+      </div>
 
       <p className="settings-hint">
         已选 {form.permissions.length} / {permissions.length} 个权限点

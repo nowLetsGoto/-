@@ -77,12 +77,18 @@ func (r *Repository) List(ctx context.Context, scope contract.Scope) ([]contract
 		return nil, fmt.Errorf("遍历角色列表失败: %w", err)
 	}
 
-	permissions, err := r.groupedPermissions(ctx)
+	// 权限点与菜单各自一次批量查询，避免 N+1；两张表的装配方式完全对称。
+	permissions, err := r.groupedValues(ctx, "role_permissions", "permission")
+	if err != nil {
+		return nil, err
+	}
+	menus, err := r.groupedValues(ctx, "role_menus", "menu_key")
 	if err != nil {
 		return nil, err
 	}
 	for i := range items {
 		items[i].Permissions = fill(permissions[items[i].ID])
+		items[i].MenuKeys = fill(menus[items[i].ID])
 	}
 	return items, nil
 }
@@ -99,8 +105,7 @@ func (r *Repository) FindByKey(ctx context.Context, key string, scope contract.S
 		}
 		return contract.Role{}, err
 	}
-	item.Permissions, err = r.listPermissions(ctx, item.ID)
-	if err != nil {
+	if err := r.fillOne(ctx, &item); err != nil {
 		return contract.Role{}, err
 	}
 	return item, nil
@@ -137,8 +142,7 @@ func (r *Repository) FindByKeyAny(ctx context.Context, key, tenantID string) (co
 		}
 		return contract.Role{}, err
 	}
-	item.Permissions, err = r.listPermissions(ctx, item.ID)
-	if err != nil {
+	if err := r.fillOne(ctx, &item); err != nil {
 		return contract.Role{}, err
 	}
 	return item, nil
@@ -192,16 +196,12 @@ func (r *Repository) save(ctx context.Context, id string, in contract.RoleInput,
 		}
 	}
 
-	// 权限也是"全量覆盖"：先清后写，避免留下本次未勾选的旧权限。
-	if _, err := tx.ExecContext(ctx, `DELETE FROM role_permissions WHERE role_id = $1`, roleID); err != nil {
-		return contract.Role{}, fmt.Errorf("清理角色权限失败: %w", err)
+	// 权限点与菜单都是"全量覆盖"：先清后写，语义相同，共用 replaceValues。
+	if err := r.replaceValues(ctx, tx, roleID, "role_permissions", "permission", in.Permissions); err != nil {
+		return contract.Role{}, err
 	}
-	for _, permission := range in.Permissions {
-		if _, err := tx.ExecContext(ctx,
-			`INSERT INTO role_permissions (role_id, permission) VALUES ($1, $2) ON CONFLICT DO NOTHING`,
-			roleID, permission); err != nil {
-			return contract.Role{}, fmt.Errorf("写入角色权限失败: %w", err)
-		}
+	if err := r.replaceValues(ctx, tx, roleID, "role_menus", "menu_key", in.MenuKeys); err != nil {
+		return contract.Role{}, err
 	}
 
 	if err := tx.Commit(); err != nil {
@@ -321,10 +321,65 @@ func (r *Repository) CreateBuiltinIfMissing(ctx context.Context, tenantID string
 			return false, fmt.Errorf("写入内置角色权限失败: %w", err)
 		}
 	}
+	// 内置角色是"新公司开张时送的默认模板"：菜单也默认全量可见。
+	// 只在新建时写——已存在的角色可能已被管理员收窄过菜单，不能被重启冲掉。
+	// 这里用 contract.Menus 作为唯一来源，不另写一份菜单清单。
+	for _, menu := range contract.Menus {
+		if _, err := tx.ExecContext(ctx,
+			`INSERT INTO role_menus (role_id, menu_key) VALUES ($1, $2) ON CONFLICT DO NOTHING`,
+			roleID, menu.Key); err != nil {
+			return false, fmt.Errorf("写入内置角色菜单失败: %w", err)
+		}
+	}
 	if err := tx.Commit(); err != nil {
 		return false, fmt.Errorf("提交内置角色失败: %w", err)
 	}
 	return true, nil
+}
+
+// ReconcileBuiltinMenus 让内置角色的菜单授权与当前目录对齐：补齐新增的，删掉已移除的。
+//
+// 为什么需要"删"这一半：菜单目录是版本演进的，某天从目录里移除一项（例如超管专属的
+// /admin/tenants），历史库里仍留着那条授权。虽然"授权只做减法"保证它不会造成越权，
+// 但角色编辑页会渲染出一个不存在的菜单 key，管理员看得莫名其妙。
+//
+// 只动内置角色：自定义角色的菜单是管理员刻意配置的，不能被系统自动改写。
+// 幂等：每次启动都能跑，已对齐时两条语句都影响 0 行。
+func (r *Repository) ReconcileBuiltinMenus(ctx context.Context) error {
+	keys := contract.AllMenuKeys() // 唯一来源：目录增减时这里自动跟随
+
+	// pgx 把 []string 直接编码成 text[]，用 ANY 一次比对全部合法 key。
+	const valid = `menu_key = ANY($1::text[])`
+	if _, err := r.db.ExecContext(ctx,
+		`INSERT INTO role_menus (role_id, menu_key)
+		 SELECT r.id, m.key FROM roles r
+		 CROSS JOIN unnest($1::text[]) AS m(key)
+		 WHERE r.is_builtin = true
+		 ON CONFLICT DO NOTHING`, keys); err != nil {
+		return fmt.Errorf("补齐内置角色菜单失败: %w", err)
+	}
+	if _, err := r.db.ExecContext(ctx,
+		`DELETE FROM role_menus WHERE role_id IN (SELECT id FROM roles WHERE is_builtin = true)
+		 AND NOT (`+valid+`)`, keys); err != nil {
+		return fmt.Errorf("清理已下线菜单授权失败: %w", err)
+	}
+	return nil
+}
+
+// MenuKeysOf 返回某角色被授权的菜单 key，按 scope 限定可见范围。
+//
+// 复用 FindByKey 而不是另写一条 SQL：角色可见性规则（本公司内置 + 本公司自定义）
+// 只应有一个实现，菜单查询没有资格再写一遍。角色不存在时返回空切片——
+// 人员挂了已删除的角色是脏数据，此时"看不到任何受控菜单"是正确的失败关闭。
+func (r *Repository) MenuKeysOf(ctx context.Context, key string, scope contract.Scope) ([]string, error) {
+	role, err := r.FindByKey(ctx, key, scope)
+	if errors.Is(err, contract.ErrNotFound) || errors.Is(err, sql.ErrNoRows) {
+		return []string{}, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return fill(role.MenuKeys), nil
 }
 
 // DeleteLegacySuperAdminRole 删除历史遗留的 super-admin 角色，返回删除行数。
@@ -461,49 +516,93 @@ func (r *Repository) findByID(ctx context.Context, id string) (contract.Role, er
 	if err != nil {
 		return contract.Role{}, err
 	}
-	item.Permissions, err = r.listPermissions(ctx, item.ID)
-	if err != nil {
+	if err := r.fillOne(ctx, &item); err != nil {
 		return contract.Role{}, err
 	}
 	return item, nil
 }
 
-func (r *Repository) listPermissions(ctx context.Context, roleID string) ([]string, error) {
+// groupedValues 把「角色 → 某个子表的值列表」聚合成一张 map，列表页一次查完。
+//
+// role_permissions 与 role_menus 的结构完全相同（role_id + 一个值列），
+// 所以共用这一份实现；传表名与列名而不是拼好的 SQL，是因为两者都是本包内常量，
+// 不接受外部输入——写成参数是为了消重，不是开放给调用方拼任意 SQL。
+func (r *Repository) groupedValues(ctx context.Context, table, column string) (map[string][]string, error) {
+	// 白名单校验：防止本包将来误传外部值造成注入（当前调用都是字面量）。
+	if table != "role_permissions" && table != "role_menus" {
+		return nil, fmt.Errorf("非法的角色子表: %s", table)
+	}
+	if column != "permission" && column != "menu_key" {
+		return nil, fmt.Errorf("非法的角色子表列: %s", column)
+	}
+
 	rows, err := r.db.QueryContext(ctx,
-		`SELECT permission FROM role_permissions WHERE role_id = $1 ORDER BY permission`, roleID)
+		`SELECT role_id::text, `+column+` FROM `+table+` ORDER BY `+column)
 	if err != nil {
-		return nil, fmt.Errorf("查询角色权限失败: %w", err)
-	}
-	defer rows.Close()
-
-	permissions := make([]string, 0)
-	for rows.Next() {
-		var permission string
-		if err := rows.Scan(&permission); err != nil {
-			return nil, fmt.Errorf("读取角色权限失败: %w", err)
-		}
-		permissions = append(permissions, permission)
-	}
-	return permissions, rows.Err()
-}
-
-// groupedPermissions 聚成「角色 id → 权限列表」，列表页一次查完。
-func (r *Repository) groupedPermissions(ctx context.Context) (map[string][]string, error) {
-	rows, err := r.db.QueryContext(ctx, `SELECT role_id::text, permission FROM role_permissions`)
-	if err != nil {
-		return nil, fmt.Errorf("查询角色权限失败: %w", err)
+		return nil, fmt.Errorf("查询角色子表失败（%s）: %w", table, err)
 	}
 	defer rows.Close()
 
 	grouped := make(map[string][]string)
 	for rows.Next() {
-		var roleID, permission string
-		if err := rows.Scan(&roleID, &permission); err != nil {
-			return nil, fmt.Errorf("读取角色权限失败: %w", err)
+		var roleID, value string
+		if err := rows.Scan(&roleID, &value); err != nil {
+			return nil, fmt.Errorf("读取角色子表失败（%s）: %w", table, err)
 		}
-		grouped[roleID] = append(grouped[roleID], permission)
+		grouped[roleID] = append(grouped[roleID], value)
 	}
 	return grouped, rows.Err()
+}
+
+// listValues 是 groupedValues 的单角色版本，供详情/回读取值。
+func (r *Repository) listValues(ctx context.Context, table, column, roleID string) ([]string, error) {
+	grouped, err := r.groupedValues(ctx, table, column)
+	if err != nil {
+		return nil, err
+	}
+	return fill(grouped[roleID]), nil
+}
+
+// replaceValues 全量替换角色某个子表的值（权限点或菜单）。
+//
+// 两张表的写入语义完全相同：先删后插，一次事务内完成。
+// 参数用白名单限制，理由同 groupedValues——消重不是为了开放动态 SQL。
+func (r *Repository) replaceValues(ctx context.Context, tx *sql.Tx, roleID, table, column string, values []string) error {
+	if table != "role_permissions" && table != "role_menus" {
+		return fmt.Errorf("非法的角色子表: %s", table)
+	}
+	if column != "permission" && column != "menu_key" {
+		return fmt.Errorf("非法的角色子表列: %s", column)
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM `+table+` WHERE role_id = $1`, roleID); err != nil {
+		return fmt.Errorf("清理角色子表失败（%s）: %w", table, err)
+	}
+	for _, value := range values {
+		if _, err := tx.ExecContext(ctx,
+			`INSERT INTO `+table+` (role_id, `+column+`) VALUES ($1, $2) ON CONFLICT DO NOTHING`,
+			roleID, value); err != nil {
+			return fmt.Errorf("写入角色子表失败（%s）: %w", table, err)
+		}
+	}
+	return nil
+}
+
+// fillOne 给单个角色补齐权限点与菜单。
+//
+// FindByKey / FindByKeyAny / findByID 三处都需要同样的装配，
+// 与其复制三遍「查权限、查菜单、各自判错」，收在这里一处完成。
+func (r *Repository) fillOne(ctx context.Context, item *contract.Role) error {
+	permissions, err := r.listValues(ctx, "role_permissions", "permission", item.ID)
+	if err != nil {
+		return err
+	}
+	menus, err := r.listValues(ctx, "role_menus", "menu_key", item.ID)
+	if err != nil {
+		return err
+	}
+	item.Permissions = fill(permissions)
+	item.MenuKeys = fill(menus)
+	return nil
 }
 
 // fill 保证 JSON 里是 [] 而不是 null。

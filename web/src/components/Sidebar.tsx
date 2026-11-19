@@ -29,6 +29,19 @@ export function Sidebar(): JSX.Element {
   const level = levelRank(me?.accountLevel);
   const permissions = me?.permissions ?? [];
 
+  // 菜单授权是"减法"，不是新的放行依据：
+  //
+  //   - 超管永远全量（与后端 permissionsOf 的第一步短路一致）；
+  //   - menuKeys 为空表示"没有配置收窄"，沿用原有判据——
+  //     未分配角色的成员、升级前的存量账号都落在这里，行为不能突然变空；
+  //   - menuKeys 非空时才取交集：没被授权的菜单一律不显示。
+  //
+  // 也就是说，角色菜单配置只能让菜单**变少**，绝不能让人看到原本无权进入的页面。
+  // 真正的边界始终是后端守卫，这里只是投影。
+  const menuKeys = me?.menuKeys ?? [];
+  const restrictsMenus = !isAdmin && menuKeys.length > 0;
+  const authorizedMenus = new Set(menuKeys);
+
   // 单人模式：个人工作台，只有概览 / 应用包 / 应用；超管额外保留账号管理与平台集成。
   // 团队模式：按身份层级 + 角色权限完整投影。
   //
@@ -44,7 +57,11 @@ export function Sidebar(): JSX.Element {
       return soloAllowed.has(item.path);
     }
     // 团队模式统一走 canSeeNavItem：minLevel → requireSuperAdmin → permission。
-    return canSeeNavItem(item, level, permissions, isAdmin);
+    if (!canSeeNavItem(item, level, permissions, isAdmin)) {
+      return false;
+    }
+    // 再叠加角色菜单授权（只做减法）。超管在上面已由 minLevel 全量放行，这里不重复判断。
+    return !restrictsMenus || authorizedMenus.has(item.path);
   };
 
   const sections = NAV_SECTIONS.map((section) => ({

@@ -196,6 +196,9 @@ const (
 	RouteMe                = APIPrefix + "/me"
 	RouteMePassword        = APIPrefix + "/me/password"
 	RoutePermissions       = APIPrefix + "/permissions"
+	// RouteMenus 暴露平台级菜单目录，供角色授权页渲染菜单树。
+	// 只读：菜单结构由代码定义，任何公司都不能增删改（见 Menus 的说明）。
+	RouteMenus = APIPrefix + "/menus"
 	RouteRoles             = APIPrefix + "/roles"
 	RouteRoleByKey         = APIPrefix + "/roles/{key}"
 	RouteAdminUsers        = APIPrefix + "/admin/users"
@@ -262,7 +265,7 @@ var APIRoutes = []string{
 	RoutePlatformTenants, RoutePlatformTenantByID, RoutePlatformTenantStatus,
 	RouteProjects, RouteProjectByKey,
 	RoutePeople, RoutePersonByID, RouteTeams, RouteTeamByID,
-	RoutePermissions, RouteRoles, RouteRoleByKey,
+	RoutePermissions, RouteMenus, RouteRoles, RouteRoleByKey,
 	RouteSettings, RouteWebhookTest, RouteAPIKeyRotate, RouteOpenBuilds,
 	RouteStage, RouteBuilds, RouteBuildByID, RouteBuildFile, RouteHealth,
 }
@@ -592,6 +595,12 @@ type Me struct {
 	// Permissions 是"全局视角"（不含项目）的权限集合，供前端裁剪菜单与按钮。
 	// 项目内的权限可能被项目角色覆盖，那部分由各接口自己判定。
 	Permissions []string `json:"permissions"`
+	// MenuKeys 是当前用户角色被授权的菜单，供前端做"减法"收窄侧栏。
+	//
+	// 它不是判定依据，只是前端的投影输入：真正的边界始终是后端守卫。
+	// 超管拿到的是全部菜单（不受角色配置影响）。
+	// 未分配角色时是空数组——前端据此只保留"无需角色"的基础菜单。
+	MenuKeys []string `json:"menuKeys"`
 }
 
 // Permission 是一个权限点。目录定义在代码里（Permissions），数据库只存"角色拥有哪些"，
@@ -681,7 +690,77 @@ type Role struct {
 	TenantID    string   `json:"tenantId"`
 	TenantName  string   `json:"tenantName"`
 	Permissions []string `json:"permissions"`
-	CreatedAt   string   `json:"createdAt"`
+	// MenuKeys 是该角色被授权可见的菜单，按公司隔离存储。
+	MenuKeys  []string `json:"menuKeys"`
+	CreatedAt string   `json:"createdAt"`
+}
+
+// ── 菜单资源 ──────────────────────────────────────────────────────────────
+//
+// 设计要点（三者缺一不可）：
+//
+//  1. **菜单目录是平台级的、只读的**。它描述"系统有哪些页面"，属于产品结构，
+//     不该让每家公司自己增删——否则甲公司加了个菜单，乙公司的前端根本没有对应路由。
+//     目录的唯一来源是本文件的 Menus，前端 navigation.ts 与它逐条对齐。
+//
+//  2. **授权是每公司独立的**。菜单挂到角色上（role_menus），角色本身按 tenant_id 隔离，
+//     所以甲公司的 developer 授权了哪些菜单，与乙公司毫无关系。
+//
+//  3. **授权只做减法**。菜单最终可见 = 原有身份/权限判据 ∩ 角色授权的菜单。
+//     给普通成员勾上"账号管理"也不会放行——后端仍需 team_admin。
+//     这保证菜单配置只能收窄视野，绝不能变成提权入口。
+//
+// 超管不受菜单授权约束（permissionsOf 第一步就短路为全量），永远看到全部菜单。
+
+// Menu 是菜单目录中的一项，按 group 分组展示成授权树。
+type Menu struct {
+	Key   string `json:"key"`   // 页面路径，如 /overview、/directory/roles；同时是授权存储的 key
+	Label string `json:"label"` // 上屏名称
+	Group string `json:"group"` // 一级分组名，用于前端渲染树
+}
+
+// Menus 是全部可授权菜单，顺序即前端展示顺序。
+//
+// 为什么用路径当 key：前端路由表里路径本来就唯一且稳定，
+// 再发明一套 menu-id 就得维护"id ↔ path"映射，多一处必然漂移的地方。
+var Menus = []Menu{
+	{Key: "/overview", Label: "概览", Group: "总览"},
+	{Key: "/packages", Label: "应用包", Group: "分发"},
+	{Key: "/apps", Label: "应用", Group: "分发"},
+	{Key: "/directory/people", Label: "人员管理", Group: "基础资料"},
+	{Key: "/directory/teams", Label: "团队管理", Group: "基础资料"},
+	{Key: "/directory/projects", Label: "项目管理", Group: "基础资料"},
+	{Key: "/admin/accounts", Label: "账号管理", Group: "基础资料"},
+	{Key: "/directory/roles", Label: "角色管理", Group: "公司设置"},
+	{Key: "/admin/audit-logs", Label: "审计日志", Group: "公司设置"},
+	{Key: "/settings", Label: "平台集成", Group: "公司设置"},
+	// 刻意不含「平台管理 / 公司管理」（/admin/tenants）：
+	//   - 它是超管专属菜单，而超管始终全量，本来就不靠角色授权；
+	//   - 平台管理员自己都看不到它，让他在角色授权树里勾选一项自己无权进入的页面，
+	//     是纯粹的误导（勾了也不会生效，后端 RequireSuperAdmin 仍会 403）。
+	// 同理，任何将来新增的超管专属菜单都不应进入本目录。
+}
+
+// AllMenuKeys 返回完整菜单 key 列表。
+//
+// 唯一用途是"默认全量授权"：超管的 /me、新建角色的默认值都从这里取。
+// 放在契约层是因为有两个 service 包都需要它，各自实现一份必然漂移。
+func AllMenuKeys() []string {
+	keys := make([]string, 0, len(Menus))
+	for _, menu := range Menus {
+		keys = append(keys, menu.Key)
+	}
+	return keys
+}
+
+// IsValidMenu 判断一个 key 是否是合法的可授权菜单，写入角色时用它挡住拼错/伪造的值。
+func IsValidMenu(key string) bool {
+	for _, menu := range Menus {
+		if menu.Key == key {
+			return true
+		}
+	}
+	return false
 }
 
 // RoleInput 是新建 / 编辑角色请求。
@@ -690,6 +769,8 @@ type RoleInput struct {
 	Name        string   `json:"name"`
 	Description string   `json:"description"`
 	Permissions []string `json:"permissions"`
+	// MenuKeys 是本次授权的菜单列表，全量覆盖（与 permissions 同语义）。
+	MenuKeys []string `json:"menuKeys"`
 }
 
 // RoleList 是角色列表响应体（角色数量少，不分页）。

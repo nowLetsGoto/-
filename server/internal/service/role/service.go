@@ -98,7 +98,10 @@ func (s *Service) EnsureBuiltin(ctx context.Context) error {
 			}
 		}
 	}
-	return nil
+	// 菜单目录会随版本演进，内置角色的授权要跟着对齐：
+	// 补上新菜单、清掉已移除的（例如超管专属的 /admin/tenants）。
+	// 放在这里而不是 schema.sql，是因为菜单清单必须与 contract.Menus 同源。
+	return s.repo.ReconcileBuiltinMenus(ctx)
 }
 
 // SeedForTenant 给指定公司补齐内置角色；建公司后立即调用，也可重复调用（幂等）。
@@ -136,6 +139,11 @@ func (s *Service) Create(ctx context.Context, in contract.RoleInput, scope contr
 	if scope.All || scope.TenantID == "" {
 		// 角色必须挂在某家公司下：超管不直接建业务角色，公司管理员才有归属。
 		return contract.Role{}, &contract.ValidationError{Message: "只能在本公司下新建角色"}
+	}
+	// 未传 menuKeys 时默认全量：既兼容旧客户端，也符合"新建 = 全量，勾选 = 收窄"的心智。
+	// 显式传空数组则表示"这个角色看不到任何受控菜单"，是管理员的主动选择。
+	if in.MenuKeys == nil {
+		in.MenuKeys = contract.AllMenuKeys()
 	}
 	normalized, err := normalize(in, true, scope.TenantID)
 	if err != nil {
@@ -229,6 +237,7 @@ func normalize(in contract.RoleInput, withKey bool, _ string) (contract.RoleInpu
 		Name:        strings.TrimSpace(in.Name),
 		Description: strings.TrimSpace(in.Description),
 		Permissions: dedupe(in.Permissions),
+		MenuKeys:    dedupe(in.MenuKeys),
 	}
 
 	if withKey && !roleKeyPattern.MatchString(out.Key) {
@@ -248,6 +257,13 @@ func normalize(in contract.RoleInput, withKey bool, _ string) (contract.RoleInpu
 	for _, permission := range out.Permissions {
 		if !contract.IsValidPermission(permission) {
 			return contract.RoleInput{}, &contract.ValidationError{Message: "包含无效的权限点：" + permission}
+		}
+	}
+	// 菜单 key 同样必须来自平台目录：挡住拼错与伪造值。
+	// 目录是只读的（见 contract.Menus 的说明），不接受自定义菜单。
+	for _, menuKey := range out.MenuKeys {
+		if !contract.IsValidMenu(menuKey) {
+			return contract.RoleInput{}, &contract.ValidationError{Message: "包含无效的菜单：" + menuKey}
 		}
 	}
 	return out, nil

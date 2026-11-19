@@ -1472,3 +1472,103 @@ key 才能退化成纯业务字段、按公司划分。
 
 ### 状态
 未 git commit。
+
+---
+
+## §28 菜单资源独立维护 + 角色内嵌菜单授权树（2026-11-19）
+
+### 需求与确立的三条边界
+用户选定：菜单授权**只做减法**、菜单目录**平台级代码定义**、超管**始终全量**。
+
+这三条把安全边界钉死了：
+
+```
+菜单最终可见 = 原有身份/权限判据 ∩ 角色菜单授权
+```
+
+- 配置只能让菜单**变少**，绝不能让人看到原本无权进入的页面；
+- 菜单目录属于产品结构，不是公司资产——甲公司不能加一个乙公司前端没有路由的菜单；
+- 超管与现有 `permissionsOf` 第一步短路保持一致，不受配置影响。
+
+### 数据模型
+- `contract.Menus`：11 项静态目录，key 就是页面路径（`/overview`、`/directory/roles`…）。
+  用路径当 key 是为了不维护"id ↔ 路由"映射——那多一处必然漂移的地方。
+- `role_menus(role_id, menu_key)`：与 `role_permissions` 完全对称。
+  角色本身按 `tenant_id` 隔离，所以**每家公司的菜单配置天然独立**。
+- 内置角色播种时默认全量；新建自定义角色也默认全量（兼容旧客户端）。
+  **全部取消视为"不限制"**，避免未分配角色的成员登录后侧栏全空，兼容升级前行为。
+
+### 实现中的收敛（同一件事只写一遍）
+权限点与菜单两张子表结构完全相同，原本各有一份"批量读/单个读/全量写"逻辑。
+本次统一成三个方法，传表名+列名（白名单校验）消重：
+
+```
+groupedValues(ctx, table, column)   列表页批量读
+listValues(ctx, table, column, id)  单个角色读
+replaceValues(ctx, tx, id, ...)     全量覆盖写
+fillOne(ctx, *Role)                 三处详情回读共用的装配
+```
+
+`allMenuKeys()` 也曾被两个 service 包各写一份，移到 `contract.AllMenuKeys()` 单一定义。
+
+### 三层接线
+| 层 | 改动 |
+|---|---|
+| 契约 | `Menu`、`Menus`、`IsValidMenu`、`AllMenuKeys`；`Role/RoleInput.menuKeys`、`Me.menuKeys`；`GET /menus` |
+| 后端 | role 仓储读写菜单；`/me` 经 `authz.MenuKeysOf` 转发取授权；`/menus` 只读返回目录 |
+| 前端 | `MenuPermissionTree` 独立组件（分组全选/取消）；`RoleFormPage` 内嵌；`Sidebar` 做交集收窄 |
+
+`Sidebar` 的收窄规则刻意写成三分支：
+超管全量 → `menuKeys` 为空不收窄 → 非空才取交集。
+**空数组不是"全不授权"**，而是"没配置收窄"，这是兼容旧数据的关键。
+
+### 验证（13 项全过）
+- 目录 11 项；建角色带菜单授权 201，回读 keys 正确
+- 成员 `/me` 拿到角色授权的菜单；改授权后立即生效
+- **给普通成员勾上全部管理菜单**：前端会显示，但 `/roles`、`/settings`、`/admin/audit-logs`、
+  `/platform/tenants`、`/admin/users` 全部 403 —— "只做减法"成立，无提权
+- 管理类权限点（`role.delete`/`settings.write`）即使强塞也被 400 拒绝
+- 超管 `/me.menuKeys` 恒为 11 项
+- 公司隔离：菜单授权随角色按租户隔离
+- 存量迁移：12 个内置角色各补齐 11 项，幂等
+
+### 状态
+五道门禁全绿（12 包）；测试数据与上一轮误建在真实公司的角色均已清理；未 git commit。
+
+---
+
+## §29 超管专属菜单不进入角色授权树（2026-11-19）
+
+### 现象
+角色编辑页的菜单授权树里出现「平台管理 → 公司管理」，
+平台管理员能看到并勾选它——但这个菜单只有超管能进，他自己都看不到，
+勾了也不会生效（后端 RequireSuperAdmin 仍 403）。纯粹的误导。
+
+### 修复
+从 `contract.Menus` 移除 `/admin/tenants`。
+
+原则：**超管专属菜单不进入可授权目录**。超管始终全量（§28 的三条边界之一），
+本来就不需要通过角色授权获得任何菜单；把它列进目录只会让人误以为可配置。
+将来新增的超管专属菜单同理。
+
+### 顺带消除的一处冗余
+§28 曾在 `schema.sql` 里硬编码了一份 11 项菜单清单用于存量补齐，
+与 `contract.Menus` 构成两份会漂移的定义（这次若漏改就会出现"SQL 补了已下线的菜单"）。
+
+改为 Go 侧 `Repository.ReconcileBuiltinMenus(ctx)`，由 `EnsureBuiltin` 启动时调用：
+- 补齐：`INSERT ... SELECT FROM unnest($1::text[])`，参数来自 `contract.AllMenuKeys()`
+- 清理：`DELETE ... NOT (menu_key = ANY($1::text[]))`，删掉目录里已不存在的历史授权
+- 只动内置角色；自定义角色是管理员刻意配置的，系统不改写
+- 幂等，每次启动都能跑
+
+菜单清单从此只有 `contract.Menus` 一处定义。
+
+### 验证
+- 目录从 11 项降为 10 项，「平台管理」分组消失
+- 存量 `role_menus` 里 `/admin/tenants` 残留 0 条，有效授权 120 条（12 角色 × 10 菜单）
+- 所有角色详情返回的 menuKeys 里不再含该 key
+- 角色保存仍正常（200）；超管侧栏的「公司管理」由 `minLevel` 放行，不依赖授权目录，不受影响
+- 新增测试 `TestSuperAdminOnlyMenusAreNotAuthorizable` 防止它被加回
+
+### 状态
+五道门禁全绿（12 包）；未 git commit。

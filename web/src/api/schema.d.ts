@@ -316,6 +316,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/menus": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 菜单资源目录（平台级只读）
+         * @description 返回系统全部可授权菜单，按 group 分组。菜单结构由代码定义，任何公司都不能增删改。 角色授权只做减法：菜单可见 = 原有身份/权限判据 ∩ 角色授权菜单；超管不受约束。
+         */
+        get: operations["listMenus"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/permissions": {
         parameters: {
             query?: never;
@@ -774,6 +794,8 @@ export interface components {
             teamIds: string[];
             /** @description 平台级权限点（不含项目）；项目内权限可能被项目角色覆盖，由各接口判定 */
             permissions: string[];
+            /** @description 当前角色被授权可见的菜单 key，供前端收窄侧栏。不是判定依据，真正边界在后端守卫。 超管拿到全部菜单；未分配角色时为空数组。 */
+            menuKeys: string[];
         };
         /** @description 账号视图（不含任何密码字段） */
         User: {
@@ -875,6 +897,15 @@ export interface components {
             message: string;
             data: components["schemas"]["Tenant"];
         };
+        /** @description 平台级菜单资源，路径即 key，与前端路由一一对应 */
+        Menu: {
+            /** @description 页面路径，如 /overview、/directory/roles */
+            key: string;
+            /** @description 上屏名称 */
+            label: string;
+            /** @description 一级分组名，用于渲染授权树 */
+            group: string;
+        };
         Permission: {
             key: string;
             /** @description 权限点所属模块，前端按它分组渲染 */
@@ -896,6 +927,8 @@ export interface components {
             /** @description 归属公司名。超管跨公司查看时靠它区分同名角色 */
             tenantName: string;
             permissions: string[];
+            /** @description 该角色被授权可见的菜单 key，按公司隔离存储 */
+            menuKeys: string[];
             /** Format: date-time */
             createdAt: string;
         };
@@ -905,6 +938,8 @@ export interface components {
             name: string;
             description: string;
             permissions: string[];
+            /** @description 本次授权的菜单，全量覆盖；不传则默认全量（兼容旧客户端） */
+            menuKeys?: string[];
         };
         PermissionListResponse: components["schemas"]["ApiResponse"] & {
             data: {
@@ -2088,6 +2123,28 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+        };
+    };
+    listMenus: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 菜单目录 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        items?: components["schemas"]["Menu"][];
+                    };
+                };
             };
         };
     };
