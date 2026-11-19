@@ -897,7 +897,7 @@ export interface components {
             message: string;
             data: components["schemas"]["Tenant"];
         };
-        /** @description 平台级菜单资源，路径即 key，与前端路由一一对应 */
+        /** @description 平台级菜单资源，路径即 key；自带查看权限与操作权限，构成完整的授权树节点 */
         Menu: {
             /** @description 页面路径，如 /overview、/directory/roles */
             key: string;
@@ -905,6 +905,17 @@ export interface components {
             label: string;
             /** @description 一级分组名，用于渲染授权树 */
             group: string;
+            /** @description 勾选本菜单即自动授予的查看权限，用户不单独勾选 */
+            viewPermission: string;
+            /** @description 本菜单下可勾选的操作权限（写/删等） */
+            actions: components["schemas"]["MenuAction"][];
+        };
+        /** @description 菜单下的一个操作权限 */
+        MenuAction: {
+            /** @description 权限点 key，如 build.write */
+            key: string;
+            /** @description 上屏名称 */
+            label: string;
         };
         Permission: {
             key: string;

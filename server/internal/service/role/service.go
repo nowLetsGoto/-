@@ -18,6 +18,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"sort"
 	"strings"
 	"unicode/utf8"
 
@@ -240,9 +241,12 @@ func normalize(in contract.RoleInput, withKey bool, _ string) (contract.RoleInpu
 		Key:         strings.ToLower(strings.TrimSpace(in.Key)),
 		Name:        strings.TrimSpace(in.Name),
 		Description: strings.TrimSpace(in.Description),
-		Permissions: dedupe(in.Permissions),
 		MenuKeys:    dedupe(in.MenuKeys),
 	}
+	// 权限由菜单树推导，不直接信任请求体里的 permissions：
+	// 查看权限 ← 勾选菜单自动授予；操作权限 ← 只保留对应菜单已勾选的。
+	// 详见 derivePermissions。
+	out.Permissions = derivePermissions(out.MenuKeys, in.Permissions)
 
 	if withKey && !roleKeyPattern.MatchString(out.Key) {
 		return contract.RoleInput{}, &contract.ValidationError{
@@ -258,12 +262,7 @@ func normalize(in contract.RoleInput, withKey bool, _ string) (contract.RoleInpu
 	if utf8.RuneCountInString(out.Description) > 200 {
 		return contract.RoleInput{}, &contract.ValidationError{Message: "角色描述不能超过 200 个字符"}
 	}
-	for _, permission := range out.Permissions {
-		if !contract.IsValidPermission(permission) {
-			return contract.RoleInput{}, &contract.ValidationError{Message: "包含无效的权限点：" + permission}
-		}
-	}
-	// 菜单 key 同样必须来自平台目录：挡住拼错与伪造值。
+	// 菜单 key 必须来自平台目录：挡住拼错与伪造值。
 	// 目录是只读的（见 contract.Menus 的说明），不接受自定义菜单。
 	for _, menuKey := range out.MenuKeys {
 		if !contract.IsValidMenu(menuKey) {
@@ -271,6 +270,64 @@ func normalize(in contract.RoleInput, withKey bool, _ string) (contract.RoleInpu
 		}
 	}
 	return out, nil
+}
+
+// derivePermissions 从「勾选的菜单 + 请求里的操作权限」推导最终权限集合。
+//
+// 两条规则，对应产品的新设计：
+//
+//  1. 查看权限不单独配置。勾选某菜单就自动获得它的 ViewPermission；
+//     反过来，即使请求体里塞了 role.read，只要没勾「角色管理」菜单也会被丢弃——
+//     这是"有菜单才有查看权"的硬约束，堵住绕过菜单配置直接拿能力的路径。
+//
+//  2. 操作权限必须挂在已勾选的菜单下。例如没勾「应用包」却传 build.write，
+//     会被清掉——一个看不到应用包的角色，写应用包没有意义。
+//
+// 之所以在后端再推导一次（而不是只靠前端）：
+// 前端可能被绕过、也可能是旧客户端，服务端必须自己保证这条不变量。
+func derivePermissions(menuKeys, requested []string) []string {
+	// 已勾选菜单授予的查看权限 + 它允许的操作权限集合。
+	granted := make(map[string]struct{})
+	allowedActions := make(map[string]struct{})
+	for _, key := range menuKeys {
+		menu, ok := menuByKey(key)
+		if !ok {
+			continue
+		}
+		if menu.ViewPermission != "" {
+			granted[menu.ViewPermission] = struct{}{}
+		}
+		for _, action := range menu.Actions {
+			allowedActions[action.Key] = struct{}{}
+		}
+	}
+	// 只接收"该菜单允许的操作权限"；查看权限一概忽略（由上面自动授予）。
+	viewPermissions := contract.ViewPermissions()
+	for _, permission := range requested {
+		if _, isView := viewPermissions[permission]; isView {
+			continue
+		}
+		if _, allowed := allowedActions[permission]; allowed {
+			granted[permission] = struct{}{}
+		}
+	}
+	result := make([]string, 0, len(granted))
+	for permission := range granted {
+		result = append(result, permission)
+	}
+	sort.Strings(result) // 稳定输出，便于断言与 diff
+	return result
+}
+
+// menuByKey 按路径查菜单定义。目录很小，线性查找足够，
+// 不为它再建一份 map——两处数据反而可能不同步。
+func menuByKey(key string) (contract.Menu, bool) {
+	for _, menu := range contract.Menus {
+		if menu.Key == key {
+			return menu, true
+		}
+	}
+	return contract.Menu{}, false
 }
 
 func dedupe(values []string) []string {

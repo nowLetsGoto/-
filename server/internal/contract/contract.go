@@ -726,33 +726,102 @@ type Role struct {
 //
 // 超管不受菜单授权约束（permissionsOf 第一步就短路为全量），永远看到全部菜单。
 
+// MenuAction 是菜单下的一个可勾选操作权限，例如「应用包」下的上传、删除。
+//
+// 它取代了过去"权限点矩阵与菜单树分成两大块"的设计：
+// 操作权限现在挂在它生效的菜单节点上，配菜单时顺手配操作，二者不会脱节。
+type MenuAction struct {
+	Key   string `json:"key"`   // 权限点 key，如 build.write
+	Label string `json:"label"` // 上屏名称
+}
+
 // Menu 是菜单目录中的一项，按 group 分组展示成授权树。
 type Menu struct {
 	Key   string `json:"key"`   // 页面路径，如 /overview、/directory/roles；同时是授权存储的 key
 	Label string `json:"label"` // 上屏名称
 	Group string `json:"group"` // 一级分组名，用于前端渲染树
+	// ViewPermission 是进入本菜单所需的"查看权限"。
+	//
+	// 勾选菜单即自动授予它，用户**不单独勾选**查看权限（见 service/role.normalize）。
+	// 这条规则解决了最容易踩的坑：过去用户在菜单树里勾了"角色管理"，
+	// 却没在另一块权限矩阵里勾 role.read，结果菜单死活不显示。
+	ViewPermission string `json:"viewPermission"`
+	// Actions 是本菜单下的操作权限（写/删等），在菜单节点内勾选。
+	Actions []MenuAction `json:"actions"`
 }
 
 // Menus 是全部可授权菜单，顺序即前端展示顺序。
 //
 // 为什么用路径当 key：前端路由表里路径本来就唯一且稳定，
 // 再发明一套 menu-id 就得维护"id ↔ path"映射，多一处必然漂移的地方。
+//
+// 每张菜单自带查看权限与操作权限，这个映射是**唯一来源**：
+// 保存角色时由它推导最终 permissions（见 service/role.derivePermissions），
+// 前端也只渲染这份树，不再有独立的"权限点矩阵"。
 var Menus = []Menu{
-	{Key: "/overview", Label: "概览", Group: "总览"},
-	{Key: "/packages", Label: "应用包", Group: "分发"},
-	{Key: "/apps", Label: "应用", Group: "分发"},
-	{Key: "/directory/people", Label: "人员管理", Group: "基础资料"},
-	{Key: "/directory/teams", Label: "团队管理", Group: "基础资料"},
-	{Key: "/directory/projects", Label: "项目管理", Group: "基础资料"},
-	{Key: "/admin/accounts", Label: "账号管理", Group: "基础资料"},
-	{Key: "/directory/roles", Label: "角色管理", Group: "公司设置"},
-	{Key: "/admin/audit-logs", Label: "审计日志", Group: "公司设置"},
-	{Key: "/settings", Label: "平台集成", Group: "公司设置"},
-	// 刻意不含「平台管理 / 公司管理」（/admin/tenants）：
-	//   - 它是超管专属菜单，而超管始终全量，本来就不靠角色授权；
-	//   - 平台管理员自己都看不到它，让他在角色授权树里勾选一项自己无权进入的页面，
-	//     是纯粹的误导（勾了也不会生效，后端 RequireSuperAdmin 仍会 403）。
-	// 同理，任何将来新增的超管专属菜单都不应进入本目录。
+	{Key: "/overview", Label: "概览", Group: "总览", ViewPermission: "build.read"},
+	{
+		Key: "/packages", Label: "应用包", Group: "分发", ViewPermission: "build.read",
+		Actions: []MenuAction{
+			{Key: "build.write", Label: "上传与发布应用包"},
+			{Key: "build.delete", Label: "删除应用包"},
+		},
+	},
+	{Key: "/apps", Label: "应用", Group: "分发", ViewPermission: "build.read"},
+	{
+		Key: "/directory/people", Label: "人员管理", Group: "基础资料", ViewPermission: "directory.read",
+		Actions: []MenuAction{
+			{Key: PermissionDirectoryWrite, Label: "新增与编辑人员"},
+			{Key: PermissionDirectoryDelete, Label: "删除人员"},
+		},
+	},
+	{
+		Key: "/directory/teams", Label: "团队管理", Group: "基础资料", ViewPermission: "directory.read",
+		Actions: []MenuAction{
+			{Key: PermissionDirectoryWrite, Label: "新增与编辑团队"},
+			{Key: PermissionDirectoryDelete, Label: "删除团队"},
+		},
+	},
+	{
+		Key: "/directory/projects", Label: "项目管理", Group: "基础资料", ViewPermission: "project.read",
+		Actions: []MenuAction{
+			{Key: "project.write", Label: "新建与编辑项目"},
+			{Key: "project.delete", Label: "删除项目"},
+		},
+	},
+	// 账号管理的查看门槛本身就是 directory.write（路由 RequirePermission），
+	// 因此它既作为本菜单的 ViewPermission，也出现在人员/团队菜单的 actions 里——
+	// 同一个权限点服务两处 UI，语义一致："能管人就能管账号"。
+	{Key: "/admin/accounts", Label: "账号管理", Group: "基础资料", ViewPermission: PermissionDirectoryWrite},
+	{
+		Key: "/directory/roles", Label: "角色管理", Group: "公司设置", ViewPermission: PermissionRoleRead,
+		Actions: []MenuAction{
+			{Key: PermissionRoleWrite, Label: "新建与编辑角色"},
+			{Key: PermissionRoleDelete, Label: "删除自定义角色"},
+		},
+	},
+	{Key: "/admin/audit-logs", Label: "审计日志", Group: "公司设置", ViewPermission: PermissionAuditRead},
+	{
+		Key: "/settings", Label: "平台集成", Group: "公司设置", ViewPermission: PermissionSettingsRead,
+		Actions: []MenuAction{{Key: PermissionSettingsWrite, Label: "修改配置与轮换 Key"}},
+	},
+	// 刻意不含「平台管理 / 公司管理」（/admin/tenants）：它是超管专属，
+	// 而超管始终全量、不靠角色授权；列进来只会误导（勾了也仍被 RequireSuperAdmin 拦）。
+}
+
+// AllMenus 返回对外输出的菜单目录，保证每项 actions 是非 nil 的空数组。
+//
+// Go 的 nil slice 序列化成 JSON null，前端 `menu.actions.length` 会直接抛错。
+// 契约层负责把"没有操作权限"表达成 []，不让每个调用方各自补。
+func AllMenus() []Menu {
+	result := make([]Menu, len(Menus))
+	copy(result, Menus)
+	for i := range result {
+		if result[i].Actions == nil {
+			result[i].Actions = []MenuAction{}
+		}
+	}
+	return result
 }
 
 // AllMenuKeys 返回完整菜单 key 列表。
@@ -765,6 +834,21 @@ func AllMenuKeys() []string {
 		keys = append(keys, menu.Key)
 	}
 	return keys
+}
+
+// ViewPermissions 返回所有"查看类"权限点的集合（每个菜单的 ViewPermission 去重）。
+//
+// normalize 用它做一件事：把用户传来/历史存下的查看权限全部丢掉，
+// 再按勾选的菜单重新授予。这样"有菜单才有查看权"是硬规则，
+// 无法通过直接塞 role.read 之类的方式绕过菜单配置拿到能力。
+func ViewPermissions() map[string]struct{} {
+	result := make(map[string]struct{})
+	for _, menu := range Menus {
+		if menu.ViewPermission != "" {
+			result[menu.ViewPermission] = struct{}{}
+		}
+	}
+	return result
 }
 
 // IsValidMenu 判断一个 key 是否是合法的可授权菜单，写入角色时用它挡住拼错/伪造的值。

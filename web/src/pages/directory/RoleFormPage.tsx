@@ -1,20 +1,19 @@
 /**
  * 角色新增 / 编辑页（/directory/roles/new 与 /directory/roles/:key/edit）。
- * 职责：维护角色名称、标识、描述与权限点勾选矩阵；提交后回列表。
- * 输入：URL 参数 key（无则新增）、权限点目录、角色本身。
+ * 职责：维护角色名称、标识、描述与「菜单 + 操作权限」授权树；提交后回列表。
+ * 输入：URL 参数 key（无则新增）、菜单目录（自带查看/操作权限）、角色本身。
  * 输出：createRole / updateRole 请求。
- * 边界：权限点目录来自服务端，前端不硬编码任何 key；
- *       **超级管理员角色的权限只读**（固定全量，改了会导致没人能改角色）；
- *       非超管打开编辑页时整体只读（服务端同样 403，这里只是不给假入口）。
+ * 边界：目录来自服务端，前端不硬编码任何 key；查看权限由勾选菜单自动获得、
+ *       不单独配置（后端也会推导一次）；非编辑者只读。
  */
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { errorMessage } from '../../api/client';
-import type { Menu, Permission, RoleInput } from '../../api/roles';
-import { createRole, getRole, listMenus, listPermissions, updateRole } from '../../api/roles';
-import { Checkbox, Input } from '../../components/Controls';
+import type { Menu, RoleInput } from '../../api/roles';
+import { createRole, getRole, listMenus, updateRole } from '../../api/roles';
+import { Input } from '../../components/Controls';
 import { FormPage } from '../../components/FormPage';
-import { MenuPermissionTree } from '../../components/MenuPermissionTree';
+import { RolePermissionTree } from '../../components/RolePermissionTree';
 import { ErrorState, Loading } from '../../components/States';
 import { useMe } from '../../hooks/useMe';
 import { atLeastLevel } from '../../utils/accountLevel';
@@ -32,7 +31,6 @@ export function RoleFormPage(): JSX.Element {
   const { me } = useMe();
 
   const [form, setForm] = useState<RoleInput>(EMPTY);
-  const [permissions, setPermissions] = useState<Permission[]>([]);
   const [menus, setMenus] = useState<Menu[]>([]);
   // 当前编辑的角色是不是平台内置（tenant_id 为空的那批）。
   // 内置角色可以改（每家公司各持一份副本，改它只影响本公司），只是不能删。
@@ -50,13 +48,12 @@ export function RoleFormPage(): JSX.Element {
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
-    // 三份数据并行取：权限目录与菜单目录决定两个矩阵长什么样，角色决定勾了哪些。
-    Promise.all([listPermissions(), listMenus(), key ? getRole(key) : Promise.resolve(null)])
-      .then(([catalog, menuCatalog, role]) => {
+    // 菜单目录决定授权树长什么样（它自带查看/操作权限），角色决定勾了哪些。
+    Promise.all([listMenus(), key ? getRole(key) : Promise.resolve(null)])
+      .then(([menuCatalog, role]) => {
         if (cancelled) {
           return;
         }
-        setPermissions(catalog.items);
         setMenus(menuCatalog.items);
         setIsBuiltin(role?.isBuiltin === true);
         setForm(
@@ -82,26 +79,6 @@ export function RoleFormPage(): JSX.Element {
       cancelled = true;
     };
   }, [key]);
-
-  // 按模块分组：后端给 group 字段，前端不在代码里维护第二份分组规则。
-  const grouped = useMemo(() => {
-    const map = new Map<string, Permission[]>();
-    for (const permission of permissions) {
-      const list = map.get(permission.group) ?? [];
-      list.push(permission);
-      map.set(permission.group, list);
-    }
-    return [...map.entries()];
-  }, [permissions]);
-
-  const toggle = (permissionKey: string): void => {
-    setForm((prev) => ({
-      ...prev,
-      permissions: prev.permissions.includes(permissionKey)
-        ? prev.permissions.filter((item) => item !== permissionKey)
-        : [...prev.permissions, permissionKey],
-    }));
-  };
 
   const submit = async (): Promise<void> => {
     setSaving(true);
@@ -195,46 +172,22 @@ export function RoleFormPage(): JSX.Element {
         </label>
       </div>
 
-      {grouped.map(([group, items]) => (
-        <div className="field-block" key={group}>
-          <span className="field-label">{group}</span>
-          <div className="field-picker">
-            {items.map((permission) => {
-              const checked = form.permissions.includes(permission.key);
-              return (
-                <Checkbox
-                  key={permission.key}
-                  className={checked ? 'field-check field-check-on' : 'field-check'}
-                  title={permission.key}
-                  checked={checked}
-                  disabled={readOnly}
-                  onChange={() => toggle(permission.key)}
-                >
-                  {permission.label}
-                </Checkbox>
-              );
-            })}
-          </div>
-        </div>
-      ))}
-
       <div className="field-block">
-        <span className="field-label">可见菜单</span>
+        <span className="field-label">授权范围</span>
         <p className="cell-sub">
-          这里只做减法：取消勾选的菜单该角色一定看不到；保留勾选仍需满足身份层级才能进入。
-          全部取消视为「不限制」（保持基础可见性），超管始终看到全部菜单。
+          勾选菜单即拥有该页面的查看权限；展开菜单可进一步勾选「新增、编辑、删除」等操作权限。
+          未勾选的菜单不会出现在该角色的侧栏中。
         </p>
-        <MenuPermissionTree
+        <RolePermissionTree
           menus={menus}
-          value={form.menuKeys ?? []}
+          menuKeys={form.menuKeys ?? []}
+          permissions={form.permissions}
           disabled={readOnly}
-          onChange={(keys) => setForm((prev) => ({ ...prev, menuKeys: keys }))}
+          onChange={({ menuKeys, permissions }) =>
+            setForm((prev) => ({ ...prev, menuKeys, permissions }))
+          }
         />
       </div>
-
-      <p className="settings-hint">
-        已选 {form.permissions.length} / {permissions.length} 个权限点
-      </p>
     </FormPage>
   );
 }

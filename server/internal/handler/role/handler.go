@@ -38,7 +38,7 @@ func (h *Handler) Permissions(w http.ResponseWriter, r *http.Request) error {
 // 只读且无业务参数：目录由 contract.Menus 静态定义，任何公司都不能增删改，
 // 所以这里不需要 scope，也不需要 service 层——纯粹把契约投影成 JSON。
 func (h *Handler) Menus(w http.ResponseWriter, r *http.Request) error {
-	return handler.OK(w, map[string]any{"items": contract.Menus})
+	return handler.OK(w, map[string]any{"items": contract.AllMenus()})
 }
 
 // List 返回全部角色（含各自权限点）。
