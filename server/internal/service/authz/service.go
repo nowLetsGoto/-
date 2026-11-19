@@ -207,7 +207,13 @@ func (s *Service) ScopeOf(ctx context.Context, identity contract.Identity) (cont
 			return contract.Scope{}, err
 		}
 		// TeamScoped=true：即使没关联任何团队，也只能看到空集，不能退化成看全公司。
-		return contract.Scope{TenantID: identity.TenantID, TeamIDs: teamIDs, TeamScoped: true}, nil
+		// SelfUserID 让账号管理页仍能看到自己那一条（团队归属在 team_admins 而非 team_members）。
+		return contract.Scope{
+			TenantID:   identity.TenantID,
+			TeamIDs:    teamIDs,
+			TeamScoped: true,
+			SelfUserID: identity.UserID,
+		}, nil
 
 	case contract.AccountLevelMember:
 		// 成员关系挂在人身上，先复用 /me 与权限判定共用的解析入口，

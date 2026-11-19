@@ -681,6 +681,13 @@ type Scope struct {
 	TenantID   string
 	TeamIDs    []string
 	TeamScoped bool
+	// SelfUserID 是调用者自己的账号 id，只服务于 TeamScoped 身份（团队负责人）。
+	//
+	// 为什么需要它：团队负责人的团队归属在 team_admins，而账号列表按
+	// 「绑定人员的 team_members」过滤——不加这一项，他会在账号管理页里看不到自己。
+	// 它不是"额外放权"，只是一个自我可见的例外；能操作自己的写入仍由
+	// service/user.ensureInScope 明确放行。
+	SelfUserID string
 }
 
 // Identity 是鉴权中间件解析出的「当前调用者」，只含判定所需的最小字段。

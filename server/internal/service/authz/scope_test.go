@@ -118,7 +118,12 @@ func TestScopeOfFourLevels(t *testing.T) {
 			identity: contract.Identity{
 				AccountLevel: contract.AccountLevelTeamAdmin, TenantID: "tenant-1", UserID: "admin-user",
 			},
-			want: contract.Scope{TenantID: "tenant-1", TeamIDs: []string{"team-a", "team-b"}, TeamScoped: true},
+			// SelfUserID 是刻意带上的：团队负责人的团队关联在 team_admins，
+			// 账号列表按 team_members 收窄时，没有这一项他会在列表里看不到自己。
+			want: contract.Scope{
+				TenantID: "tenant-1", TeamIDs: []string{"team-a", "team-b"},
+				TeamScoped: true, SelfUserID: "admin-user",
+			},
 		},
 		{
 			name: "普通成员取 team_members 关联并集",

@@ -187,6 +187,8 @@ func (r *Repository) CountUsage(ctx context.Context, teamID string) (Usage, erro
 // 别人的可见范围（成员会突然看不到任何数据）。
 func (r *Repository) Delete(ctx context.Context, teamID string, scope contract.Scope) error {
 	filter := repository.ScopeFilter(0, "t", scope).Add(`t.id = ?`, teamID)
+	// 与 save 同一条团队边界：团队负责人只能删自己管理的团队。
+	repository.ApplyTeam(filter, `t.id = ANY(?)`, scope)
 	result, err := r.db.ExecContext(ctx, `DELETE FROM teams t`+filter.Where(), filter.Args()...)
 	if err != nil {
 		return fmt.Errorf("删除团队失败: %w", err)
@@ -208,6 +210,17 @@ func (r *Repository) save(ctx context.Context, id string, in contract.TeamInput,
 	if scope.TenantID == "" {
 		return contract.Team{}, contract.ErrForbidden
 	}
+	// 团队负责人不能新建团队（只能维护自己已有的那几个）。
+	//
+	// 三个理由，任一条都足以拒绝：
+	//   1. 团队是公司级组织单元，创建它要决定「归谁管、关联哪些项目」，需要公司级视野；
+	//   2. 新建的团队还没有 team_admins 关联，立刻成为没人管的孤儿；
+	//   3. 他自己也看不到它——末尾的 FindByID 带团队条件，会返回 404，
+	//      于是「创建成功却报失败」，库里留下一行没人能解释的团队。
+	// 平台管理员与超管没有 TeamScoped，正常放行。
+	if scope.TeamScoped && id == "" {
+		return contract.Team{}, contract.ErrForbidden
+	}
 
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -223,10 +236,19 @@ func (r *Repository) save(ctx context.Context, id string, in contract.TeamInput,
 			in.Name, in.Description, scope.TenantID)
 	} else {
 		// SET 占 $1..$2，filter 从 base=2 起算：$3=tenant_id、$4=id。
+		//
+		// 团队条件必须在这里，而不是依赖末尾的 FindByID 回读：
+		// 回读带团队条件只影响"返回什么"，写已经提交了——那会造成
+		// 「404 但数据已改」的静默篡改。加在 UPDATE 上，越权时命中 0 行，
+		// 事务整体回滚，返回的 404 才是真的没改。
 		filter := repository.ScopeFilter(2, "teams", scope).Add(`teams.id = ?`, id)
+		repository.ApplyTeam(filter, `teams.id = ANY(?)`, scope)
+		// 参数必须从 filter.Args() 取：团队边界会动态追加一个数组参数，
+		// 手写 "scope.TenantID, id" 会漏掉它，让 $n 指向不存在的占位符（SQL 直接报错）。
+		// SET 已占用 $1..$2，所以先把它们拼在 filter.Args() 前面。
 		row = tx.QueryRowContext(ctx,
 			`UPDATE teams SET name = $1, description = $2 WHERE `+filter.Cond()+` RETURNING `+columns,
-			in.Name, in.Description, scope.TenantID, id)
+			append([]any{in.Name, in.Description}, filter.Args()...)...)
 	}
 
 	team, err := scan(row)

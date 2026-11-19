@@ -52,9 +52,14 @@ type Service struct {
 	roles roleAssigner
 }
 
-// teamLookup 是账号创建时校验团队归属所需的最小读取面。
+// teamLookup 是账号边界校验所需的最小读取面：
+//   - AdminTeamIDs：调用者作为团队负责人管理哪些团队（scope 的来源）；
+//   - MemberTeamIDs：目标人员属于哪些团队（判断目标是否落在调用者团队内）。
+//
+// 两个方法都在 teams 仓储里，因此装配时传同一个对象，不必多依赖一个包。
 type teamLookup interface {
 	AdminTeamIDs(ctx context.Context, userID string) ([]string, error)
+	MemberTeamIDs(ctx context.Context, personID string) ([]string, error)
 }
 
 // roleAssigner 校验「调用者能否把某个角色分配给人员」。
@@ -186,6 +191,11 @@ func (s *Service) Create(ctx context.Context, caller contract.Identity, in contr
 
 	personID := strings.TrimSpace(in.PersonID)
 	roleKey := strings.TrimSpace(in.RoleKey)
+	// 先确认「能绑谁」再确认「能发什么角色」：团队负责人的两个边界缺一不可，
+	// 且归属校验失败时的提示更基础（先让他选对人员，再谈角色）。
+	if err := s.ensurePersonAssignable(ctx, caller, personID); err != nil {
+		return contract.User{}, err
+	}
 	// 角色写的是 people.role_key：先校验调用者有没有资格发这个角色，
 	// 再落库——不合格的请求不该在库里留下半截数据。
 	if err := s.ensureAssignableRole(ctx, caller, personID, roleKey); err != nil {
@@ -253,11 +263,17 @@ func (s *Service) ensureAssignableRole(ctx context.Context, caller contract.Iden
 	return s.roles.ValidateRoleAssignable(ctx, caller, current)
 }
 
-// ensureInScope 校验目标账号在当前调用者的可见范围内。
-// 超管看全部；公司账号只能碰本公司账号，跨公司按「不存在」处理，不泄漏对方是否有这个 id。
-// 超管账号（超管标记或 super-admin 角色）对非超管一律按「不存在」处理：
-// 列表里已经隐藏，单条读写也必须同一口径，否则知道 id 就能绕过列表的隐藏。
-func ensureInScope(caller contract.Identity, target userrepo.Record) error {
+// ensureInScope 校验目标账号是否落在调用者的可管理范围内。三层依次判定：
+//
+//  1. 超管：不管（但超管账号本身仍归超管管，见下）。
+//  2. 公司边界：跨公司一律按「不存在」处理，不透露对方是否有这个 id。
+//  3. 团队边界（仅团队负责人）：只能管「自己团队里的普通成员」，外加自己。
+//     平台管理员不属于 TeamScoped，直接放行——它本来就要管整家公司。
+//
+// 越界统一返回 404 而不是 403：账号是否存在本身就是信息。团队负责人通过通讯录
+// 能看到公司组织架构（人员与团队是 directory.read），因此它心里清楚那个人存在；
+// 但"能不能管"是另一回事，用 403 会把两个概念混在一起。
+func (s *Service) ensureInScope(ctx context.Context, caller contract.Identity, target userrepo.Record) error {
 	if caller.Level() == contract.AccountLevelSuperAdmin {
 		return nil
 	}
@@ -269,7 +285,97 @@ func ensureInScope(caller contract.Identity, target userrepo.Record) error {
 	if caller.TenantID == "" || target.TenantID != caller.TenantID {
 		return errAccountNotFound
 	}
+	return s.ensureTeamScope(ctx, caller, target)
+}
+
+// ensureTeamScope 落实团队负责人的横向边界。
+//
+// 谁能操作谁：
+//   - 自己：始终可以，否则连自己的账号都碰不到；
+//   - 普通成员：必须在自己管理的团队里；
+//   - 团队负责人及以上：一律不可，交给平台管理员。
+//     这一条不能省——否则两个团队负责人之间可以互相停用账号，
+//     而同为公司管理层，他们本该是平级关系。
+func (s *Service) ensureTeamScope(ctx context.Context, caller contract.Identity, target userrepo.Record) error {
+	scope := authctx.ScopeFrom(ctx)
+	if !scope.TeamScoped {
+		return nil
+	}
+	if target.User.ID == caller.UserID {
+		return nil
+	}
+	// 只按「有效层级」判：过渡期布尔与枚举可能不一致，Level() 是唯一折算入口。
+	if contract.EffectiveAccountLevel(target.User.AccountLevel, target.User.IsSuperAdmin) !=
+		contract.AccountLevelMember {
+		return errAccountNotFound
+	}
+	inTeam, err := s.personInTeams(ctx, target.User.PersonID, scope.TeamIDs)
+	if err != nil {
+		return err
+	}
+	if !inTeam {
+		return errAccountNotFound
+	}
 	return nil
+}
+
+// ensurePersonAssignable 校验「能不能把账号绑到这个人员上」，创建与换绑共用。
+//
+// 两条规则，按身份分层：
+//
+//  1. 必须绑定人员（超管除外）。账号的权限就是绑定人员的权限：
+//     没有人员的账号登录后既无角色也无团队，什么数据都看不到，只是一条"看着正常、实际废掉"的记录。
+//     超管豁免——它没有业务人员档案，也不需要。
+//     这条对平台管理员同样成立，与前端 AccountFormPage 的必填校验保持一致
+//     （两层各说一套会让人以为界面拦错了）。
+//
+//  2. 团队负责人还要求「本团队」。否则可以把别团队的人挂到自己能管的账号上，
+//     等于绕过团队边界把那个人的权限借过来。
+//     平台管理员管整家公司，不设这一层；下拉里的人员天然受 people.List 的 scope 限制。
+func (s *Service) ensurePersonAssignable(ctx context.Context, caller contract.Identity, personID string) error {
+	if caller.Level() == contract.AccountLevelSuperAdmin {
+		return nil
+	}
+	if personID == "" {
+		return &contract.ValidationError{Message: "请为该账号绑定人员：账号的权限来自绑定的人员"}
+	}
+	// 只有团队负责人需要再确认「这个人在不在我管的团队里」。
+	if caller.Level() != contract.AccountLevelTeamAdmin {
+		return nil
+	}
+	inTeam, err := s.personInTeams(ctx, personID, authctx.ScopeFrom(ctx).TeamIDs)
+	if err != nil {
+		return err
+	}
+	if !inTeam {
+		// 用 ValidationError 而不是 404：这里校验的是请求体里的字段，
+		// 前端需要一句能指导操作的话（去选本团队的人），而不是一个空白的"不存在"。
+		return &contract.ValidationError{Message: "只能为本团队的人员创建账号"}
+	}
+	return nil
+}
+
+// personInTeams 判断人员是否属于给定团队中的任意一个。
+// 空人员或空团队都按「不在」处理：无团队归属的账号对团队负责人不可见，
+// 这正是「失败关闭」——宁可少管一个，也不能因为配置缺失放大成"能管全公司"。
+func (s *Service) personInTeams(ctx context.Context, personID string, teamIDs []string) (bool, error) {
+	if personID == "" || len(teamIDs) == 0 {
+		return false, nil
+	}
+	personTeams, err := s.teams.MemberTeamIDs(ctx, personID)
+	if err != nil {
+		return false, err
+	}
+	allowed := make(map[string]struct{}, len(teamIDs))
+	for _, id := range teamIDs {
+		allowed[id] = struct{}{}
+	}
+	for _, id := range personTeams {
+		if _, ok := allowed[id]; ok {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 // Update 改绑定人员、角色与超管标记；账号名与模式不可改。
@@ -278,7 +384,7 @@ func (s *Service) Update(ctx context.Context, caller contract.Identity, id strin
 	if err != nil {
 		return contract.User{}, err
 	}
-	if err := ensureInScope(caller, current); err != nil {
+	if err := s.ensureInScope(ctx, caller, current); err != nil {
 		return contract.User{}, err
 	}
 	// 与删除同一条边界：跨模式的账号在这个视图里不存在，也就不能被编辑。
@@ -309,6 +415,12 @@ func (s *Service) Update(ctx context.Context, caller contract.Identity, id strin
 	// 判据用「角色是否变化」而不是「roleKey 是否非空」——前端会回传当前值，
 	// 没改动就不该重新过一遍权限门槛。
 	if personID != current.User.PersonID || roleKey != current.User.RoleKey {
+		// 换绑人员同样受团队边界约束：否则可以把别团队的人挂到自己能管的账号上，
+		// 等于绕过 create 那一道校验。放在同一个 if 里是为了与角色校验同进同退：
+		// 没改动就不重新过门槛，存量数据不会因为历史归属而莫名被拒。
+		if err := s.ensurePersonAssignable(ctx, caller, personID); err != nil {
+			return contract.User{}, err
+		}
 		if err := s.ensureAssignableRole(ctx, caller, personID, roleKey); err != nil {
 			return contract.User{}, err
 		}
@@ -333,7 +445,7 @@ func (s *Service) Get(ctx context.Context, caller contract.Identity, id string) 
 	if record.User.Mode != caller.Mode {
 		return contract.User{}, errAccountNotFound
 	}
-	if err := ensureInScope(caller, record); err != nil {
+	if err := s.ensureInScope(ctx, caller, record); err != nil {
 		return contract.User{}, err
 	}
 	if record.AccountLevel == contract.AccountLevelTeamAdmin {
@@ -354,7 +466,7 @@ func (s *Service) SetStatus(ctx context.Context, caller contract.Identity, id, s
 	if err != nil {
 		return contract.User{}, err
 	}
-	if err := ensureInScope(caller, current); err != nil {
+	if err := s.ensureInScope(ctx, caller, current); err != nil {
 		return contract.User{}, err
 	}
 	if status == statusDisabled {
@@ -385,7 +497,7 @@ func (s *Service) ResetPassword(ctx context.Context, caller contract.Identity, i
 	if err != nil {
 		return "", err
 	}
-	if err := ensureInScope(caller, current); err != nil {
+	if err := s.ensureInScope(ctx, caller, current); err != nil {
 		return "", err
 	}
 	password, err := generateTempPassword()
@@ -423,7 +535,7 @@ func (s *Service) Delete(ctx context.Context, caller contract.Identity, id strin
 	if current.User.Mode != caller.Mode {
 		return contract.User{}, errAccountNotFound
 	}
-	if err := ensureInScope(caller, current); err != nil {
+	if err := s.ensureInScope(ctx, caller, current); err != nil {
 		return contract.User{}, err
 	}
 	// 红线四：不能删自己——删完当场失去登录能力，且没有撤销入口。

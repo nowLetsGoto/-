@@ -199,6 +199,9 @@ func (r *Repository) CountUsage(ctx context.Context, personID string) (Usage, er
 // 那个账号会变成"没有档案的账号"，登录后看不到自己的团队与角色，等于半个僵尸。
 func (r *Repository) Delete(ctx context.Context, personID string, scope contract.Scope) error {
 	filter := repository.ScopeFilter(0, "people", scope).Add(`people.id = ?`, personID)
+	// 与 save 同一条团队边界：删除比修改更需要仓储兜底，它不可撤销。
+	repository.ApplyTeam(filter,
+		`people.id IN (SELECT tm.person_id FROM team_members tm WHERE tm.team_id = ANY(?))`, scope)
 	result, err := r.db.ExecContext(ctx, `DELETE FROM people`+filter.Where(), filter.Args()...)
 	if err != nil {
 		return fmt.Errorf("删除人员失败: %w", err)
@@ -270,15 +273,24 @@ func (r *Repository) save(ctx context.Context, id string, in contract.PersonInpu
 			 RETURNING id::text`,
 			in.Name, in.Username, in.Email, in.Phone, in.Title, in.RoleKey, scope.TenantID)
 	} else {
-		// UPDATE 同样带 tenant_id 条件：只能改本公司的人。
+		// UPDATE 同时带 tenant 与团队条件：只能改本公司、且在自己团队内的人。
 		// SET 占 $1..$6，filter 从 base=6 起算：$7=tenant_id、$8=id，与参数顺序一一对应。
+		//
+		// 团队条件不能省：handler 目前靠"先 Get 一次"挡住越权，但那只是调用方的纪律。
+		// 没有这一条，任何人把 handler 那行删掉就会立刻漏——而且 UPDATE ... RETURNING
+		// 命中 0 行时会走 404 分支，事务回滚，不会留下"写成功却报错"的中间态。
 		filter := repository.ScopeFilter(6, "people", scope).Add(`people.id = ?`, id)
+		repository.ApplyTeam(filter,
+			`people.id IN (SELECT tm.person_id FROM team_members tm WHERE tm.team_id = ANY(?))`, scope)
+		// 参数同样必须由 filter.Args() 提供后半段：团队边界会动态追加数组参数，
+		// 手写 "scope.TenantID, id" 会漏掉它，导致占位符缺参数（SQL 报错）。
 		row = tx.QueryRowContext(ctx,
 			`UPDATE people
 			 SET name = $1, username = NULLIF($2, ''), email = $3, phone = $4, title = $5,
 			     role_id = `+fmt.Sprintf(roleIDSubquery, 6, 7)+`
 			 WHERE `+filter.Cond()+` RETURNING id::text`,
-			in.Name, in.Username, in.Email, in.Phone, in.Title, in.RoleKey, scope.TenantID, id)
+			append([]any{in.Name, in.Username, in.Email, in.Phone, in.Title, in.RoleKey},
+				filter.Args()...)...)
 	}
 
 	var personID string

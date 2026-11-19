@@ -65,12 +65,49 @@ func (r *Repository) FindByID(ctx context.Context, id string) (Record, error) {
 	return scanRecord(row)
 }
 
+// applyTeamBoundary 给团队负责人的账号查询追加横向边界（仓储级兜底）。
+//
+// 账号的团队归属不在 users 表上：账号只是「以哪个人的身份登录」，
+// 成员关系在 team_members，而团队负责人的管理关系在 team_admins。
+// 所以条件要跨一层子查询：
+//
+//	自己  OR  (普通成员 AND 该账号绑定的人员挂在我管理的团队里)
+//
+// 三个设计点，每一个都有具体原因：
+//   - 自己必须显式放行：团队负责人的团队关联在 team_admins，
+//     按 team_members 过滤会把自己也滤掉，账号管理页里就看不到自己了；
+//   - 只放行 member：团队负责人及以上属于管理层，账号归平台管理员管；
+//     不限制的话两个团队负责人之间可以互相停用账号，而他们本该平级；
+//   - 没有团队时 TeamIDs 是空数组，ANY(空数组) 恒假 → 只剩自己。
+//     这正是失败关闭：没配团队就看不到任何下属，绝不退化成看全公司。
+//
+// ::uuid[] 不能省：pgx 需要显式类型才能把 []string 编码成 uuid 数组参数。
+func applyTeamBoundary(filter *repository.Filter, scope contract.Scope) {
+	if scope.All || !scope.TeamScoped {
+		return
+	}
+	const teamMembership = `u.person_id IN (
+		SELECT tm.person_id FROM team_members tm WHERE tm.team_id = ANY(?::uuid[])
+	)`
+	if scope.SelfUserID != "" {
+		filter.AddMulti(`(u.id = ? OR (u.account_level = ? AND `+teamMembership+`))`,
+			scope.SelfUserID, contract.AccountLevelMember, scope.TeamIDs)
+		return
+	}
+	// 没有 self（理论上不该发生）：退化为只按团队收窄，不做自我放行。
+	filter.AddMulti(`(u.account_level = ? AND `+teamMembership+`)`,
+		contract.AccountLevelMember, scope.TeamIDs)
+}
+
 // List 返回指定模式的账号页与总数；keyword 同时匹配登录名与绑定人员姓名。
 // mode 是硬筛选：账号管理的视图跟着登录模式走，单人模式看不到团队账号，反之亦然。
 // scope 叠加租户边界：公司账号只看本公司的账号，超管（All）看全部。
 func (r *Repository) List(ctx context.Context, page contract.PageQuery, mode contract.SessionMode, keyword string, scope contract.Scope) ([]contract.User, int, error) {
 	filter := accountFilter(mode, keyword)
 	repository.ApplyTenant(filter, "u", scope)
+	// 团队边界：平台管理员（TeamScoped=false）不受影响，看全公司；
+	// 团队负责人只看自己团队的普通成员与自己。
+	applyTeamBoundary(filter, scope)
 	if !scope.All {
 		// 非超管看不到超管账号：在列表里露出来等于把「平台最高权限账号」指给公司管理员看。
 		// 只按 is_super_admin 判——超管是账号身份，与角色无关（角色体系里没有超管这个概念）。
