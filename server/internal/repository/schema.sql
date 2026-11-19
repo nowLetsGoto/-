@@ -300,6 +300,14 @@ CREATE TABLE IF NOT EXISTS role_permissions (
   PRIMARY KEY (role_id, permission)
 );
 
+-- 一次性迁移的完成标记：仅记录"这次数据搬迁做过了"，不参与业务。
+-- 为什么需要表而不是常量：迁移结果必须持久化到数据库，
+-- 否则每次启动都会重跑，把管理员后来手工改的菜单授权冲掉。
+CREATE TABLE IF NOT EXISTS schema_migrations (
+  name       TEXT PRIMARY KEY,
+  applied_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
 -- role_menus：角色可见的菜单。与 role_permissions 完全对称——
 -- 前者决定"能看哪些页面"，后者决定"能做哪些操作"。
 --

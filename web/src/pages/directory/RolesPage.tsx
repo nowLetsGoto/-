@@ -68,7 +68,7 @@ export function RolesPage(): JSX.Element {
         <Button
           className="project-link"
           type="button"
-          onClick={() => navigate(`/directory/roles/${role.key}/edit`)}
+          onClick={() => navigate(`/directory/roles/${role.id}/edit`)}
         >
           {role.name}
         </Button>
@@ -124,7 +124,7 @@ export function RolesPage(): JSX.Element {
           <Button
             className="button button-ghost button-small"
             type="button"
-            onClick={() => navigate(`/directory/roles/${role.key}/edit`)}
+            onClick={() => navigate(`/directory/roles/${role.id}/edit`)}
           >
             编辑
           </Button>
@@ -136,7 +136,7 @@ export function RolesPage(): JSX.Element {
             <Button
               className="button button-ghost button-small button-danger"
               type="button"
-              onClick={() => removal.request({ id: role.key, label: role.name })}
+              onClick={() => removal.request({ id: role.id, label: role.name })}
             >
               删除
             </Button>

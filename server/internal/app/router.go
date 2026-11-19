@@ -260,13 +260,13 @@ func NewRouter(d Deps) http.Handler {
 			roles.With(authzmw.RequirePermission(d.Authz, contract.PermissionRoleRead)).
 				Get("/roles", middleware.Wrap(d.Roles.List))
 			roles.With(authzmw.RequirePermission(d.Authz, contract.PermissionRoleRead)).
-				Get("/roles/{key}", middleware.Wrap(d.Roles.Get))
+				Get("/roles/{id}", middleware.Wrap(d.Roles.Get))
 			roles.With(authzmw.RequirePermission(d.Authz, contract.PermissionRoleWrite)).
 				Post("/roles", middleware.Wrap(d.Roles.Create))
 			roles.With(authzmw.RequirePermission(d.Authz, contract.PermissionRoleWrite)).
-				Put("/roles/{key}", middleware.Wrap(d.Roles.Update))
+				Put("/roles/{id}", middleware.Wrap(d.Roles.Update))
 			roles.With(authzmw.RequirePermission(d.Authz, contract.PermissionRoleDelete)).
-				Delete("/roles/{key}", middleware.Wrap(d.Roles.Delete))
+				Delete("/roles/{id}", middleware.Wrap(d.Roles.Delete))
 		})
 	})
 	r.Get(contract.RouteHealth, middleware.Wrap(d.Health.Health))

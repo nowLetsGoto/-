@@ -36,22 +36,26 @@ export function listRoles(): Promise<{ items: Role[] }> {
   return get<{ items: Role[] }>(ROLES_PATH);
 }
 
-export function getRole(key: string): Promise<Role> {
-  return get<Role>(`${ROLES_PATH}/${key}`);
+/**
+ * 按 id 取角色详情。
+ * 用 id 而不是 key：key 只保证公司内唯一，超管跨公司视角下会歧义。
+ */
+export function getRole(id: string): Promise<Role> {
+  return get<Role>(`${ROLES_PATH}/${id}`);
 }
 
 export function createRole(input: RoleInput): Promise<Role> {
   return postJSON<Role>(ROLES_PATH, input);
 }
 
-export function updateRole(key: string, input: RoleInput): Promise<Role> {
-  return putJSON<Role>(`${ROLES_PATH}/${key}`, input);
+export function updateRole(id: string, input: RoleInput): Promise<Role> {
+  return putJSON<Role>(`${ROLES_PATH}/${id}`, input);
 }
 
 /**
  * 删除本公司自定义角色。平台内置角色、超管角色、以及已被人员/项目使用的角色
  * 都会被服务端拒绝（400 并说明原因），前端只需展示那条 message。
  */
-export function deleteRole(key: string): Promise<void> {
-  return del<void>(`${ROLES_PATH}/${key}`);
+export function deleteRole(id: string): Promise<void> {
+  return del<void>(`${ROLES_PATH}/${id}`);
 }

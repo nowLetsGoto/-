@@ -371,16 +371,16 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/roles/{key}": {
+    "/roles/{id}": {
         parameters: {
             query?: never;
             header?: never;
             path?: never;
             cookie?: never;
         };
-        /** 角色详情（仅超级管理员） */
+        /** 角色详情 */
         get: operations["getRole"];
-        /** 编辑角色名称 / 描述 / 权限（仅超级管理员；超管角色权限不可改） */
+        /** 编辑角色名称 / 描述 / 权限与菜单授权 */
         put: operations["updateRole"];
         post?: never;
         /**
@@ -2253,7 +2253,8 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
-                key: string;
+                /** @description 角色 id（全局唯一；key 只保证公司内唯一，超管视角下会歧义） */
+                id: string;
             };
             cookie?: never;
         };
@@ -2269,7 +2270,7 @@ export interface operations {
                 };
             };
             401: components["responses"]["Unauthorized"];
-            /** @description 非超级管理员 */
+            /** @description 缺少 role.read / role.write 权限 */
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -2284,7 +2285,8 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
-                key: string;
+                /** @description 角色 id（全局唯一；key 只保证公司内唯一，超管视角下会歧义） */
+                id: string;
             };
             cookie?: never;
         };
@@ -2305,7 +2307,7 @@ export interface operations {
             };
             400: components["responses"]["BadRequest"];
             401: components["responses"]["Unauthorized"];
-            /** @description 非超级管理员 */
+            /** @description 缺少 role.read / role.write 权限 */
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -2319,8 +2321,8 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
-                /** @description 角色 key */
-                key: string;
+                /** @description 角色 id */
+                id: string;
             };
             cookie?: never;
         };

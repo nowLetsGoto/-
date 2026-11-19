@@ -111,6 +111,29 @@ func (r *Repository) FindByKey(ctx context.Context, key string, scope contract.S
 	return item, nil
 }
 
+// FindByID 按 id 查角色，scope 限定可见范围。
+//
+// 为什么按 id 而不是 key：key 是「公司内唯一」，三家公司可以各有一个 project-owner。
+// 超管的 scope 是 All，按 key 查会随机命中一家——他在界面上改"项目负责人"时
+// 可能改到别家公司那一份（真实踩到过）。id 是主键，全局唯一，不存在这个歧义。
+//
+// 跨公司的 id 与"不存在"同口径，避免用 id 探测别家公司的角色。
+func (r *Repository) FindByID(ctx context.Context, id string, scope contract.Scope) (contract.Role, error) {
+	filter := visibleFilter(0, scope).Add(`r.id = ?`, id)
+	row := r.db.QueryRowContext(ctx, `SELECT `+columns+fromClause+filter.Where(), filter.Args()...)
+	item, err := scan(row)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) || errors.Is(err, pgx.ErrNoRows) {
+			return contract.Role{}, contract.NotFound(contract.ResourceRole)
+		}
+		return contract.Role{}, err
+	}
+	if err := r.fillOne(ctx, &item); err != nil {
+		return contract.Role{}, err
+	}
+	return item, nil
+}
+
 // FindByKeyAny 按 key 查角色，允许平台内置（tenant_id 为空）与指定公司的自定义角色。
 //
 // 参数 tenantID 为空表示「平台视角」（超管），此时只匹配内置角色——
@@ -153,19 +176,14 @@ func (r *Repository) Create(ctx context.Context, in contract.RoleInput, scope co
 	return r.save(ctx, "", in, false, scope.TenantID)
 }
 
-// Update 覆盖名称 / 描述 / 权限；key 创建后不可改。
+// Update 覆盖名称 / 描述 / 权限与菜单；key 创建后不可改。
 //
-// scope 限定只能改本公司的角色——**包括本公司的内置角色**。
-// 内置角色每家公司各持一份独立副本，所以"公司管理员改自己公司的 developer"
-// 是完全正当的操作，不会影响其他公司。这也是把内置角色做成独立副本的意义所在。
-func (r *Repository) Update(ctx context.Context, key string, in contract.RoleInput, scope contract.Scope) (contract.Role, error) {
-	filter := visibleFilter(0, scope).Add(`r.key = ?`, key)
-	row := r.db.QueryRowContext(ctx, `SELECT `+columns+fromClause+filter.Where(), filter.Args()...)
-	existing, err := scan(row)
+// 定位用 id 而不是 key：见 FindByID 的说明——超管跨公司视角下 key 会歧义。
+// scope 限定只能改本公司的角色（包括本公司的内置角色）；
+// 内置角色每家公司各持一份独立副本，改它只影响本公司。
+func (r *Repository) Update(ctx context.Context, id string, in contract.RoleInput, scope contract.Scope) (contract.Role, error) {
+	existing, err := r.FindByID(ctx, id, scope)
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) || errors.Is(err, pgx.ErrNoRows) {
-			return contract.Role{}, contract.NotFound(contract.ResourceRole)
-		}
 		return contract.Role{}, err
 	}
 	return r.save(ctx, existing.ID, in, existing.IsBuiltin, existing.TenantID)
@@ -241,8 +259,8 @@ func (r *Repository) CountUsage(ctx context.Context, roleID string) (Usage, erro
 // people.role_id / projects.role_id 是 SET NULL，但调用方**必须先用 CountUsage 拦掉**
 // 有引用的角色：SET NULL 会把那些人/项目静默降权（权限从有变无），
 // 这种"删角色顺便改变他人权限"的副作用不能在界面上不可见地发生。
-func (r *Repository) Delete(ctx context.Context, key string, scope contract.Scope) error {
-	filter := visibleFilter(0, scope).Add(`r.key = ?`, key)
+func (r *Repository) Delete(ctx context.Context, id string, scope contract.Scope) error {
+	filter := visibleFilter(0, scope).Add(`r.id = ?`, id)
 	// 双保险：内置角色永远不可删（即使超管 scope.All 让 visibleFilter 放行）。
 	filter.AddRaw(`r.is_builtin = false`)
 
@@ -335,6 +353,45 @@ func (r *Repository) CreateBuiltinIfMissing(ctx context.Context, tenantID string
 		return false, fmt.Errorf("提交内置角色失败: %w", err)
 	}
 	return true, nil
+}
+
+// MigrationApplied 判断某次一次性数据迁移是否已完成。
+func (r *Repository) MigrationApplied(ctx context.Context, name string) (bool, error) {
+	var exists bool
+	err := r.db.QueryRowContext(ctx,
+		`SELECT EXISTS(SELECT 1 FROM schema_migrations WHERE name = $1)`, name).Scan(&exists)
+	return exists, err
+}
+
+// MarkMigrationApplied 标记一次性迁移完成。
+func (r *Repository) MarkMigrationApplied(ctx context.Context, name string) error {
+	_, err := r.db.ExecContext(ctx,
+		`INSERT INTO schema_migrations (name) VALUES ($1) ON CONFLICT DO NOTHING`, name)
+	return err
+}
+
+// ReplaceAuthorization 全量替换一个角色的权限点与菜单授权（迁移用）。
+//
+// 与 save 的区别：save 还会改角色名称/描述且带 scope 校验；
+// 这里只动两张授权表，用于启动时的存量对齐，不需要业务校验。
+// 两张表放在同一事务里，避免"权限改了菜单没改"的中间态。
+func (r *Repository) ReplaceAuthorization(ctx context.Context, roleID string, permissions, menuKeys []string) error {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("开启对齐事务失败: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	if err := r.replaceValues(ctx, tx, roleID, "role_permissions", "permission", permissions); err != nil {
+		return err
+	}
+	if err := r.replaceValues(ctx, tx, roleID, "role_menus", "menu_key", menuKeys); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("提交角色对齐失败: %w", err)
+	}
+	return nil
 }
 
 // ReconcilePermissions 清掉不在当前目录里的权限点。

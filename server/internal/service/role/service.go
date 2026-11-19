@@ -106,7 +106,12 @@ func (s *Service) EnsureBuiltin(ctx context.Context) error {
 	if err := s.repo.ReconcilePermissions(ctx); err != nil {
 		return err
 	}
-	return s.repo.ReconcileBuiltinMenus(ctx)
+	if err := s.repo.ReconcileBuiltinMenus(ctx); err != nil {
+		return err
+	}
+	// 存量角色对齐到新规则（按权限点重算菜单 + 按菜单补查看权限）。
+	// 放在最后：此时权限点目录与内置角色都已就位，推导结果才准确。
+	return s.Reconcile(ctx)
 }
 
 // SeedForTenant 给指定公司补齐内置角色；建公司后立即调用，也可重复调用（幂等）。
@@ -134,9 +139,14 @@ func (s *Service) List(ctx context.Context, scope contract.Scope) (contract.Role
 	return contract.RoleList{Items: items}, nil
 }
 
-// Get 按 key 取单个角色，受 scope 限定（看不到别家公司的角色）。
-func (s *Service) Get(ctx context.Context, key string, scope contract.Scope) (contract.Role, error) {
-	return s.repo.FindByKey(ctx, key, scope)
+// Get 按 id 取单个角色，受 scope 限定（看不到别家公司的角色）。
+//
+// 用 id 而不是 key：key 只保证「公司内唯一」，超管视角下按 key 取会歧义。
+func (s *Service) Get(ctx context.Context, id string, scope contract.Scope) (contract.Role, error) {
+	if !contract.IsValidUUID(id) {
+		return contract.Role{}, contract.NotFound(contract.ResourceRole)
+	}
+	return s.repo.FindByID(ctx, id, scope)
 }
 
 // Create 新建自定义角色；归属公司从 scope 取。
@@ -179,12 +189,17 @@ func (s *Service) Create(ctx context.Context, in contract.RoleInput, scope contr
 //
 // scope 限定只能改本公司的角色：内置角色也是本公司那一份，改它不影响其他公司。
 // 这正是"每公司独立副本"的价值——公司管理员维护自己的角色定义，无需超管介入。
-func (s *Service) Update(ctx context.Context, key string, in contract.RoleInput, scope contract.Scope) (contract.Role, error) {
+func (s *Service) Update(ctx context.Context, id string, in contract.RoleInput, scope contract.Scope) (contract.Role, error) {
+	// id 非 UUID 时按 404 处理：否则会被绑定到 uuid 列报 SQL 错误而变成 500
+	// （用旧路径 /roles/project-owner 访问就会踩到）。与 people / teams 同一口径。
+	if !contract.IsValidUUID(id) {
+		return contract.Role{}, contract.NotFound(contract.ResourceRole)
+	}
 	normalized, err := normalize(in, false, "")
 	if err != nil {
 		return contract.Role{}, err
 	}
-	return s.repo.Update(ctx, key, normalized, scope)
+	return s.repo.Update(ctx, id, normalized, scope)
 }
 
 // Delete 删除本公司自定义角色。
@@ -198,10 +213,13 @@ func (s *Service) Update(ctx context.Context, key string, in contract.RoleInput,
 //
 // 前两条用 ValidationError（业务上不允许），第三条也用它——调用者有删除权限，
 // 只是当前状态不允许，前端据此提示"先解除引用"而不是"权限不足"。
-func (s *Service) Delete(ctx context.Context, key string, scope contract.Scope) error {
-	// 用 FindByKey（带 scope）而不是 FindByKeyAny：越权（删别家公司的角色）应得 404，
-	// 与"这个 key 不存在"同一个答案，不透露别家公司有没有这个角色。
-	role, err := s.repo.FindByKey(ctx, key, scope)
+func (s *Service) Delete(ctx context.Context, id string, scope contract.Scope) error {
+	if !contract.IsValidUUID(id) {
+		return contract.NotFound(contract.ResourceRole)
+	}
+	// 用 FindByID（带 scope）而不是无 scope 的查询：越权（删别家公司的角色）应得 404，
+	// 与"这个 id 不存在"同一个答案，不透露别家公司有没有这个角色。
+	role, err := s.repo.FindByID(ctx, id, scope)
 	if err != nil {
 		return err
 	}
@@ -216,7 +234,7 @@ func (s *Service) Delete(ctx context.Context, key string, scope contract.Scope) 
 	if !usage.Empty() {
 		return &contract.ValidationError{Message: describeRoleUsage(usage)}
 	}
-	return s.repo.Delete(ctx, key, scope)
+	return s.repo.Delete(ctx, id, scope)
 }
 
 // describeRoleUsage 把引用统计翻成一句能指导操作的话。
@@ -317,6 +335,66 @@ func derivePermissions(menuKeys, requested []string) []string {
 	}
 	sort.Strings(result) // 稳定输出，便于断言与 diff
 	return result
+}
+
+// menusForPermissions 按权限点反推应该拥有哪些菜单（迁移用）。
+//
+// 规则很直接：角色已经有的每个权限点，都对应到"它能打开哪张菜单"。
+// 一个权限点可能被多张菜单共享（build.read 对应概览/应用包/应用），
+// 全部给出——因为它们是同一类业务能力的不同入口。
+//
+// 用途：历史角色的 menuKeys 是"全量勾满"的（§28 图省事的默认），
+// 与它实际的权限点严重不符（例如 guest 也被勾了角色管理菜单）。
+// 迁移时按权限点重算菜单，让"能看到的菜单"与"实际有的权限"重新对齐。
+func menusForPermissions(permissions []string) []string {
+	owned := make(map[string]struct{}, len(permissions))
+	for _, permission := range permissions {
+		owned[permission] = struct{}{}
+	}
+	menus := make([]string, 0)
+	for _, menu := range contract.Menus {
+		if _, ok := owned[menu.ViewPermission]; ok {
+			menus = append(menus, menu.Key)
+		}
+	}
+	return menus
+}
+
+// Reconcile 把存量角色对齐到新规则：按权限点重算菜单，再按菜单推导回权限。
+//
+// **只执行一次**：由 schema_migrations 记录完成状态。
+// 若每次启动都跑，管理员后来在界面上手工调整的菜单授权会被反复冲掉——
+// 迁移是"一次性搬家"，不是"持续同步"。
+//
+// 两个方向都走一遍的原因：
+//   - 旧菜单是"全量勾满"的，与角色定位不符 → 先按权限点重算，收窄到合理范围；
+//   - 旧权限里缺查看类权限（role.read 等） → 再按菜单推导，自动补齐。
+//
+// 幂等：连续跑多次结果不变（menusForPermissions 与 derivePermissions 都满足幂等）。
+func (s *Service) Reconcile(ctx context.Context) error {
+	const migrationName = "role-authz-derived-from-menus"
+	applied, err := s.repo.MigrationApplied(ctx, migrationName)
+	if err != nil {
+		return fmt.Errorf("检查迁移状态失败: %w", err)
+	}
+	if applied {
+		return nil
+	}
+	all, err := s.repo.List(ctx, contract.Scope{All: true})
+	if err != nil {
+		return fmt.Errorf("读取全部角色做对齐失败: %w", err)
+	}
+	for _, role := range all {
+		menus := menusForPermissions(role.Permissions)
+		permissions := derivePermissions(menus, role.Permissions)
+		if err := s.repo.ReplaceAuthorization(ctx, role.ID, permissions, menus); err != nil {
+			return fmt.Errorf("对齐角色 %s 失败: %w", role.Key, err)
+		}
+	}
+	if err := s.repo.MarkMigrationApplied(ctx, migrationName); err != nil {
+		return fmt.Errorf("记录迁移完成状态失败: %w", err)
+	}
+	return nil
 }
 
 // menuByKey 按路径查菜单定义。目录很小，线性查找足够，

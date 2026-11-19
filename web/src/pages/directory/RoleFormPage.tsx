@@ -1,7 +1,7 @@
 /**
- * 角色新增 / 编辑页（/directory/roles/new 与 /directory/roles/:key/edit）。
+ * 角色新增 / 编辑页（/directory/roles/new 与 /directory/roles/:id/edit）。
  * 职责：维护角色名称、标识、描述与「菜单 + 操作权限」授权树；提交后回列表。
- * 输入：URL 参数 key（无则新增）、菜单目录（自带查看/操作权限）、角色本身。
+ * 输入：URL 参数 id（无则新增）、菜单目录（自带查看/操作权限）、角色本身。
  * 输出：createRole / updateRole 请求。
  * 边界：目录来自服务端，前端不硬编码任何 key；查看权限由勾选菜单自动获得、
  *       不单独配置（后端也会推导一次）；非编辑者只读。
@@ -25,8 +25,9 @@ const EMPTY: RoleInput = { key: '', name: '', description: '', permissions: [], 
 const LIST_PATH = '/directory/roles';
 
 export function RoleFormPage(): JSX.Element {
-  const { key } = useParams<{ key: string }>();
-  const editing = Boolean(key);
+  // 用 id 而非 key 定位：key 只保证公司内唯一，超管视角下会改错公司的同名角色。
+  const { id } = useParams<{ id: string }>();
+  const editing = Boolean(id);
   const navigate = useNavigate();
   const { me } = useMe();
 
@@ -49,7 +50,7 @@ export function RoleFormPage(): JSX.Element {
     let cancelled = false;
     setLoading(true);
     // 菜单目录决定授权树长什么样（它自带查看/操作权限），角色决定勾了哪些。
-    Promise.all([listMenus(), key ? getRole(key) : Promise.resolve(null)])
+    Promise.all([listMenus(), id ? getRole(id) : Promise.resolve(null)])
       .then(([menuCatalog, role]) => {
         if (cancelled) {
           return;
@@ -78,14 +79,14 @@ export function RoleFormPage(): JSX.Element {
     return () => {
       cancelled = true;
     };
-  }, [key]);
+  }, [id]);
 
   const submit = async (): Promise<void> => {
     setSaving(true);
     setNotice('');
     try {
-      if (key) {
-        await updateRole(key, form);
+      if (id) {
+        await updateRole(id, form);
       } else {
         await createRole(form);
       }

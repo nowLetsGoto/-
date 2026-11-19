@@ -52,7 +52,7 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) error {
 
 // Get 返回单个角色，供编辑页回填。
 func (h *Handler) Get(w http.ResponseWriter, r *http.Request) error {
-	data, err := h.svc.Get(r.Context(), chi.URLParam(r, "key"), authctx.ScopeFrom(r.Context()))
+	data, err := h.svc.Get(r.Context(), chi.URLParam(r, "id"), authctx.ScopeFrom(r.Context()))
 	if err != nil {
 		return err
 	}
@@ -80,8 +80,8 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) error {
 	if err := handler.DecodeJSON(w, r, &in, "key/name/description/permissions"); err != nil {
 		return err
 	}
-	key := chi.URLParam(r, "key")
-	item, err := h.svc.Update(r.Context(), key, in, authctx.ScopeFrom(r.Context()))
+	id := chi.URLParam(r, "id")
+	item, err := h.svc.Update(r.Context(), id, in, authctx.ScopeFrom(r.Context()))
 	if err != nil {
 		return err
 	}
@@ -92,11 +92,16 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) error {
 
 // Delete 删除本公司自定义角色；内置角色、超管角色、有引用的角色都会被 service 拒绝。
 func (h *Handler) Delete(w http.ResponseWriter, r *http.Request) error {
-	key := chi.URLParam(r, "key")
-	if err := h.svc.Delete(r.Context(), key, authctx.ScopeFrom(r.Context())); err != nil {
+	id := chi.URLParam(r, "id")
+	// 先取角色再删：审计要记 key（人可读），而请求只带 id。
+	role, err := h.svc.Get(r.Context(), id, authctx.ScopeFrom(r.Context()))
+	if err != nil {
 		return err
 	}
-	h.audit.Record(r.Context(), authctx.From(r.Context()), "role.deleted", "role", key,
+	if err := h.svc.Delete(r.Context(), id, authctx.ScopeFrom(r.Context())); err != nil {
+		return err
+	}
+	h.audit.Record(r.Context(), authctx.From(r.Context()), "role.deleted", "role", role.Key,
 		nil, handler.ClientIP(r))
 	return handler.OK(w, nil)
 }

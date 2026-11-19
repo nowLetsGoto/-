@@ -200,7 +200,9 @@ const (
 	// 只读：菜单结构由代码定义，任何公司都不能增删改（见 Menus 的说明）。
 	RouteMenus = APIPrefix + "/menus"
 	RouteRoles             = APIPrefix + "/roles"
-	RouteRoleByKey         = APIPrefix + "/roles/{key}"
+	// RouteRoleByID 是单个角色的读写入口。
+	// 用 id 而不是 key：key 只保证公司内唯一，超管视角下会歧义（见 service/role.Get）。
+	RouteRoleByID = APIPrefix + "/roles/{id}"
 	RouteAdminUsers        = APIPrefix + "/admin/users"
 	RouteAdminUserByID     = APIPrefix + "/admin/users/{id}"
 	RouteAdminUserPassword = APIPrefix + "/admin/users/{id}/reset-password"
@@ -265,7 +267,7 @@ var APIRoutes = []string{
 	RoutePlatformTenants, RoutePlatformTenantByID, RoutePlatformTenantStatus,
 	RouteProjects, RouteProjectByKey,
 	RoutePeople, RoutePersonByID, RouteTeams, RouteTeamByID,
-	RoutePermissions, RouteMenus, RouteRoles, RouteRoleByKey,
+	RoutePermissions, RouteMenus, RouteRoles, RouteRoleByID,
 	RouteSettings, RouteWebhookTest, RouteAPIKeyRotate, RouteOpenBuilds,
 	RouteStage, RouteBuilds, RouteBuildByID, RouteBuildFile, RouteHealth,
 }

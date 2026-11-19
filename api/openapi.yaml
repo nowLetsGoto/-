@@ -911,18 +911,20 @@ paths:
         '403':
           description: 非超级管理员
 
-  /roles/{key}:
+  /roles/{id}:
     get:
       operationId: getRole
-      summary: 角色详情（仅超级管理员）
+      summary: 角色详情
       security:
         - bearerAuth: []
       parameters:
-        - name: key
+        - name: id
           in: path
           required: true
+          description: 角色 id（全局唯一；key 只保证公司内唯一，超管视角下会歧义）
           schema:
             type: string
+            format: uuid
       responses:
         '200':
           description: 角色详情
@@ -933,20 +935,22 @@ paths:
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
-          description: 非超级管理员
+          description: 缺少 role.read / role.write 权限
         '404':
           $ref: '#/components/responses/NotFound'
     put:
       operationId: updateRole
-      summary: 编辑角色名称 / 描述 / 权限（仅超级管理员；超管角色权限不可改）
+      summary: 编辑角色名称 / 描述 / 权限与菜单授权
       security:
         - bearerAuth: []
       parameters:
-        - name: key
+        - name: id
           in: path
           required: true
+          description: 角色 id（全局唯一；key 只保证公司内唯一，超管视角下会歧义）
           schema:
             type: string
+            format: uuid
       requestBody:
         required: true
         content:
@@ -965,7 +969,7 @@ paths:
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
-          description: 非超级管理员
+          description: 缺少 role.read / role.write 权限
     delete:
       operationId: deleteRole
       summary: 删除角色
@@ -974,12 +978,13 @@ paths:
       security:
         - bearerAuth: []
       parameters:
-        - name: key
+        - name: id
           in: path
           required: true
-          description: 角色 key
+          description: 角色 id
           schema:
             type: string
+            format: uuid
       responses:
         '200':
           description: 删除成功

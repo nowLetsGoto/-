@@ -267,7 +267,7 @@ export function App(): JSX.Element {
             }
           />
           <Route
-            path="/directory/roles/:key/edit"
+            path="/directory/roles/:id/edit"
             element={
               <PermissionGate permission="role.write">
                 <RoleFormPage />

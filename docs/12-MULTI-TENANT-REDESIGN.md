@@ -1643,3 +1643,94 @@ fillOne(ctx, *Role)                 三处详情回读共用的装配
 
 ### 状态
 未 git commit。
+
+---
+
+## §31 查看权限随菜单自动授予 + 授权树合并（2026-11-19）
+
+### 问题
+用户在角色表单里勾了「角色管理」「审计日志」等菜单，但菜单死活不显示。
+根因：表单分成两块——上半是权限点矩阵，下半是菜单树。菜单显示要**同时**满足
+「权限点 role.read」与「菜单授权 /directory/roles」，而勾菜单不会自动带出查看权限。
+勾了下半忘了上半，是必然踩的坑。
+
+### 两条新规则
+1. **查看权限不单独配置**：勾选菜单即自动获得该菜单的 `viewPermission`。
+2. **操作权限内嵌在菜单里**：每个菜单节点下挂它的写/删权限，
+   配菜单时顺手配操作，不再分两大块区域。
+
+### 实现
+**契约**
+- `Menu` 新增 `viewPermission` 与 `actions[]`，成为完整的授权树节点定义。
+  这份映射是**唯一来源**：保存时由它推导权限，前端也只渲染这棵树。
+- `AllMenus()` 保证 `actions` 是非 nil 数组（否则 JSON 出 null，前端 `.length` 崩）。
+- `ViewPermissions()` 返回全部查看权限集合，供推导时识别并清掉。
+
+**后端推导** `service/role.derivePermissions`
+- 勾选菜单 → 授予 `viewPermission`；
+- 请求里的查看权限**一律丢弃**，即使塞 `role.read` 也不生效（没勾菜单就没查看权）；
+- 操作权限只保留「对应菜单已勾选」的（看不到应用包却要写应用包，无意义）。
+
+**前端**
+- 新增 `RolePermissionTree`：分组 → 菜单 → 操作权限三级结构。
+  取消菜单时连带清掉它名下的操作权限，不留"看不到却有权"的孤儿。
+- 删除原 `MenuPermissionTree` 与权限点矩阵区域，表单只剩一个「授权范围」。
+
+### 存量迁移（一次性）
+旧数据里角色菜单是"全量勾满"（§28 的图省事默认），与实际权限严重不符。
+`service/role.Reconcile` 做双向对齐：按权限点重算菜单 → 再按菜单推导权限。
+用 `schema_migrations` 表记录完成状态，**只跑一次**——否则每次启动会冲掉管理员手工调整。
+
+### 顺带修的 bug
+`AllMenus()` 之前直接返回 `contract.Menus`，无操作权限的菜单 `actions` 是 nil →
+JSON 输出 `null` → 前端 `menu.actions.length` 抛错。已由 `AllMenus()` 统一补 `[]`。
+
+### ⚠️ 发现的遗留问题（未修，需确认）
+**超管按 key 更新角色会改错公司**：三家公司都有 `project-owner`，
+`GET/PUT /roles/{key}` 在 `scope.All` 下由 `FindByKey` 取第一条，
+超管无法指定"改哪家公司的那一个"。
+本次验证时实际踩到（脚本按 tenantName 匹配也会误判，最终用精确 tenantId + SQL 修正）。
+修法需把角色接口从 key 改为 id，影响前端路由与 API 契约，**需单独确认后再动**。
+
+### 验证
+- 只传 menuKeys + 操作权限、不传任何 read → 保存后自动获得 role.read/audit.read/settings.read（201）
+- zouliang（项目负责人）补上三个管理菜单后：`/roles`、`/settings`、`/admin/audit-logs` 全部 200
+- 五道门禁全绿（12 包）；误改的 wordone / default 公司角色已还原
+
+### 状态
+未 git commit。
+
+---
+
+## §32 角色接口 key → id：消除跨公司歧义（2026-11-19）
+
+### 问题
+`GET/PUT/DELETE /roles/{key}` 在超管视角（`scope.All`）下由 `FindByKey` 取**第一条**，
+而 key 只保证「公司内唯一」——三家公司都有 `project-owner`，超管无法指定改哪一家。
+§31 验证时实际踩到：本想改 A 公司的角色，结果改到了 B 公司。
+
+### 改动
+**后端**
+- 新增 `Repository.FindByID(ctx, id, scope)`：按主键定位，全局唯一，无歧义。
+- `Update` / `Delete` / `Get` 全部改按 id；`Update` 内部复用 `FindByID`，不再自己写一遍查询。
+- `FindByKey` / `FindByKeyAny` **保留**——它们服务的是"按角色 key 解析权限"（authz），
+  语义正确且发生在 scope 推导过程中，不能依赖 scope。
+- 路由 `/roles/{key}` → `/roles/{id}`；契约常量改名 `RouteRoleByID`。
+- 加 UUID 前置校验（复用既有 `contract.IsValidUUID`，与 people / teams 同口径）：
+  非 UUID 按 404 处理，否则旧链接 `/roles/project-owner` 会把字符串绑到 uuid 列 → 500。
+- `Delete` 的审计从 handler 先 `Get` 一次拿 key（人可读），再删。
+
+**前端**
+- `getRole` / `updateRole` / `deleteRole` 参数改 id；
+- 路由 `/directory/roles/:id/edit`；
+- `RolesPage` 的编辑跳转与删除请求改用 `role.id`（列表里展示仍用 `role.key`）。
+
+### 验证
+- 超管按 id 精确修改「世界第一家公司」的 project-owner：只有它的 description 变化，
+  另两家未受影响
+- `GET /roles/{id}` 正常；`/roles/project-owner`、`/roles/abc`、`/roles/` 均返回 **404**（不再是 500）
+- 新增 `id_test.go` 钉住 UUID 校验的六种形态
+- 五道门禁全绿（12 包）；测试期间改动的 description 已还原
+
+### 状态
+未 git commit。
