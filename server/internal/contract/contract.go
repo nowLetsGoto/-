@@ -43,6 +43,12 @@ var (
 	ErrUnauthorized = errors.New("登录状态已失效，请重新登录")
 	// ErrAPIKeyInvalid 外部接口的 Key 缺失 / 未配置 / 不匹配 → 401。
 	ErrAPIKeyInvalid = errors.New("API Key 无效，请在系统设置中查看后重试")
+	// ErrAPIKeyUnbound 平台兜底 Key（不属于任何公司）调用外部上传 → 403。
+	//
+	// 与 ErrAPIKeyInvalid 分开：Key 本身是有效的，只是**没有公司归属**，
+	// 因此不能往任何公司的项目投包。文案要让 CI 日志能直接指向修法，
+	// 而不是让人反复核对 Key 是否抄错。
+	ErrAPIKeyUnbound = errors.New("平台级 API Key 不能用于上传：请使用该公司的 API Key（平台集成 → 外部 API）")
 	// ErrForbidden 已登录但无权访问该功能 → 403（前端隐藏菜单不是安全边界，接口必须自己拒绝）。
 	ErrForbidden = errors.New("无权访问该功能")
 	// ErrProjectInvalid 请求里的项目 key 不存在 → 400：属于参数错误，不是资源缺失。

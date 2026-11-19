@@ -18,7 +18,9 @@ import (
 
 const headerName = "X-API-Key"
 
-// KeyResolver 用调用方提供的 Key 反查归属公司；返回空串表示平台兜底 Key。
+// KeyResolver 用调用方提供的 Key 反查归属公司。
+// 返回空串表示平台兜底 Key（不属于任何公司）——**外部上传会拒绝它**，
+// 见 handler/openapi.keyScopedContext 的说明。
 // 找不到（或 Key 无效）返回 contract.ErrAPIKeyInvalid。
 // 每次请求都查一次库，改配置后无需重启。
 type KeyResolver func(ctx context.Context, provided string) (string, error)
@@ -41,7 +43,9 @@ func Require(resolve KeyResolver) func(http.Handler) http.Handler {
 				handler.WriteError(w, r, contract.ErrAPIKeyInvalid)
 				return
 			}
-			// 空串是合法结果（平台兜底 Key），表示"按项目归属推导公司"。
+			// 空串依然写入 ctx（平台兜底 Key）：它是"已鉴权但没有公司归属"，
+			// 与"没走鉴权"必须区分。是否允许这种 Key 做某件事，由各 handler 自己判——
+			// 外部上传拒绝它，见 handler/openapi。
 			next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), tenantKey{}, tenantID)))
 		})
 	}
@@ -53,4 +57,12 @@ func Require(resolve KeyResolver) func(http.Handler) http.Handler {
 func TenantFrom(ctx context.Context) (string, bool) {
 	tenantID, ok := ctx.Value(tenantKey{}).(string)
 	return tenantID, ok
+}
+
+// WithTenant 把归属公司写入 context，语义与 Require 中间件一致。
+//
+// 存在的意义是让下游（及其测试）不必复刻 tenantKey 这个私有类型：
+// 需要构造"某个 Key 的调用现场"时用它，避免测试里 hack 私有 key。
+func WithTenant(ctx context.Context, tenantID string) context.Context {
+	return context.WithValue(ctx, tenantKey{}, tenantID)
 }

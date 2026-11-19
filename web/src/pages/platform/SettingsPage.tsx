@@ -354,7 +354,10 @@ function ApiPanel({
     <div className="card settings-card">
       <div className="settings-block">
         <h2>调用方式</h2>
-        <p className="settings-hint">外部系统（CI / 脚本）用 API Key 上传，不需要管理员登录态。</p>
+        <p className="settings-hint">
+          外部系统（CI / 脚本）用 API Key 上传，不需要管理员登录态。 Key
+          与公司绑定：用它上传的包只会落在本公司的项目里。
+        </p>
         <dl className="kv-list">
           <div>
             <dt>接口</dt>

@@ -1884,3 +1884,59 @@ const readOnly = !can(me, 'role.write');
 
 ### 状态
 未 git commit。
+
+---
+
+## §36 外部上传禁止平台兜底 Key（A 方案，2026-11-19）
+
+### 风险
+`POST /open/builds` 对「平台兜底 Key」（`system_settings.tenant_id` 为空的那一行）
+放行成 `scope.All`，意味着**一把 Key 能往全平台任意公司的任意项目投包**。
+App 包会被终端用户下载安装，等同于一条供应链投毒通道：
+Key 一旦从 CI 配置或截图泄漏，影响面是全平台而不是一家公司。
+
+实测确认（修复前）：同一把兜底 Key 连续推送 `world2-1`（worldcompany2）
+与 `app`（wordone）都返回 201。
+
+### 修复
+`handler/openapi` 抽出 `keyScopedContext(r)`，三条规则：
+
+| 上下文里的归属 | 结果 |
+|---|---|
+| 无（路由没挂中间件） | 401 `ErrAPIKeyInvalid` |
+| 空串（平台兜底 Key） | **403 `ErrAPIKeyUnbound`** |
+| 有公司 id | scope 只含该 TenantID，**永不含 All** |
+
+新增 `contract.ErrAPIKeyUnbound`，与 `ErrAPIKeyInvalid` 分开：
+Key 本身有效、只是没有公司归属。文案直接指向修法
+（「请使用该公司的 API Key（平台集成 → 外部 API）」），避免 CI 反复核对 Key 是否抄错。
+`handler.WriteError` 加 403 映射（否则会掉进 500）。
+
+独立成函数是为了让这条不变量能被单测直接钉住，不必拉起整个上传流程。
+
+### 附带修正
+- `middleware/apikey` 的 `KeyResolver` / `Require` 注释还写着"空串表示按项目归属推导公司"，
+  与新规则矛盾，已改为"空串是已鉴权但无归属，是否允许由各 handler 自判"。
+- 新增 `apikey.WithTenant(ctx, tenantID)`：让下游测试不必复刻私有的 `tenantKey`。
+- 设置页补一句「Key 与公司绑定：用它上传的包只会落在本公司的项目里」。
+- 清理 `wordone` 的脏数据：`api_key` 存的是**空串的 SHA-256**（历史迁移产物），
+  置为空串表示"未配置"。该行本来也因中间件拒绝空 Key 而不可用。
+
+### 验证（13 项）
+| 场景 | 结果 |
+|---|---|
+| 兜底 Key + `world2-1` / `app` / `web` | **403 全部拒绝** |
+| 不带 Key | 401 |
+| 公司 Key + 自家项目 | 201，落库本公司 |
+| 公司 Key + 别家项目 | 400 项目不存在（隔离生效） |
+
+新增 `handler/openapi/handler_test.go` 钉住三条租户规则与错误类型区分。
+五道门禁全绿（13 包，新增 openapi 包）。
+
+### ⚠️ 升级影响
+平台兜底 Key 从此不能用于外部上传。若有 CI 仍在用它，会立刻 403。
+需要为那家公司生成自己的 Key（设置页 → 平台集成 → 外部 API → 轮换）。
+当前库里 `wordone` / `worldcompany2` 都没有可用 Key，需要各自管理员生成。
+
+### 状态
+未 git commit。

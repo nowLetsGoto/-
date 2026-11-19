@@ -122,6 +122,10 @@ func WriteError(w http.ResponseWriter, r *http.Request, err error) {
 			appErr = &AppError{Status: 401, Code: 401, Message: contract.ErrUnauthorized.Error()}
 		case errors.Is(err, contract.ErrAPIKeyInvalid):
 			appErr = &AppError{Status: 401, Code: 401, Message: contract.ErrAPIKeyInvalid.Error()}
+		case errors.Is(err, contract.ErrAPIKeyUnbound):
+			// 403 而非 401：Key 本身有效，只是没有公司归属，不能往任何公司的项目投包。
+			// 用 401 会让调用方一直去核对 Key 是否抄错，反而查不到真正的原因。
+			appErr = &AppError{Status: 403, Code: 403, Message: contract.ErrAPIKeyUnbound.Error()}
 		case errors.Is(err, contract.ErrForbidden):
 			appErr = &AppError{Status: 403, Code: 403, Message: contract.ErrForbidden.Error()}
 		default:
