@@ -454,7 +454,9 @@ func (r *Repository) PurgeDeprecatedPermissions(ctx context.Context, permissions
 }
 
 func (r *Repository) findByID(ctx context.Context, id string) (contract.Role, error) {
-	row := r.db.QueryRowContext(ctx, `SELECT `+columns+` FROM roles WHERE id = $1`, id)
+	// 必须配 fromClause：columns 带 r. 别名且含 coalesce(t.name, '')，
+	// 少了 JOIN tenants 会直接 SQL 报错——这是 save 末尾回读角色的唯一出口。
+	row := r.db.QueryRowContext(ctx, `SELECT `+columns+fromClause+` WHERE r.id = $1`, id)
 	item, err := scan(row)
 	if err != nil {
 		return contract.Role{}, err

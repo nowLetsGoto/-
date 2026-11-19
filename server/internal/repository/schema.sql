@@ -240,8 +240,12 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_settings_api_key ON system_settings (api_k
 --
 -- 判据用长度而不是「是否含非十六进制字符」：明文是 32 位、摘要固定 64 位。
 -- 幂等：已经是 64 位的行不会被二次哈希（否则第二次启动就会把所有 Key 弄失效）。
+--
+-- 必须排除空串：空串是「这家公司还没配 Key」的标记，不是一把待哈希的明文。
+-- 若把它哈希，得到的是空串的固定摘要 e3b0c442...，而每家未配置的公司都会得到同一个值，
+-- 撞上 api_key 唯一索引导致启动失败（真实踩到：世界第二家公司空串撞了已存在的 e3b0c442...）。
 UPDATE system_settings SET api_key = encode(sha256(api_key::bytea), 'hex')
-WHERE length(api_key) <> 64;
+WHERE length(api_key) <> 64 AND api_key <> '';
 
 -- 播种平台兜底行：只在还没有兜底配置时插入，已有则原样保留（含存量 Key）。
 -- 显式指定 id=1：改 identity 后序列还没推进，直接 INSERT 会生成 id=1 撞上存量行。
