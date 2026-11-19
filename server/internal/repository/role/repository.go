@@ -337,6 +337,28 @@ func (r *Repository) CreateBuiltinIfMissing(ctx context.Context, tenantID string
 	return true, nil
 }
 
+// ReconcilePermissions 清掉不在当前目录里的权限点。
+//
+// 与菜单对齐的区别：权限点**只删不补**。
+//   - 补：内置角色的默认权限由 builtinRoles 定义，自定义角色是管理员配置的，
+//     都不该被系统擅自加权限；
+//   - 删：目录里已移除的 key 若留着，既没人能勾掉它，又可能悄悄生效，
+//     属于"看不见的权限"。清掉才安全。
+//
+// 放在 Go 侧而不是 SQL，是为了让目录清单只有 contract.Permissions 一处定义。
+func (r *Repository) ReconcilePermissions(ctx context.Context) error {
+	keys := make([]string, 0, len(contract.Permissions))
+	for _, permission := range contract.Permissions {
+		keys = append(keys, permission.Key)
+	}
+	_, err := r.db.ExecContext(ctx,
+		`DELETE FROM role_permissions WHERE NOT (permission = ANY($1::text[]))`, keys)
+	if err != nil {
+		return fmt.Errorf("清理已下线权限点失败: %w", err)
+	}
+	return nil
+}
+
 // ReconcileBuiltinMenus 让内置角色的菜单授权与当前目录对齐：补齐新增的，删掉已移除的。
 //
 // 为什么需要"删"这一半：菜单目录是版本演进的，某天从目录里移除一项（例如超管专属的

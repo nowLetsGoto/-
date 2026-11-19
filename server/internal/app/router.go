@@ -179,12 +179,17 @@ func NewRouter(d Deps) http.Handler {
 			})
 		})
 
-		// 账号管理：团队管理员及以上可进入，具体能建谁、管谁由 service/user 按层级与 scope 判定。
-		// 路由只守最低门槛（team_admin），防止普通成员进门；真正的越权拦截在 service 层。
+		// 账号管理：门槛由身份改为权限点 directory.write。
+		//
+		// 产品决策：普通账号（team_admin / member）的能力完全由角色配置驱动，
+		// 不再有"team_admin 天然能管账号"这回事；角色勾了 directory.write 才能进门。
+		// 平台管理员固有该权限（见 managementPermissions），不受影响。
+		// 具体能建谁、管谁的边界仍在 service/user（例如只能建 member、只能管本团队）。
 		api.Group(func(accounts chi.Router) {
 			accounts.Use(loginmw.RequireAuth(d.Verify))
 			accounts.Use(loginmw.InjectScope(d.Authz))
-			accounts.Use(loginmw.RequireMinLevel(contract.AccountLevelTeamAdmin))
+			accounts.Use(authzmw.RequireTeamMode)
+			accounts.Use(authzmw.RequirePermission(d.Authz, contract.PermissionDirectoryWrite))
 			accounts.Get("/admin/users", middleware.Wrap(d.Users.List))
 			accounts.Post("/admin/users", middleware.Wrap(d.Users.Create))
 			accounts.Get("/admin/users/{id}", middleware.Wrap(d.Users.Get))
@@ -207,7 +212,7 @@ func NewRouter(d Deps) http.Handler {
 			admin.Delete("/platform/tenants/{id}", middleware.Wrap(d.Tenants.Delete))
 		})
 
-		// 审计日志：平台管理员及以上，限本公司；超管（All）看全部平台审计。
+		// 审计日志：由权限点 audit.read 控制，限本公司；超管（All）看全部平台审计。
 		//
 		// 为什么必须单独成组而不是留在超管专区：
 		//   - 需要 InjectScope 才知道"查哪家公司"——超管专区没有 scope 注入；
@@ -220,41 +225,48 @@ func NewRouter(d Deps) http.Handler {
 		api.Group(func(audit chi.Router) {
 			audit.Use(loginmw.RequireAuth(d.Verify))
 			audit.Use(loginmw.InjectScope(d.Authz))
-			audit.Use(loginmw.RequireMinLevel(contract.AccountLevelPlatformAdmin))
 			audit.Use(authzmw.RequireTeamMode)
+			audit.Use(authzmw.RequirePermission(d.Authz, contract.PermissionAuditRead))
 			audit.Get("/admin/audit-logs", middleware.Wrap(d.Audit.List))
 		})
 
-		// 平台集成配置：平台管理员及以上，限本公司（超管落到平台兜底行）。
-		// 与角色管理同一个门槛，但必须单独成组：它需要 InjectScope 才能定位"哪家公司的那一行"，
-		// 而超管专区（admin 组）没有 scope 注入。
+		// 平台集成配置：由权限点控制，限本公司（超管落到平台兜底行）。
+		// 读与写分开：settings.read 看配置，settings.write 改配置/轮换 Key。
+		// 必须单独成组：需要 InjectScope 定位"哪家公司的那一行"。
 		api.Group(func(settings chi.Router) {
 			settings.Use(loginmw.RequireAuth(d.Verify))
 			settings.Use(loginmw.InjectScope(d.Authz))
-			settings.Use(loginmw.RequireMinLevel(contract.AccountLevelPlatformAdmin))
-			settings.Get("/settings", middleware.Wrap(d.Settings.Get))
-			settings.Put("/settings", middleware.Wrap(d.Settings.Update))
-			settings.Post("/settings/webhook/test", middleware.Wrap(d.Settings.Test))
-			settings.Post("/settings/api-key/rotate", middleware.Wrap(d.Settings.RotateAPIKey))
+			settings.With(authzmw.RequirePermission(d.Authz, contract.PermissionSettingsRead)).
+				Get("/settings", middleware.Wrap(d.Settings.Get))
+			settings.With(authzmw.RequirePermission(d.Authz, contract.PermissionSettingsWrite)).
+				Put("/settings", middleware.Wrap(d.Settings.Update))
+			settings.With(authzmw.RequirePermission(d.Authz, contract.PermissionSettingsWrite)).
+				Post("/settings/webhook/test", middleware.Wrap(d.Settings.Test))
+			settings.With(authzmw.RequirePermission(d.Authz, contract.PermissionSettingsWrite)).
+				Post("/settings/api-key/rotate", middleware.Wrap(d.Settings.RotateAPIKey))
 		})
 
-		// 角色管理：平台管理员及以上（团队管理员只能「分配」角色，不能改定义）。
-		// 可见范围由 scope 决定：platform_admin 看「平台内置 + 本公司自定义」，改不了内置；
-		// 超管（All）看全部、可改内置。团队管理员不进这个组——它只需要把人挂到已有角色上，
-		// 那是 people 接口 field roleKey 的事，不是角色定义。
+		// 角色管理：三个权限点分别守读、写、删。
+		//
+		// 产品决策：普通账号凭角色勾选就能管理角色定义，不再限 platform_admin。
+		// 可见范围仍由 scope 决定：公司账号看「内置副本 + 本公司自定义」，
+		// 超管（All）看全部。改内置角色只影响本公司的副本。
 		api.Group(func(roles chi.Router) {
 			roles.Use(loginmw.RequireAuth(d.Verify))
 			roles.Use(loginmw.InjectScope(d.Authz))
-			roles.Use(loginmw.RequireMinLevel(contract.AccountLevelPlatformAdmin))
 			roles.Use(authzmw.RequireTeamMode)
+			// 权限目录本身只读且无公司信息，任何登录用户都能取（前端角色表单要用）。
 			roles.Get("/permissions", middleware.Wrap(d.Roles.Permissions))
-			roles.Get("/roles", middleware.Wrap(d.Roles.List))
-			roles.Get("/roles/{key}", middleware.Wrap(d.Roles.Get))
-			roles.Post("/roles", middleware.Wrap(d.Roles.Create))
-			roles.Put("/roles/{key}", middleware.Wrap(d.Roles.Update))
-			// 删角色额外要求 role.delete：它是"治理角色定义"而不是业务能力，
-			// 平台管理员固有该权限；团队管理员连这个路由组都进不来。
-			roles.With(authzmw.RequirePermission(d.Authz, contract.PermissionRoleDelete)).Delete("/roles/{key}", middleware.Wrap(d.Roles.Delete))
+			roles.With(authzmw.RequirePermission(d.Authz, contract.PermissionRoleRead)).
+				Get("/roles", middleware.Wrap(d.Roles.List))
+			roles.With(authzmw.RequirePermission(d.Authz, contract.PermissionRoleRead)).
+				Get("/roles/{key}", middleware.Wrap(d.Roles.Get))
+			roles.With(authzmw.RequirePermission(d.Authz, contract.PermissionRoleWrite)).
+				Post("/roles", middleware.Wrap(d.Roles.Create))
+			roles.With(authzmw.RequirePermission(d.Authz, contract.PermissionRoleWrite)).
+				Put("/roles/{key}", middleware.Wrap(d.Roles.Update))
+			roles.With(authzmw.RequirePermission(d.Authz, contract.PermissionRoleDelete)).
+				Delete("/roles/{key}", middleware.Wrap(d.Roles.Delete))
 		})
 	})
 	r.Get(contract.RouteHealth, middleware.Wrap(d.Health.Health))

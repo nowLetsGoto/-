@@ -13,7 +13,6 @@ import { ErrorBoundary } from 'react-error-boundary';
 import { Navigate, Outlet, Route, Routes, useLocation } from 'react-router-dom';
 import { readSession } from './api/session';
 import { AdminGate } from './components/AdminGate';
-import { LevelGate } from './components/LevelGate';
 import { Layout } from './components/Layout';
 import { PermissionGate } from './components/PermissionGate';
 import { NoProjectYet } from './components/ProjectGate';
@@ -249,77 +248,72 @@ export function App(): JSX.Element {
           <Route path="/directory/projects" element={<ProjectsPage />} />
           <Route path="/directory/projects/new" element={<ProjectFormPage />} />
           <Route path="/directory/projects/:key/edit" element={<ProjectFormPage />} />
+          {/* 管理页面统一按权限点守卫：普通账号凭角色配置进入，平台管理员固有对应权限。
+              能看哪些数据由服务端按 scope 收敛，前端守卫只挡"没配权限就别进门"。 */}
           <Route
             path="/directory/roles"
             element={
-              <LevelGate minLevel="platform_admin">
+              <PermissionGate permission="role.read">
                 <RolesPage />
-              </LevelGate>
+              </PermissionGate>
             }
           />
-          {/* 角色管理：平台管理员及以上（后端 RequireMinLevel(platform_admin)）。
-              这里只能用 LevelGate 而不是 PermissionGate——权限目录里没有 role.*，
-              而且"能改角色定义"是身份层级，不是可勾选的业务权限。 */}
           <Route
             path="/directory/roles/new"
             element={
-              <LevelGate minLevel="platform_admin">
+              <PermissionGate permission="role.write">
                 <RoleFormPage />
-              </LevelGate>
+              </PermissionGate>
             }
           />
           <Route
             path="/directory/roles/:key/edit"
             element={
-              <LevelGate minLevel="platform_admin">
+              <PermissionGate permission="role.write">
                 <RoleFormPage />
-              </LevelGate>
+              </PermissionGate>
             }
           />
           <Route
             path="/settings"
             element={
-              <LevelGate minLevel="platform_admin">
+              <PermissionGate permission="settings.read">
                 <SettingsPage />
-              </LevelGate>
+              </PermissionGate>
             }
           />
-          {/* 账号管理：团队管理员及以上（后端 RequireMinLevel(team_admin)）。
-              能建谁、能管谁由服务端按层级与 scope 判定，这里只挡普通成员。 */}
+          {/* 账号管理：directory.write 才能进；能建谁、能管谁由服务端再判一层。 */}
           <Route
             path="/admin/accounts"
             element={
-              <LevelGate minLevel="team_admin">
+              <PermissionGate permission="directory.write">
                 <AccountsPage />
-              </LevelGate>
+              </PermissionGate>
             }
           />
           <Route
             path="/admin/accounts/new"
             element={
-              <LevelGate minLevel="team_admin">
+              <PermissionGate permission="directory.write">
                 <AccountFormPage />
-              </LevelGate>
+              </PermissionGate>
             }
           />
           {/* 新建与编辑复用同一个页面组件：字段几乎相同，拆两份只会让两处慢慢走偏 */}
           <Route
             path="/admin/accounts/:id/edit"
             element={
-              <LevelGate minLevel="team_admin">
+              <PermissionGate permission="directory.write">
                 <AccountFormPage />
-              </LevelGate>
+              </PermissionGate>
             }
           />
           <Route
             path="/admin/audit-logs"
             element={
-              // 审计日志对平台管理员开放（后端 RequireMinLevel(platform_admin)），
-              // 因此用 LevelGate 而不是 AdminGate——后者只放行超管。
-              // 平台管理员看到的范围由服务端按 scope 收敛到本公司，前端无需区分。
-              <LevelGate minLevel="platform_admin">
+              <PermissionGate permission="audit.read">
                 <AuditLogsPage />
-              </LevelGate>
+              </PermissionGate>
             }
           />
           {/* 公司管理：平台最高权限动作，连查看也只给超管（后端 RequireSuperAdmin）。

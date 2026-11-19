@@ -103,28 +103,25 @@ func (s *Service) Permissions(ctx context.Context, identity contract.Identity, p
 	return permissions, nil
 }
 
-// managementPermissions 返回管理身份层级固有的权限点。
-// 只授予完成该层级职责所需的最小集合；团队管理员只看/管自己团队的数据，
-// 范围限制由 scope 保证，这里只管「能不能」。
+// managementPermissions 返回**身份层级固有**的权限点。
+//
+// 只有 platform_admin 享有固有管理权限——它是超管建公司时连带创建的治理者，
+// 必须天然具备管理本公司的能力，否则公司无人可管。
+//
+// team_admin 与 member 不再有固有权限（产品决策：普通账号完全由角色配置驱动）。
+// 它们需要什么能力，就在角色表单里勾什么权限点；勾不到就进不去对应的管理菜单。
+// 超管由 allPermissions 全量覆盖，不经过这里。
 func managementPermissions(level string) []string {
-	switch level {
-	case contract.AccountLevelPlatformAdmin:
-		return []string{
-			"build.read", "build.write", "build.delete",
-			"project.read", "project.write", "project.delete",
-			"directory.read", contract.PermissionDirectoryWrite, contract.PermissionDirectoryDelete,
-			contract.PermissionSettingsRead, contract.PermissionSettingsWrite,
-			contract.PermissionRoleDelete,
-		}
-	case contract.AccountLevelTeamAdmin:
-		return []string{
-			"build.read", "build.write", "build.delete",
-			"project.read", "project.write", "project.delete",
-			"directory.read", contract.PermissionDirectoryWrite, contract.PermissionDirectoryDelete,
-		}
-	default:
-		// 超管已由 allPermissions 全量覆盖；普通成员没有管理权限。
+	if level != contract.AccountLevelPlatformAdmin {
 		return nil
+	}
+	return []string{
+		"build.read", "build.write", "build.delete",
+		"project.read", "project.write", "project.delete",
+		"directory.read", contract.PermissionDirectoryWrite, contract.PermissionDirectoryDelete,
+		contract.PermissionSettingsRead, contract.PermissionSettingsWrite,
+		contract.PermissionRoleRead, contract.PermissionRoleWrite, contract.PermissionRoleDelete,
+		contract.PermissionAuditRead,
 	}
 }
 
@@ -183,14 +180,16 @@ func (s *Service) Check(ctx context.Context, identity contract.Identity, project
 // ScopeOf 是数据范围的唯一推导点。
 //
 // 它只依据身份里的层级与租户推导，绝不读请求参数：客户端即使伪造 tenantId/teamIds 也无效。
-// 需要 ctx 与 error 是因为 team_admin / member 的团队边界必须查关联表（team_admins / team_members）；
-// 查不到关联不代表越权，只是返回空边界；真正的数据库错误则向上传递，由中间件转成 500。
+// 需要 ctx 与 error 是因为普通账号的团队边界必须查关联表；查不到关联不代表越权，
+// 只是返回空边界；真正的数据库错误则向上传递，由中间件转成 500。
 //
-// 层级映射（与 docs/12 §4.3 一致）：
-//   super_admin   → {All:true}
-//   platform_admin→ {TenantID: 账号所属公司}
-//   team_admin    → {TenantID, TeamIDs: team_admins 中关联的全部团队}
-//   member        → {TenantID, TeamIDs: team_members 中关联的全部团队}
+// 层级映射（普通账号两档已统一，见下方普通账号分支的说明）：
+//   super_admin                 → {All:true}
+//   platform_admin              → {TenantID: 账号所属公司}，公司内看全部团队
+//   team_admin / member         → {TenantID, TeamIDs: team_members, TeamScoped:true}
+//
+// 注意：这里的层级判定只用于"决定数据范围"。普通账号的**能力与菜单**不再看层级，
+// 完全由角色配置（permissions + menuKeys）决定——这是「身份只保留超管与公司管理员」的产品决策。
 func (s *Service) ScopeOf(ctx context.Context, identity contract.Identity) (contract.Scope, error) {
 	switch identity.Level() {
 	case contract.AccountLevelSuperAdmin:
@@ -201,42 +200,44 @@ func (s *Service) ScopeOf(ctx context.Context, identity contract.Identity) (cont
 		// 公司边界内看全部团队，所以 TeamIDs 留空数组（JSON 里是 [] 而不是 null）。
 		return contract.Scope{TenantID: identity.TenantID, TeamIDs: []string{}}, nil
 
-	case contract.AccountLevelTeamAdmin:
-		teamIDs, err := s.teams.AdminTeamIDs(ctx, identity.UserID)
-		if err != nil {
-			return contract.Scope{}, err
-		}
-		// TeamScoped=true：即使没关联任何团队，也只能看到空集，不能退化成看全公司。
-		// SelfUserID 让账号管理页仍能看到自己那一条（团队归属在 team_admins 而非 team_members）。
-		return contract.Scope{
-			TenantID:   identity.TenantID,
-			TeamIDs:    teamIDs,
-			TeamScoped: true,
-			SelfUserID: identity.UserID,
-		}, nil
-
-	case contract.AccountLevelMember:
-		// 成员关系挂在人身上，先复用 /me 与权限判定共用的解析入口，
-		// 避免"页面显示的人"和"算 scope 用的人"是两个人。
-		personID, err := s.PersonID(ctx, identity)
-		if err != nil {
-			return contract.Scope{}, err
-		}
-		if personID == "" {
-			// 普通成员的可见面由业务角色与项目成员关系决定，不按团队树收紧，
-			// 与 P1 行为一致；否则存量成员（没有团队关联）会突然看不到任何数据。
-			return contract.Scope{TenantID: identity.TenantID, TeamIDs: []string{}}, nil
-		}
-		teamIDs, err := s.teams.MemberTeamIDs(ctx, personID)
-		if err != nil {
-			return contract.Scope{}, err
-		}
-		return contract.Scope{TenantID: identity.TenantID, TeamIDs: teamIDs}, nil
+	case contract.AccountLevelTeamAdmin, contract.AccountLevelMember:
+		// 两档统一走同一个口径：
+		//   - 团队关联一律读 team_members（人员所属团队），不再读 team_admins；
+		//   - TeamScoped=true 严格隔离——没绑团队就没有可见数据，不退化成看全公司。
+		//
+		// 这是用户明确选定的边界。存量账号中"没有绑定人员"或"人员没绑团队"的，
+		// 上线后会看不到业务数据，必须先补齐团队关联（见 docs/12 §30 的处理清单）。
+		return s.memberScope(ctx, identity)
 
 	default:
 		// 未知层级：失败关闭。零值 scope 不会匹配任何数据，绝不放大成 All。
 		return contract.Scope{}, nil
 	}
+}
+
+// memberScope 推导普通账号（team_admin / member）的团队边界。
+//
+// 单独成方法是因为两档共用同一份逻辑；未来若调整"按什么关联算团队"，只改这里一处。
+// SelfUserID 始终带上：账号管理页需要让调用者看到自己那一行，
+// 否则"能管账号但看不到自己"会让管理员很困惑。
+func (s *Service) memberScope(ctx context.Context, identity contract.Identity) (contract.Scope, error) {
+	personID, err := s.PersonID(ctx, identity)
+	if err != nil {
+		return contract.Scope{}, err
+	}
+	teamIDs := []string{}
+	if personID != "" {
+		teamIDs, err = s.teams.MemberTeamIDs(ctx, personID)
+		if err != nil {
+			return contract.Scope{}, err
+		}
+	}
+	return contract.Scope{
+		TenantID:   identity.TenantID,
+		TeamIDs:    teamIDs,
+		TeamScoped: true,
+		SelfUserID: identity.UserID,
+	}, nil
 }
 
 // PersonID 返回账号对应的人员档案：显式绑定优先，兼容此前按登录名关联的存量数据。

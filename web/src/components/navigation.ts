@@ -26,6 +26,8 @@ export interface NavItem {
    * 进入该页面需要的最低管理身份层级。
    *
    * 优先级：minLevel > requireSuperAdmin > permission（见 canSeeNavItem）。
+   * 目前只有「平台管理 / 公司管理」还用 minLevel: super_admin，
+   * 其余管理菜单都已改为权限点门槛（普通账号靠角色配置进入）。
    * 管理能力改成「身份层级直接赋予」之后，靠这个字段投影菜单：
    * directory.write / settings.* 等权限点已从可勾选目录移除，只剩服务端按层级下发，
    * 前端再拿它们判断会失效。
@@ -158,12 +160,11 @@ export const NAV_SECTIONS: ReadonlyArray<NavSection> = [
         envScoped: false,
       },
       {
-        // 账号管理从「超管专区」下放到团队管理员：后端已放开（RequireMinLevel(team_admin)），
-        // 团队管理员在这里建/管本团队的普通账号。放在基础资料区而不是平台管理区，
-        // 因为平台管理区整组是超管门槛，会把团队管理员挡在外面。
+        // 账号管理：门槛由身份层级改为权限点 directory.write。
+        // 普通账号只要角色勾了这个权限就能进；平台管理员固有该权限，不受影响。
         label: '账号管理',
         path: '/admin/accounts',
-        minLevel: 'team_admin',
+        permission: 'directory.write',
         icon: 'people',
         scope: 'platform',
         envScoped: false,
@@ -171,27 +172,25 @@ export const NAV_SECTIONS: ReadonlyArray<NavSection> = [
     ],
   },
   {
-    // 公司设置：平台管理员及以上。这一区是「我这家的配置」，不含跨公司的东西。
-    // 角色管理放这里而不是超管区：后端已放开到 platform_admin，且只能改本公司自定义角色、
-    // 平台内置角色只读——把公司管好自己角色的能力留在超管区会让它形同虚设。
+    // 公司设置：这一区是「我这家的配置」，不含跨公司的东西。
+    // 门槛由身份层级改为权限点：普通账号凭角色勾选即可管理本公司配置，
+    // 平台管理员固有全部相关权限，超管始终全量。
     title: '公司设置',
-    minLevel: 'platform_admin',
     items: [
       {
         label: '角色管理',
         path: '/directory/roles',
-        minLevel: 'platform_admin',
+        permission: 'role.read',
         icon: 'shield',
         scope: 'platform',
         envScoped: false,
       },
       {
-        // 审计日志：本公司范围内"谁改了什么"。放在公司设置而不是平台管理，
-        // 因为平台管理整组是超管门槛，而审计的实际使用者是公司管理员。
-        // 后端按 scope 过滤：平台管理员只看本公司，超管看全部。
+        // 审计日志：本公司范围内"谁改了什么"，由 audit.read 控制。
+        // 后端按 scope 过滤：公司账号只看本公司，超管看全部。
         label: '审计日志',
         path: '/admin/audit-logs',
-        minLevel: 'platform_admin',
+        permission: 'audit.read',
         icon: 'overview',
         scope: 'platform',
         envScoped: false,
@@ -199,7 +198,7 @@ export const NAV_SECTIONS: ReadonlyArray<NavSection> = [
       {
         label: '平台集成',
         path: '/settings',
-        minLevel: 'platform_admin',
+        permission: 'settings.read',
         icon: 'settings',
         scope: 'platform',
         envScoped: false,

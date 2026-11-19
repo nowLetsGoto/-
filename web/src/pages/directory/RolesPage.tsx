@@ -3,7 +3,7 @@
  * 职责：列出角色与各自权限数量，跳转到编辑页；顶部提供新建入口。
  * 输入：listRoles；输出：DataTable + 角色类型徽标。
  * 边界：只读页面——所有编辑都在独立路由；
- *       不做"是不是超管"的判断：路由由 LevelGate(platform_admin) 把关，能渲染出来就一定够层级。
+ *       不做身份判断：路由由 PermissionGate(role.read) 把关，能渲染出来就一定有读角色定义的权限。
  *       角色按公司隔离——每个人只看得到本公司的角色（超管跨公司看全部）。
  */
 import { useEffect, useState } from 'react';
@@ -31,7 +31,10 @@ export function RolesPage(): JSX.Element {
   const { me } = useMe();
   const [state, setState] = useState<PageState>({ items: [], loading: true, error: '' });
   const [version, setVersion] = useState(0);
-  // 只能删自定义角色（内置角色后端也会拒绝）；成功后递增 version 让列表重拉。
+  // 写权限按权限点判定，与后端路由守卫同一口径：
+  // 没有 role.write 就别给新建入口，避免点了才吃 403。
+  // 删除同理，且只能删自定义角色（内置角色后端也会拒绝）。
+  const writable = can(me, 'role.write');
   const deletable = can(me, 'role.delete');
   const removal = useDeleteAction<{ id: string; label: string }>(
     (target) => deleteRole(target.id),
@@ -153,10 +156,11 @@ export function RolesPage(): JSX.Element {
             角色决定「能做什么」；超级管理员与平台管理员是账号身份，不在此列
           </p>
         </div>
-        {/* 能进到这个页面就一定够层级（路由由 LevelGate 把关），新建入口无条件渲染。 */}
-        <Link className="button button-primary" to="/directory/roles/new">
-          新建角色
-        </Link>
+        {writable ? (
+          <Link className="button button-primary" to="/directory/roles/new">
+            新建角色
+          </Link>
+        ) : null}
       </div>
 
       <div className="card">

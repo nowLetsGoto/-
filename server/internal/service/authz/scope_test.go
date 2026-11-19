@@ -83,13 +83,16 @@ func TestScopeOfFourLevels(t *testing.T) {
 			"admin-user": {"team-a", "team-b"},
 		},
 		member: map[string][]string{
-			"person-1": {"team-c"},
+			"person-1":     {"team-c"},
+			"person-admin": {"team-a", "team-b"},
 		},
 	}
 	users := &fakeUsers{
 		byID: map[string]userrepo.Record{
 			// 成员账号显式绑定人员；ScopeOf 必须从 users.person_id 找到团队关系的主体。
 			"member-user": {User: contract.User{PersonID: "person-1"}},
+			// team_admin 现在和 member 一样按人员所属团队算 scope。
+			"admin-user": {User: contract.User{PersonID: "person-admin"}},
 		},
 		byName: map[string]userrepo.Record{},
 	}
@@ -114,12 +117,11 @@ func TestScopeOfFourLevels(t *testing.T) {
 			want: contract.Scope{TenantID: "tenant-1", TeamIDs: []string{}},
 		},
 		{
-			name: "团队管理员取 team_admins 关联并集",
+			name: "团队管理员与普通账号统一取 team_members 关联并集",
 			identity: contract.Identity{
 				AccountLevel: contract.AccountLevelTeamAdmin, TenantID: "tenant-1", UserID: "admin-user",
 			},
-			// SelfUserID 是刻意带上的：团队负责人的团队关联在 team_admins，
-			// 账号列表按 team_members 收窄时，没有这一项他会在列表里看不到自己。
+			// 两档统一：读 team_members、严格团队隔离（TeamScoped=true）、带 SelfUserID。
 			want: contract.Scope{
 				TenantID: "tenant-1", TeamIDs: []string{"team-a", "team-b"},
 				TeamScoped: true, SelfUserID: "admin-user",
@@ -130,7 +132,10 @@ func TestScopeOfFourLevels(t *testing.T) {
 			identity: contract.Identity{
 				AccountLevel: contract.AccountLevelMember, TenantID: "tenant-1", UserID: "member-user",
 			},
-			want: contract.Scope{TenantID: "tenant-1", TeamIDs: []string{"team-c"}},
+			want: contract.Scope{
+				TenantID: "tenant-1", TeamIDs: []string{"team-c"},
+				TeamScoped: true, SelfUserID: "member-user",
+			},
 		},
 		{
 			name: "过渡期旧超管布尔仍按超管推导",
@@ -144,7 +149,10 @@ func TestScopeOfFourLevels(t *testing.T) {
 			identity: contract.Identity{
 				AccountLevel: contract.AccountLevelMember, TenantID: "tenant-1", UserID: "no-person",
 			},
-			want: contract.Scope{TenantID: "tenant-1", TeamIDs: []string{}},
+			want: contract.Scope{
+				TenantID: "tenant-1", TeamIDs: []string{},
+				TeamScoped: true, SelfUserID: "no-person",
+			},
 		},
 		{
 			name:     "未知层级失败关闭",
@@ -190,7 +198,10 @@ func TestScopeOfIgnoresUnboundPersonFallback(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ScopeOf 不应报错: %v", err)
 	}
-	want := contract.Scope{TenantID: "tenant-2", TeamIDs: []string{"team-x"}}
+	want := contract.Scope{
+		TenantID: "tenant-2", TeamIDs: []string{"team-x"},
+		TeamScoped: true, SelfUserID: "legacy-id",
+	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("登录名回退的成员 scope 不符: got=%+v want=%+v", got, want)
 	}

@@ -98,9 +98,13 @@ func (s *Service) EnsureBuiltin(ctx context.Context) error {
 			}
 		}
 	}
-	// 菜单目录会随版本演进，内置角色的授权要跟着对齐：
-	// 补上新菜单、清掉已移除的（例如超管专属的 /admin/tenants）。
-	// 放在这里而不是 schema.sql，是因为菜单清单必须与 contract.Menus 同源。
+	// 目录会随版本演进，启动时要做两件对齐（都放在这里而不是 schema.sql，
+	// 是为了让菜单清单与权限清单各只有 contract 一处定义）：
+	//   1. 权限点：清掉已下线的 key（防止"看不见却生效"的历史权限）；
+	//   2. 菜单：内置角色补齐新菜单、清掉已移除的菜单。
+	if err := s.repo.ReconcilePermissions(ctx); err != nil {
+		return err
+	}
 	return s.repo.ReconcileBuiltinMenus(ctx)
 }
 

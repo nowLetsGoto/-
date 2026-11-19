@@ -231,7 +231,15 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_settings_platform_fallback
   ON system_settings ((true)) WHERE tenant_id IS NULL;
 -- API Key 反查归属走唯一索引：外部上传每次请求都要按 Key 找公司，不能全表扫。
 -- 唯一约束同时保证一把 Key 不会对应两家公司（否则包会落到哪家就不确定了）。
-CREATE UNIQUE INDEX IF NOT EXISTS idx_settings_api_key ON system_settings (api_key);
+--
+-- 必须是**部分索引**，排除空串：
+-- 空串代表"这家公司还没配 Key"，每家公司都可以处于这个状态；
+-- 若把它也纳入唯一约束，全平台只能有一家公司没配 Key——
+-- 第二家公司的 EnsureRow 会撞索引，让设置页直接 500（真实踩到）。
+-- 非空摘要仍然唯一，反查语义不变。
+DROP INDEX IF EXISTS idx_settings_api_key;
+CREATE UNIQUE INDEX idx_settings_api_key
+  ON system_settings (api_key) WHERE api_key <> '';
 
 -- 把存量明文 Key 迁移成 SHA-256 摘要。
 --
@@ -305,11 +313,9 @@ CREATE TABLE IF NOT EXISTS role_menus (
   PRIMARY KEY (role_id, menu_key)
 );
 
--- 权限点目录缩减后的存量清理：role_permissions.permission 是裸 TEXT，没有外键，
--- 目录里删掉一个权限点不会自动从库里消失。留着它只会让角色编辑页统计"已选数量"时
--- 多出一个不存在的项（前端只渲染目录内的点，勾不上也去不掉）。
--- 这里删的是两个已收归超管的权限点：角色管理改由 RequireSuperAdmin 把关，见 contract.Permissions。
-DELETE FROM role_permissions WHERE permission IN ('role.read', 'role.write');
+-- 权限点目录的存量对齐由 service/role 在启动时完成（与菜单授权同一机制），
+-- 不在这里硬编码"要删哪些"：role.read/write 曾被收归超管、现已重新开放，
+-- 写死清理会在每次启动时把管理员刚配好的权限删掉（真实踩到）。
 
 -- 说明：内置角色的默认权限点由 service/role 的 builtinRoles 定义在播种时写入，
 -- 不需要在这里逐条回填。历史上有两条回填（guest 的 directory.read、developer 的

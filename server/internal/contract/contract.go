@@ -621,6 +621,14 @@ type Permission struct {
 //
 // 这样从源头杜绝「给某人勾了 settings.write 就能改全公司配置」这类越权，
 // 即使攻击者伪造权限点，IsValidPermission 也会拒绝。
+// Permissions 是全部可勾选权限点。
+//
+// 这里同时包含业务权限与管理权限。管理权限曾经刻意不开放给角色（由 account_level 固有），
+// 现在产品改为「普通账号完全由角色配置驱动」，所以必须让角色能配出管理能力——
+// 否则勾选矩阵无论怎么点都给不出"能进角色管理"这类能力。
+//
+// 唯一例外是超管与平台管理员身份：它们仍由 account_level 控制（见 managementPermissions），
+// 不依赖这里的勾选。
 var Permissions = []Permission{
 	{Key: "build.read", Group: "应用包", Label: "查看应用包与下载"},
 	{Key: "build.write", Group: "应用包", Label: "上传与发布应用包"},
@@ -629,32 +637,38 @@ var Permissions = []Permission{
 	{Key: "project.write", Group: "项目", Label: "新建与编辑项目"},
 	{Key: "project.delete", Group: "项目", Label: "删除项目"},
 	{Key: "directory.read", Group: "基础资料", Label: "查看人员与团队"},
-	{Key: "directory.delete", Group: "基础资料", Label: "删除人员与团队"},
+	{Key: PermissionDirectoryWrite, Group: "基础资料", Label: "新增与编辑人员团队、管理账号"},
+	{Key: PermissionDirectoryDelete, Group: "基础资料", Label: "删除人员与团队"},
+	{Key: PermissionRoleRead, Group: "角色管理", Label: "查看角色定义"},
+	{Key: PermissionRoleWrite, Group: "角色管理", Label: "新建与编辑角色"},
+	{Key: PermissionRoleDelete, Group: "角色管理", Label: "删除自定义角色"},
+	{Key: PermissionSettingsRead, Group: "平台集成", Label: "查看集成配置"},
+	{Key: PermissionSettingsWrite, Group: "平台集成", Label: "修改集成配置与轮换 Key"},
+	{Key: PermissionAuditRead, Group: "审计日志", Label: "查看本公司审计日志"},
 }
 
-// ManagementPermissions 是「已从角色目录移除、但历史上可能存在」的管理类权限点。
-// 保留这个清单是为了：
-//   - 存量角色里若还勾着 directory.write / settings.write，启动播种时清掉（见 service/role）；
-//   - managementPermissions 仍需要这些 key 字符串来赋予管理层级。
-// 它们不出现在 Permissions 里，所以前端勾选矩阵看不到，也无法通过接口新勾上去。
+// 管理类权限点的 key。
+//
+// 这些 key 现在既可写入角色（见 Permissions），也作为 platform_admin 的固有权限
+// （见 service/authz.managementPermissions）。两个来源在 permissionsOf 里合并：
+// 平台管理员哪怕角色没勾也照样有；普通账号则完全靠角色勾选。
 const (
 	PermissionDirectoryWrite  = "directory.write"
 	PermissionDirectoryDelete = "directory.delete"
 	PermissionSettingsRead    = "settings.read"
 	PermissionSettingsWrite   = "settings.write"
 	PermissionAdminAccess     = "admin.access"
-	// PermissionRoleDelete 允许删除**本公司自定义**角色（平台内置角色永远不可删）。
-	//
-	// 为什么不放进 Permissions 可勾选目录：那一栏是"业务角色能具备什么能力"，
-	// 而"删角色"是治理角色定义本身。若可勾选，会出现「某人挂着 A 角色、
-	// 又把 A 角色删掉」的自我指涉，也让勾选矩阵多出一项反直觉的能力。
-	// 它改由 account_level 直接赋予 platform_admin，与角色管理的入口门槛保持一致：
-	// 能定义角色的人才能删除角色，且只能删自己公司的。
+	// PermissionRoleRead/Write 控制角色定义的查看与编辑；Delete 控制删除。
+	// 拆成三个是为了让"只看不改"这种配置成立（审计员场景）。
+	PermissionRoleRead  = "role.read"
+	PermissionRoleWrite = "role.write"
 	PermissionRoleDelete = "role.delete"
+	// PermissionAuditRead 控制本公司审计日志的查看。
+	PermissionAuditRead = "audit.read"
 )
 
 // IsValidPermission 判断权限点是否在**可勾选**目录里，写入角色时用它挡住拼错/伪造的值。
-// 注意：管理类权限点不在 Permissions 里，因此角色接口无法写入它们。
+// 管理类权限点现在也在目录里（普通账号靠角色配置获得管理能力），但仍需通过本函数校验。
 func IsValidPermission(key string) bool {
 	for _, permission := range Permissions {
 		if permission.Key == key {

@@ -1,144 +1,64 @@
-// level_test.go · 验证三级账号创建的核心护栏 resolveCreateLevel。
-// 用纯函数测试把「谁能建谁、能管哪个范围」钉死：这是三级体系的安全边界，
-// 一旦改坏就会让公司管理员造出超管、或团队管理员跨团队授权，因此不依赖数据库直接测。
+// level_test.go · 账号创建的层级护栏。
+// 职责：钉住"账号接口只能建 member，且必须有 directory.write"。
+// 输入：请求的层级与是否具备权限点；输出：归一化后的层级或错误。
+// 边界：纯函数测试，不连数据库；越权的具体数据边界由 boundary_test.go 覆盖。
 package user
 
 import (
+	"errors"
 	"testing"
 
 	"dandelion/server/internal/contract"
 )
 
+// TestResolveCreateLevel 覆盖新模型下的全部边界。
+//
+// 关键不变量：super_admin 与 platform_admin 永远不能经账号接口创建——
+// 前者是平台身份，后者必须随公司原子创建。这两条不受权限点影响。
 func TestResolveCreateLevel(t *testing.T) {
 	tests := []struct {
-		name        string
-		caller      contract.Identity
-		requested   string
-		teamIDs     []string
-		visibleTeam []string
-		wantLevel   string
-		wantErr     bool
+		name           string
+		requested      string
+		hasAccountWrite bool
+		wantLevel      string
+		wantErr        bool
 	}{
-		{
-			name:      "团队管理员只能建普通成员",
-			caller:    contract.Identity{AccountLevel: contract.AccountLevelTeamAdmin, TenantID: "t-1"},
-			requested: contract.AccountLevelMember,
-			wantLevel: contract.AccountLevelMember,
-		},
-		{
-			name:      "团队管理员不能建团队管理员",
-			caller:    contract.Identity{AccountLevel: contract.AccountLevelTeamAdmin, TenantID: "t-1"},
-			requested: contract.AccountLevelTeamAdmin,
-			wantErr:   true,
-		},
-		{
-			name:      "团队管理员不能建平台管理员",
-			caller:    contract.Identity{AccountLevel: contract.AccountLevelTeamAdmin, TenantID: "t-1"},
-			requested: contract.AccountLevelPlatformAdmin,
-			wantErr:   true,
-		},
-		{
-			name:      "平台管理员不能建平台管理员",
-			caller:    contract.Identity{AccountLevel: contract.AccountLevelPlatformAdmin, TenantID: "t-1"},
-			requested: contract.AccountLevelPlatformAdmin,
-			wantErr:   true,
-		},
-		{
-			name:      "平台管理员可以建团队管理员",
-			caller:    contract.Identity{AccountLevel: contract.AccountLevelPlatformAdmin, TenantID: "t-1"},
-			requested: contract.AccountLevelTeamAdmin,
-			wantLevel: contract.AccountLevelTeamAdmin,
-		},
-		{
-			name:      "任何人都不能建超管",
-			caller:    contract.Identity{AccountLevel: contract.AccountLevelSuperAdmin},
-			requested: contract.AccountLevelSuperAdmin,
-			wantErr:   true,
-		},
-		{
-			name:      "普通成员不能建任何账号",
-			caller:    contract.Identity{AccountLevel: contract.AccountLevelMember, TenantID: "t-1"},
-			requested: contract.AccountLevelMember,
-			wantErr:   true,
-		},
-		{
-			name:      "团队管理员不能跨团队授权",
-			caller:    contract.Identity{AccountLevel: contract.AccountLevelTeamAdmin, TenantID: "t-1"},
-			requested: contract.AccountLevelMember,
-			teamIDs:   []string{"team-b"},
-			visibleTeam: []string{"team-a"},
-			wantErr:   true,
-		},
-		{
-			name:      "团队管理员可给自己团队的账号指定团队",
-			caller:    contract.Identity{AccountLevel: contract.AccountLevelTeamAdmin, TenantID: "t-1"},
-			requested: contract.AccountLevelMember,
-			teamIDs:   []string{"team-a"},
-			visibleTeam: []string{"team-a"},
-			wantLevel: contract.AccountLevelMember,
-		},
-		{
-			name:      "平台管理员建普通账号时团队参数被忽略",
-			caller:    contract.Identity{AccountLevel: contract.AccountLevelPlatformAdmin, TenantID: "t-1"},
-			requested: contract.AccountLevelMember,
-			teamIDs:   []string{"team-b"},
-			wantLevel: contract.AccountLevelMember,
-		},
-		{
-			name:      "无公司的团队管理员被拒绝",
-			caller:    contract.Identity{AccountLevel: contract.AccountLevelTeamAdmin},
-			requested: contract.AccountLevelMember,
-			wantErr:   true,
-		},
-		{
-			name:      "非法层级被拒绝",
-			caller:    contract.Identity{AccountLevel: contract.AccountLevelPlatformAdmin, TenantID: "t-1"},
-			requested: "hacker",
-			wantErr:   true,
-		},
+		{name: "有权限建账号时只能建 member", requested: contract.AccountLevelMember, hasAccountWrite: true, wantLevel: contract.AccountLevelMember},
+		// 请求 team_admin 也会被归一化为 member：两档现已统一，层级不再有管理含义。
+		{name: "请求 team_admin 归一化为 member", requested: contract.AccountLevelTeamAdmin, hasAccountWrite: true, wantLevel: contract.AccountLevelMember},
+		{name: "缺省层级为 member", requested: "", hasAccountWrite: true, wantLevel: contract.AccountLevelMember},
+		{name: "无权限不能建账号", requested: contract.AccountLevelMember, hasAccountWrite: false, wantErr: true},
+		{name: "无权限也不能建 team_admin", requested: contract.AccountLevelTeamAdmin, hasAccountWrite: false, wantErr: true},
+		// 两条硬底线：即使有权限也不能突破。
+		{name: "不能建超管", requested: contract.AccountLevelSuperAdmin, hasAccountWrite: true, wantErr: true},
+		{name: "不能建平台管理员", requested: contract.AccountLevelPlatformAdmin, hasAccountWrite: true, wantErr: true},
+		{name: "非法层级被拒绝", requested: "hacker", hasAccountWrite: true, wantErr: true},
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			level, _, err := resolveCreateLevel(tt.caller, tt.requested, tt.teamIDs, tt.visibleTeam)
-			if tt.wantErr {
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			level, err := resolveCreateLevel(test.requested, test.hasAccountWrite)
+			if test.wantErr {
 				if err == nil {
-					t.Fatalf("期望拒绝但通过了：level=%s", level)
+					t.Fatal("应被拒绝，实际放行")
 				}
 				return
 			}
 			if err != nil {
-				t.Fatalf("期望通过但被拒绝：%v", err)
+				t.Fatalf("不应报错: %v", err)
 			}
-			if level != tt.wantLevel {
-				t.Fatalf("层级不符：want %s, got %s", tt.wantLevel, level)
+			if level != test.wantLevel {
+				t.Fatalf("层级应为 %q，实际 %q", test.wantLevel, level)
 			}
 		})
 	}
 }
 
-func TestResolveCreateLevelTeamIDsRule(t *testing.T) {
-	// 只有 team_admin 账号才保留团队关联：其它层级即使传了 teamIds 也必须清空，
-	// 否则会出现 member 被误写成团队管理员的数据。
-	caller := contract.Identity{AccountLevel: contract.AccountLevelPlatformAdmin, TenantID: "t-1"}
-	_, teamIDs, err := resolveCreateLevel(caller, contract.AccountLevelTeamAdmin, []string{"team-a"}, nil)
-	if err != nil {
-		t.Fatalf("平台管理员建团队管理员应通过：%v", err)
-	}
-	if len(teamIDs) != 1 || teamIDs[0] != "team-a" {
-		t.Fatalf("team_admin 应保留团队关联，got %v", teamIDs)
-	}
-}
-
-// TestIsSuperAdminRequiresSuperAdminCaller 固化「非超管不能造超管」的红线。
-// canGrantSuperAdmin 把它抽成纯判断，便于不启数据库直接测。
-func TestCreateIsSuperAdminAllowed(t *testing.T) {
-	if canGrantSuperAdmin(contract.Identity{AccountLevel: contract.AccountLevelSuperAdmin}) != true {
-		t.Fatal("超管应能设置 isSuperAdmin 标记")
-	}
-	for _, level := range []string{contract.AccountLevelPlatformAdmin, contract.AccountLevelTeamAdmin, contract.AccountLevelMember} {
-		if canGrantSuperAdmin(contract.Identity{AccountLevel: level}) {
-			t.Fatalf("%s 不应能设置 isSuperAdmin 标记", level)
-		}
+// TestResolveCreateLevelSuperAdminForbidden 单独确认超管返回的是禁止错误，
+// 而不是"参数不合法"——两者对调用方语义不同（前者是权限问题，后者是填错）。
+func TestResolveCreateLevelSuperAdminForbidden(t *testing.T) {
+	_, err := resolveCreateLevel(contract.AccountLevelSuperAdmin, true)
+	if !errors.Is(err, contract.ErrForbidden) {
+		t.Fatalf("建超管应返回 ErrForbidden，实际 %v", err)
 	}
 }

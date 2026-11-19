@@ -125,14 +125,14 @@ func TestEnsureInScopeTeamBoundary(t *testing.T) {
 			wantErr: true,
 		},
 		{
-			// 平级之间互相处置是最容易被忽略的一条：两个团队负责人本该对冲。
-			name:   "另一个团队负责人不可操作",
+			// 新模型：team_admin 与 member 统一由角色配置驱动，不再有"管理层平级互斥"。
+			// 同团队的 team_admin 可以互相操作，只要目标不是平台治理者。
+			name:   "同团队的 team_admin 可操作（层级不再特殊）",
 			caller: teamAdmin,
 			scope:  teamScope,
 			target: userrepo.Record{User: contract.User{
 				ID: "u-3", PersonID: "person-mine", AccountLevel: contract.AccountLevelTeamAdmin,
 			}, TenantID: "t-1"},
-			wantErr: true,
 		},
 		{
 			name:   "平台管理员账号不可被团队负责人操作",
@@ -195,9 +195,11 @@ func TestEnsurePersonAssignable(t *testing.T) {
 		"person-mine":  {"team-a"},
 		"person-other": {"team-b"},
 	}})
-	ctx := authctx.WithScope(context.Background(), contract.Scope{
+	teamScope := contract.Scope{
 		TenantID: "t-1", TeamIDs: []string{"team-a"}, TeamScoped: true, SelfUserID: "self-id",
-	})
+	}
+	// 平台管理员不受团队边界限制，scope 不带 TeamScoped。
+	platformScope := contract.Scope{TenantID: "t-1", TeamIDs: []string{}}
 	teamAdmin := contract.Identity{
 		UserID: "self-id", TenantID: "t-1", AccountLevel: contract.AccountLevelTeamAdmin,
 	}
@@ -208,21 +210,23 @@ func TestEnsurePersonAssignable(t *testing.T) {
 	tests := []struct {
 		name     string
 		caller   contract.Identity
+		scope    contract.Scope
 		personID string
 		wantErr  bool
 	}{
-		{name: "本团队人员可绑定", caller: teamAdmin, personID: "person-mine"},
-		{name: "别团队人员不可绑定", caller: teamAdmin, personID: "person-other", wantErr: true},
+		{name: "本团队人员可绑定", caller: teamAdmin, scope: teamScope, personID: "person-mine"},
+		{name: "别团队人员不可绑定", caller: teamAdmin, scope: teamScope, personID: "person-other", wantErr: true},
 		// 必填：账号的权限来自人员，无人员账号对团队负责人既看不到也用不上。
-		{name: "团队负责人必须绑定人员", caller: teamAdmin, personID: "", wantErr: true},
+		{name: "团队负责人必须绑定人员", caller: teamAdmin, scope: teamScope, personID: "", wantErr: true},
 		// 与前端 AccountFormPage 的必填校验保持一致：除超管外都得绑定人员。
 		// 两层各说一套会让人以为界面拦错了。
-		{name: "平台管理员也必须绑定人员", caller: platformAdmin, personID: "", wantErr: true},
-		{name: "平台管理员可绑定任意本公司人员", caller: platformAdmin, personID: "person-other"},
+		{name: "平台管理员也必须绑定人员", caller: platformAdmin, scope: platformScope, personID: "", wantErr: true},
+		{name: "平台管理员可绑定任意本公司人员", caller: platformAdmin, scope: platformScope, personID: "person-other"},
 	}
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
+			ctx := authctx.WithScope(context.Background(), test.scope)
 			err := svc.ensurePersonAssignable(ctx, test.caller, test.personID)
 			if test.wantErr {
 				if err == nil {

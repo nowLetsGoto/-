@@ -62,89 +62,54 @@ type teamLookup interface {
 	MemberTeamIDs(ctx context.Context, personID string) ([]string, error)
 }
 
-// roleAssigner 校验「调用者能否把某个角色分配给人员」。
-// 实现是 authz.Service（与 people 用的是同一个方法），保证账号页与人员页同一条判据：
-// 非超管只能分配权限点不超出自己范围的角色，因此拿不到 super-admin。
+// roleAssigner 是账号模块对授权服务的只读依赖，两个方法都由 authz.Service 实现：
+//   - ValidateRoleAssignable：校验能否把某角色分配给人员（防提权）；
+//   - Permissions：取调用者的最终权限，用来判断能否建账号。
+//
+// 合在一个窄接口里而不是加第二个依赖：两者本就是同一次授权判定的两个视角，
+// 装配时传同一个 authz.Service，单测时一个假对象就能覆盖。
 type roleAssigner interface {
 	ValidateRoleAssignable(ctx context.Context, identity contract.Identity, roleKey string) error
+	Permissions(ctx context.Context, identity contract.Identity, projectKey string) (map[string]struct{}, error)
 }
 
 func NewService(repo *userrepo.Repository, cleanup *repository.AccountCleanup, paths *storage.Paths, teams teamLookup, roles roleAssigner) *Service {
 	return &Service{repo: repo, cleanup: cleanup, paths: paths, teams: teams, roles: roles}
 }
 
-// resolveCreateLevel 校验调用者能否创建指定层级，并归一化默认值。
-// 这是三级账号体系的安全核心：层级只能往下建、归属只能留在自己公司。
+// resolveCreateLevel 校验账号接口能否创建账号，并归一化层级。
 //
-// 规则（按调用者层级）：
-//   - super_admin：可建 platform_admin / team_admin / member；不能建另一个 super_admin
-//     （平台管理员必须走「建公司」流程，与公司原子创建，避免孤儿公司）；
-//   - platform_admin：只能建 team_admin / member，归属本公司；
-//   - team_admin：只能建 member，归属本公司且团队落在自己关联团队内；
-//   - member：不能建账号（路由层已挡，这里再挡一次， defense in depth）。
+// 产品决策后的规则：
 //
-// 返回的 teamIDs 已经过归属校验，未指定的 team_admin 返回空切片（可后续在编辑页分配）。
-func resolveCreateLevel(caller contract.Identity, requested string, teamIDs []string, visibleTeamIDs []string) (string, []string, error) {
-	callerLevel := caller.Level()
+//   - 能力门槛：必须有 directory.write（路由层已守一次，这里 defense in depth）；
+//   - 经账号接口**只能建 member**。team_admin 与 member 现已统一由角色配置驱动，
+//     层级本身不再有管理含义，建一个 team_admin 没有价值；
+//   - 硬底线：super_admin 是平台身份、platform_admin 只能随公司创建，
+//     两者都不允许经账号接口发放——这条不受任何权限点影响。
+//
+// 归属固定为调用者所属公司（在 Create 里取 caller.TenantID），请求体无法越权指定。
+// 返回值只保留 level：团队归属来自人员档案（team_members），账号这一层不接受 teamIds。
+func resolveCreateLevel(requested string, hasAccountWrite bool) (string, error) {
 	level := strings.TrimSpace(requested)
 	if level == "" {
-		// 缺省层级：平台管理员建的是团队管理员之外的普通账号，团队管理员建的也是普通账号。
 		level = contract.AccountLevelMember
 	}
 	if !contract.IsAccountLevel(level) {
-		return "", nil, &contract.ValidationError{Message: "账号层级不合法"}
+		return "", &contract.ValidationError{Message: "账号层级不合法"}
 	}
-
-	// 任何人都不能通过账号接口创建超管：那是最高的平台身份，不在本链路里。
+	// 两条硬底线，放在能力校验之前：无论谁、无论配了什么权限都不能突破。
 	if level == contract.AccountLevelSuperAdmin {
-		return "", nil, contract.ErrForbidden
+		return "", contract.ErrForbidden
 	}
-	// 平台管理员**只能随公司创建**（POST /platform/tenants，见 repository/tenant.CreateWithAdmin），
-	// 任何路径都不许经账号接口单独建——包括超管。
-	//
-	// 为什么超管也要拦：本函数下面给账号定归属用的是 caller.TenantID，而超管的 TenantID 恒为空。
-	// 放行超管会建出「platform_admin 但 tenant_id 为空」的孤儿账号：它能登录、带 9 项权限点，
-	// 但 scope 推导落到「无公司 → 1 = 0」，任何数据都读不到，且没有公司归属、除了超管谁都管不了它。
-	// 这种账号没有任何合法用途，只会在账号列表里留下无法解释的一行。
 	if level == contract.AccountLevelPlatformAdmin {
-		return "", nil, &contract.ValidationError{
+		return "", &contract.ValidationError{
 			Message: "平台管理员需随公司一起创建（公司管理 → 新建公司）",
 		}
 	}
-
-	switch callerLevel {
-	case contract.AccountLevelSuperAdmin:
-		// 超管建账号时归属由请求指定（建公司流程另走 service/tenant，这里仅保留能力）。
-	case contract.AccountLevelPlatformAdmin:
-		if caller.TenantID == "" {
-			return "", nil, contract.ErrForbidden
-		}
-	case contract.AccountLevelTeamAdmin:
-		if level != contract.AccountLevelMember {
-			return "", nil, contract.ErrForbidden
-		}
-		if caller.TenantID == "" {
-			return "", nil, contract.ErrForbidden
-		}
-		// 团队管理员指定的团队必须是自己关联团队的子集，防止跨团队授权。
-		allowed := make(map[string]struct{}, len(visibleTeamIDs))
-		for _, id := range visibleTeamIDs {
-			allowed[id] = struct{}{}
-		}
-		for _, id := range teamIDs {
-			if _, ok := allowed[id]; !ok {
-				return "", nil, contract.ErrForbidden
-			}
-		}
-	default:
-		return "", nil, contract.ErrForbidden
+	if !hasAccountWrite {
+		return "", contract.ErrForbidden
 	}
-
-	// 只有 team_admin 才有团队关联；其他层级即使传了 teamIds 也忽略，避免脏数据。
-	if level != contract.AccountLevelTeamAdmin {
-		teamIDs = nil
-	}
-	return level, teamIDs, nil
+	return contract.AccountLevelMember, nil
 }
 
 // List 返回该模式的账号页；keyword 同时匹配登录名与绑定人员姓名。
@@ -179,8 +144,16 @@ func (s *Service) Create(ctx context.Context, caller contract.Identity, in contr
 
 	// 层级与归属从调用者推导，请求体无法越权指定。
 	// team_admin 建普通账号时，其可见团队由 ScopeOf 注入的 scope 提供。
-	scope := authctx.ScopeFrom(ctx)
-	level, teamIDs, err := resolveCreateLevel(caller, in.AccountLevel, in.TeamIDs, scope.TeamIDs)
+	// 建账号的能力来自权限点：角色配了 directory.write 就能建。
+	// 判定复用 authz 服务（它已按"身份固有 ∪ 角色配置"算好最终权限），
+	// 不在这里重新实现一遍——权限判定必须只有一个出口。
+	permissions, err := s.roles.Permissions(ctx, caller, "")
+	if err != nil {
+		return contract.User{}, err
+	}
+	_, hasAccountWrite := permissions[contract.PermissionDirectoryWrite]
+
+	level, err := resolveCreateLevel(in.AccountLevel, hasAccountWrite)
 	if err != nil {
 		return contract.User{}, err
 	}
@@ -209,7 +182,7 @@ func (s *Service) Create(ctx context.Context, caller contract.Identity, in contr
 
 	// 归属固定为调用者所属公司：平台管理员与团队管理员都只能在本公司建账号。
 	record, err := s.repo.Create(ctx, username, hash, caller.Mode, personID, roleKey,
-		in.IsSuperAdmin, level, caller.TenantID, teamIDs)
+		in.IsSuperAdmin, level, caller.TenantID, nil)
 	if err != nil {
 		if repository.IsUniqueViolation(err) {
 			return contract.User{}, &contract.ValidationError{Message: "该账号名已存在"}
@@ -288,14 +261,18 @@ func (s *Service) ensureInScope(ctx context.Context, caller contract.Identity, t
 	return s.ensureTeamScope(ctx, caller, target)
 }
 
-// ensureTeamScope 落实团队负责人的横向边界。
+// ensureTeamScope 落实普通账号（team_admin / member）的横向边界。
 //
 // 谁能操作谁：
 //   - 自己：始终可以，否则连自己的账号都碰不到；
-//   - 普通成员：必须在自己管理的团队里；
-//   - 团队负责人及以上：一律不可，交给平台管理员。
-//     这一条不能省——否则两个团队负责人之间可以互相停用账号，
-//     而同为公司管理层，他们本该是平级关系。
+//   - 同团队的账号：可以，范围由 scope.TeamIDs 决定；
+//   - 跨团队：一律按"不存在"处理，不透露对方账号是否有这个 id。
+//
+// 与旧设计的区别：过去 team_admin 被视为"管理层"，不能操作其他 team_admin；
+// 现在 team_admin 与 member 统一由角色配置驱动，不再有这层身份特权，
+// 因此判断只看"目标是不是平台治理者"，不看 team_admin/member 之分。
+//
+// 平台管理员（scope.TeamScoped=false）不受本函数限制——它管整家公司。
 func (s *Service) ensureTeamScope(ctx context.Context, caller contract.Identity, target userrepo.Record) error {
 	scope := authctx.ScopeFrom(ctx)
 	if !scope.TeamScoped {
@@ -304,9 +281,11 @@ func (s *Service) ensureTeamScope(ctx context.Context, caller contract.Identity,
 	if target.User.ID == caller.UserID {
 		return nil
 	}
-	// 只按「有效层级」判：过渡期布尔与枚举可能不一致，Level() 是唯一折算入口。
-	if contract.EffectiveAccountLevel(target.User.AccountLevel, target.User.IsSuperAdmin) !=
-		contract.AccountLevelMember {
+	// 平台治理者账号（platform_admin）绝不能由普通账号操作——
+	// 它们不在角色配置范围内，是超管建公司时生成的身份，
+	// 允许操作等于让公司内的任意角色拿到公司级治理权。
+	targetLevel := contract.EffectiveAccountLevel(target.User.AccountLevel, target.User.IsSuperAdmin)
+	if targetLevel != contract.AccountLevelMember && targetLevel != contract.AccountLevelTeamAdmin {
 		return errAccountNotFound
 	}
 	inTeam, err := s.personInTeams(ctx, target.User.PersonID, scope.TeamIDs)
@@ -339,8 +318,9 @@ func (s *Service) ensurePersonAssignable(ctx context.Context, caller contract.Id
 	if personID == "" {
 		return &contract.ValidationError{Message: "请为该账号绑定人员：账号的权限来自绑定的人员"}
 	}
-	// 只有团队负责人需要再确认「这个人在不在我管的团队里」。
-	if caller.Level() != contract.AccountLevelTeamAdmin {
+	// 只有受团队边界约束的账号（TeamScoped）才需要确认"这个人是不是同团队"。
+	// 平台管理员 scope 不按团队收敛，因此不受这一层限制。
+	if !authctx.ScopeFrom(ctx).TeamScoped {
 		return nil
 	}
 	inTeam, err := s.personInTeams(ctx, personID, authctx.ScopeFrom(ctx).TeamIDs)

@@ -1572,3 +1572,74 @@ fillOne(ctx, *Role)                 三处详情回读共用的装配
 
 ### 状态
 五道门禁全绿（12 包）；未 git commit。
+
+---
+
+## §30 身份层级收敛：只保留超管与公司管理员（2026-11-19）
+
+### 产品决策（用户逐条确认）
+| 决策 | 选择 |
+|---|---|
+| 身份层级适用范围 | **仅 super_admin / platform_admin 保留** |
+| team_admin / member 的数据范围 | **统一按 team_members，严格隔离**（无团队 = 无数据） |
+| 管理类权限点 | **全部开放给角色勾选** |
+| 普通账号建号 | **配了 directory.write 可建 member**，不能建高层级 |
+
+### 改动
+
+**后端**
+- `ScopeOf`：team_admin / member 合并为一个分支，统一走 `memberScope()`，
+  一律读 `team_members` + `TeamScoped=true` + `SelfUserID`。`team_admins` 表保留但不再参与 scope。
+- `managementPermissions`：只有 platform_admin 有固有权限；team_admin 归零。
+- `Permissions` 目录加入 9 个管理权限点（directory.write、role.read/write/delete、
+  settings.read/write、audit.read），普通账号靠角色勾选获得。
+- 路由门槛：`/admin/users`、`/roles`、`/settings`、`/admin/audit-logs`
+  从 `RequireMinLevel` 改为 `RequirePermission`，按读写细分。
+- `resolveCreateLevel`：重写为"有 directory.write 才能建，且只能建 member"。
+  硬底线不变：super_admin 和 platform_admin 永不经账号接口创建。
+- `ensureTeamScope` / `ensurePersonAssignable`：对齐"两档统一"，
+  只拦"目标是不是平台治理者"，不再有 team_admin 之间的平级互斥。
+
+**前端**
+- `navigation.ts`：管理菜单门槛从 `minLevel` 改为权限点；只剩「公司管理」保留 `super_admin`。
+- `App.tsx`：路由守卫 `LevelGate` → `PermissionGate`；`LevelGate` 仅剩 `AdminGate` 内部使用。
+- `RolesPage`：新建入口按 `role.write` 显示。
+
+### 顺带修掉两个真实 bug
+
+**1. API Key 唯一索引错误地约束空串**（§27 只修了迁移脚本，没修索引本身）
+`EnsureRow` 给新公司插入空串 key 时撞唯一索引 → 设置页 500。
+根因：`CREATE UNIQUE INDEX ON system_settings(api_key)` 把**所有空串当成同一把 Key**，
+全平台只能有一家公司"未配置"。
+修法：改为部分索引 `WHERE api_key <> ''`——空串是"未配置"状态，每家公司都可以有。
+
+**2. 启动时删除新开放的权限点**
+`schema.sql` 里有一条历史迁移每次启动都执行
+`DELETE FROM role_permissions WHERE permission IN ('role.read','role.write')`
+（它们曾被"收归超管"）。现在重新开放后，这条会在每次启动把管理员刚配好的权限删掉。
+修法：删除该语句；新增 `ReconcilePermissions()` 在 Go 侧按 `contract.Permissions` 对齐
+（只删不在目录里的，不擅自补）。与菜单的 `ReconcileBuiltinMenus` 同一机制。
+
+### ⚠️ 存量影响（严格团队隔离）
+按用户选择，`TeamScoped=true` 且无团队 = 无数据。上线前检查：
+
+| 账号 | 公司 | 状态 |
+|---|---|---|
+| chendong | 世界第一家公司 | 已绑团队 ✅ |
+| xuzhijun | 世界第二家公司 | 已绑团队 ✅ |
+| zouliang | 世界第二家公司 | 已绑团队 ✅ |
+| **linanan** | 默认公司 | **未绑定人员 → 上线后看不到业务数据**，需先补人员与团队关联 |
+
+其余已有 team_admin 账号若通过 `team_admins` 关联团队而没绑 `team_members`，也会失去视野。
+
+### 验证
+- 配置型 member（角色勾了管理权限）可进 `/roles`、`/settings`、`/admin/audit-logs`、`/admin/users`，
+  能建角色（201）、能改设置（200）
+- 未配权限的 member 全部 403
+- 严格团队隔离：只见本团队人员
+- 建号边界：可建 member（201），建 platform_admin 被拒（400）
+- 超管 / 平台管理员行为不变
+- 五道门禁全绿（12 包）；测试数据已清理
+
+### 状态
+未 git commit。
