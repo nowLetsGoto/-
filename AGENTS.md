@@ -129,9 +129,10 @@ main.tsx（挂载） → App
 - 列表接口直接返回关联的 `{id,name}`；页面不得为了显示名字再挂别人的列表接口。
 - 角色权限点目录在 `contract.Permissions`；数据库 `role_permissions` 只存"角色拥有哪些权限"。新增权限点不改表结构。
 - 内置角色只在缺失时播种默认权限；用户改过的权限不会被重启覆盖。`super-admin` 权限恒为全量且不可修改。
-- **角色管理整块归超管**：`/permissions`、`/roles`、`/roles/{key}`（GET/POST/PUT）五个接口全部挂在 `RequireSuperAdmin` + `RequireTeamMode` 上，普通账号连角色清单都看不到（前端菜单与路由也用 `requireSuperAdmin` / `AdminGate` 拦）。
-  - 因此权限目录里**没有** `role.read` / `role.write`：能看角色的人一定是超管，留一个"勾了也判不过"的权限点只会在角色编辑页造出无效选项。`role_permissions` 是裸 TEXT 无外键，删目录项不会自动清库，靠 `schema.sql` 里的幂等 `DELETE` 收尾。
-- 角色授予（人员的 `role_key`、项目的 `role_key`）只有超管能改，避免普通编辑者自提权。
+- **角色管理由权限点驱动**：`role.read`（查看）、`role.write`（新建/编辑）、`role.delete`（删除）三个点都在 `contract.Permissions` 可勾选目录里，普通账号凭角色配置即可管理本公司角色。`platform_admin` 固有这三个点，超管经 `allPermissions` 全量覆盖。
+  - 菜单会员门槛用 `role.read`，表单路由用 `PermissionGate(role.write)`——**页面内部的只读判定也必须用 `can(me,'role.write')`**，不要用 `atLeastLevel`：那里曾是"角色归超管"时代的写法，漏改会让有权限的账号看到整页禁用。
+- **账号接口按 `id` 定位，不用 `key`**：`/roles/{id}`。`key` 只保证公司内唯一，超管 `scope.All` 下按 key 查会随机命中一家（曾因此改错公司的同名角色）。`FindByKey`/`FindByKeyAny` 仍保留，只服务于 authz 的"按角色 key 解析权限"（发生在 scope 推导链路中）。
+- 角色授予（人员的 `role_id`）由 `authz.ValidateRoleAssignable` 把关：非超管只能分配权限点不超出自己范围的角色，避免自提权。
 - 审计日志只追加，没有 UPDATE / DELETE 接口；`actor_name` 冗余存储，账号改名或删除后历史仍可读。审计写入失败只记日志，不让业务回滚。
 - 审计日志的「模式」列不是新增字段：`solo.audit_logs` / `team.audit_logs` 物理分区本身就是模式来源，`repository.Partition.Mode()` 做逆映射后由仓储回填，零迁移。跨模式查询不存在，因为每次会话只查自己那套分区。
 
@@ -155,9 +156,14 @@ main.tsx（挂载） → App
   - 「上传包」：`build.write`
   - 「新增 / 编辑人员、团队」：`directory.write`
   - 「新增 / 编辑项目」：`project.write`
+  - 「新建 / 编辑角色」：`role.write`；「删除角色」：`role.delete`
+  - 「账号列表」：`account.read`（只读）；账号的增删改**不看权限点**，按 `atLeastLevel(me,'platform_admin')` 隐藏
   - `me` 尚未加载完（为 `null`）时一律按无权限处理——宁可少渲染一个按钮，也不要先画出来再让它点了报 403。
   - 单人模式不需要在前端分模式判断：它的基线权限已由服务端算进 `permissions`。
-- **「超管专属」用 `requireSuperAdmin` / `AdminGate`，不要伪装成权限点**：角色管理就是这种情况（没有 `role.*` 可判）。`NavItem.requireSuperAdmin` 决定菜单是否渲染，`AdminGate` 决定整页能不能进，两者都只是体验层，服务端 `RequireSuperAdmin` 才是边界。
+- **两类门槛不要混用**：
+  - 「业务/管理能力」用权限点（`can(me, 'role.write')`）——可由角色配置，`platform_admin` 另有固有下发。
+  - 「平台治理动作」用层级（`atLeastLevel(me, 'platform_admin')` 或 `AdminGate`）——**有意不开放给角色配置**。当前只有两处：账号的增删改（§33）、新建团队（要求非 TeamScoped 的公司级视野）。
+  - 「超管专属」用 `requireSuperAdmin` / `AdminGate`：当前只剩「公司管理」（`/admin/tenants`），且它**不在** `contract.Menus` 授权目录里——超管始终全量，列进目录只会误导。
 - `/me` 返回 `roleKey` / `roleName` 供账号卡展示「当前角色」；没有角色时两者都是空串，**前端统一显示「普通用户」**，后端不为此造一个假角色。
 - 禁用账号、重置密码、禁止自己取消超管、禁止禁用自己、禁止丢掉最后一个超管：这些护栏属于业务层，不能只靠 UI。
 - **账号本身带模式**：`users.mode`（`solo` / `team`）记录账号归属哪套数据，**创建时定下、之后不可改**。账号管理列表、详情、编辑、删除都**按当前登录模式筛选**：单人模式只看得到、也只能操作单人账号，反之亦然；跨模式在 `service` 一律判为「账号不存在」，仓储的 `DELETE ... WHERE id=$1 AND mode=$2` 再兜一层，不泄漏另一种模式里有没有这个账号。
@@ -212,7 +218,8 @@ main.tsx（挂载） → App
 | 新增项目内板块 | 后端按层建同名功能目录；前端 `navigation.ts` 加 `scope:'project'` 项；`App.tsx` 加到 `/p/:key/*` 下；接口带 `project` |
 | 新增一级菜单 | `navigation.ts` 加分组/项；`pages/` 新建同名目录；`App.tsx` 加路由；后端权限点同步 |
 | 改权限 | `contract.Permissions` → 内置角色默认权限 → 前端权限文案 → 接口上的 `RequirePermission` → 测试 |
-| 把某功能收归超管 | 路由挪进 `admin` 组（`RequireSuperAdmin`）→ 删掉对应权限点 → `schema.sql` 幂等清库 → `NavItem.requireSuperAdmin` / `AdminGate` → 清理各页面对该权限点的引用 |
+| 把某功能收归超管 | 路由挪进 `admin` 组（`RequireSuperAdmin`）→ 从 `contract.Menus` 移除该菜单 → 删权限点 → `ReconcilePermissions` 自动清库 → 前端去掉菜单项 |
+| 把某能力改为「只看身份」 | 路由用 `RequireMinLevel` 而非 `RequirePermission` → 前端用 `atLeastLevel` 而非 `can` → 同步该页只读态判定（**别只改路由**） |
 | 引入 UI 组件 | 从 `@seakoi/console-kit` 根入口按命名导出引入；通用控件放进 `components/` 封装，页面不散用裸控件；禁止直接 import antd / qrcode.react |
 | 新增 tab / 分段筛选 | 用 `Controls.Segmented`，不要手写 `.segment` 一类样式；选项文案与说明放 `utils/format.ts` 统一供多处复用 |
 | 改登录/令牌 | `handler/login`、`service/login`、`middleware/login`、`api/session.ts`、OpenAPI；改载荷格式会让旧令牌失效，需明确告知用户重新登录 |
