@@ -186,6 +186,17 @@ export const NAV_SECTIONS: ReadonlyArray<NavSection> = [
         envScoped: false,
       },
       {
+        // 审计日志：本公司范围内"谁改了什么"。放在公司设置而不是平台管理，
+        // 因为平台管理整组是超管门槛，而审计的实际使用者是公司管理员。
+        // 后端按 scope 过滤：平台管理员只看本公司，超管看全部。
+        label: '审计日志',
+        path: '/admin/audit-logs',
+        minLevel: 'platform_admin',
+        icon: 'overview',
+        scope: 'platform',
+        envScoped: false,
+      },
+      {
         label: '平台集成',
         path: '/settings',
         minLevel: 'platform_admin',
@@ -206,14 +217,6 @@ export const NAV_SECTIONS: ReadonlyArray<NavSection> = [
         path: '/admin/tenants',
         minLevel: 'super_admin',
         icon: 'team',
-        scope: 'platform',
-        envScoped: false,
-      },
-      {
-        label: '审计日志',
-        path: '/admin/audit-logs',
-        minLevel: 'super_admin',
-        icon: 'overview',
         scope: 'platform',
         envScoped: false,
       },

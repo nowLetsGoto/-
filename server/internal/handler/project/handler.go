@@ -13,16 +13,20 @@ import (
 	"dandelion/server/internal/authctx"
 	"dandelion/server/internal/contract"
 	"dandelion/server/internal/handler"
+	auditsvc "dandelion/server/internal/service/audit"
 	projectsvc "dandelion/server/internal/service/project"
 )
 
 // Handler 只依赖项目业务层。
+// Handler 依赖项目业务层与审计。项目是包的一级归属，
+// 改名/删除都影响历史可追溯性，因此增删改一律留痕。
 type Handler struct {
-	svc *projectsvc.Service
+	svc   *projectsvc.Service
+	audit *auditsvc.Service
 }
 
-func NewHandler(svc *projectsvc.Service) *Handler {
-	return &Handler{svc: svc}
+func NewHandler(svc *projectsvc.Service, audit *auditsvc.Service) *Handler {
+	return &Handler{svc: svc, audit: audit}
 }
 
 // List 返回项目：单人模式只有本人的项目，团队模式是全量。
@@ -73,6 +77,8 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
+	h.audit.Record(r.Context(), identity, "project.created", "project", item.Key,
+		map[string]any{"name": item.Name, "roleKey": item.RoleKey}, handler.ClientIP(r))
 	return handler.OKWithStatus(w, http.StatusCreated, item)
 }
 
@@ -99,6 +105,8 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
+	h.audit.Record(r.Context(), identity, "project.updated", "project", item.Key,
+		map[string]any{"name": item.Name, "roleKey": item.RoleKey}, handler.ClientIP(r))
 	return handler.OK(w, item)
 }
 
@@ -109,8 +117,11 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) error {
 // 删除是破坏性操作，确实该有审计，但那属于"给项目模块整体接审计"的独立改动。
 func (h *Handler) Delete(w http.ResponseWriter, r *http.Request) error {
 	key := chi.URLParam(r, "key")
-	if err := h.svc.Delete(r.Context(), key, projectView(authctx.From(r.Context()))); err != nil {
+	identity := authctx.From(r.Context())
+	if err := h.svc.Delete(r.Context(), key, projectView(identity)); err != nil {
 		return err
 	}
+	h.audit.Record(r.Context(), identity, "project.deleted", "project", key,
+		nil, handler.ClientIP(r))
 	return handler.OK(w, nil)
 }

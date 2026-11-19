@@ -29,12 +29,14 @@ export function Sidebar(): JSX.Element {
   const level = levelRank(me?.accountLevel);
   const permissions = me?.permissions ?? [];
 
-  // 单人模式：只有概览 / 应用包 / 应用；管理员额外保留审计日志与平台集成。
+  // 单人模式：个人工作台，只有概览 / 应用包 / 应用；超管额外保留账号管理与平台集成。
   // 团队模式：按身份层级 + 角色权限完整投影。
+  //
+  // 审计日志不在这里：它属于"看别人做了什么"的管理能力，服务端要求团队模式
+  // （solo 分区的审计不带公司过滤，放进单人视图会变成跨公司泄漏）。
   const soloAllowed = new Set(['/overview', '/packages', '/apps', '/directory/projects']);
   if (mode === 'solo' && isAdmin) {
     soloAllowed.add('/admin/accounts');
-    soloAllowed.add('/admin/audit-logs');
     soloAllowed.add('/settings');
   }
   const canSee = (item: NavItem): boolean => {
@@ -48,13 +50,7 @@ export function Sidebar(): JSX.Element {
   const sections = NAV_SECTIONS.map((section) => ({
     ...section,
     items: section.items.filter(canSee),
-  }))
-    .filter((section) => canSeeNavSection(section, level, isAdmin, section.items.length))
-    .map((section) =>
-      mode === 'solo' && isAdmin && section.minLevel === 'super_admin'
-        ? { ...section, title: '管理员工具' }
-        : section,
-    );
+  })).filter((section) => canSeeNavSection(section, level, isAdmin, section.items.length));
 
   return (
     <aside className="sidebar">

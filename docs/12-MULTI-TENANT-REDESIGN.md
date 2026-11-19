@@ -1253,3 +1253,57 @@ key 才能退化成纯业务字段、按公司划分。
 
 ### 状态
 五道门禁全绿；测试数据已清理；未 git commit。
+
+---
+
+## §24 审计日志下放公司管理员；补齐审计覆盖面（2026-11-19）
+
+### 需求
+平台管理员应能看**本公司**的审计日志，且与其他公司隔离。
+
+### 实现
+仓储层早就支持按 tenant 过滤（`repository/audit.List` 调 `ApplyTenant`），
+缺的只是入口——审计原先挂在超管专区（`RequireSuperAdmin`）。改动三处：
+
+1. **后端**：审计从 `admin` 组移到独立组：
+   `RequireAuth + InjectScope + RequireMinLevel(platform_admin) + RequireTeamMode`
+2. **前端菜单**：审计日志从「平台管理」（超管组）移到「公司设置」（platform_admin 组）
+3. **前端路由守卫**：`AdminGate` → `LevelGate(platform_admin)`
+
+### ⚠️ 必须同时加 RequireTeamMode（关键）
+`solo.audit_logs` 分区**不做 tenant 过滤**（原注释：个人工作台没有租户概念）。
+若允许在单人模式查询，一个平台管理员用 solo 登录就能读到**全平台单人用户**的审计——
+那是跨公司泄漏。审计属于管理能力，只应在团队视图存在。
+
+代价：超管在 solo 模式也看不到审计了（原 `admin` 组不限模式）。这是刻意的取舍，
+单人工作台本无管理语义；前端 `soloAllowed` 同步移除了该菜单。
+
+### 顺带补上的缺口：审计只覆盖少数动作
+实测发现平台管理员拿到 0 条——不是过滤错，而是**人员/团队/项目三个模块从不写审计**
+（handler 里没有 audit 依赖）。这会让"审计"名不副实：管理员最关心的正是这些变动。
+
+已补齐 9 个动作：
+- `person.created` / `person.updated` / `person.deleted`
+- `team.created` / `team.updated` / `team.deleted`
+- `project.created` / `project.updated` / `project.deleted`
+
+`person.updated` 与 `project.updated` 都带 `roleKey`：改角色是本页影响权限最大的动作，
+事后必须能查到"谁把谁提成了什么"。`team.updated` 带成员数与项目数，
+因为关联变化直接改变成员的可视范围。
+
+### 验证（26 项全过）
+| 组 | 结果 |
+| --- | --- |
+| 审计隔离 6/6 | A 只看自己、B 只看自己、超管跨全部、按他人账号名筛选也捞不到（0 条） |
+| 审计覆盖 6/6 | 人员/团队/项目/角色/账号的管理动作都有记录，删除也留痕 |
+| 跨公司隔离 17/17 | 管理员/团队负责人/普通成员三种身份，读不到对方项目、包、人员、团队、角色 |
+| solo 防护 3/3 | 平台管理员 solo 查审计 403；超管 solo 也 403；超管 team 正常 200 |
+
+### 顺带修
+- `visible_test.go` 期望值补上 `r.` 别名（§23 给 visibleFilter 加别名时的遗漏）
+- `RolesPage` 注释仍写"由 AdminGate 把关"，实际早已是 LevelGate
+- `Sidebar` 里「平台管理」组重命名为"管理员工具"的分支成了死代码
+  （该组只剩公司管理，而公司管理不在 `soloAllowed` 里，整组必然隐藏）——已删
+
+### 状态
+五道门禁全绿（11 包）；测试数据已清理；未 git commit。

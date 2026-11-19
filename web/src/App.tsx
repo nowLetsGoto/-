@@ -314,9 +314,12 @@ export function App(): JSX.Element {
           <Route
             path="/admin/audit-logs"
             element={
-              <AdminGate>
+              // 审计日志对平台管理员开放（后端 RequireMinLevel(platform_admin)），
+              // 因此用 LevelGate 而不是 AdminGate——后者只放行超管。
+              // 平台管理员看到的范围由服务端按 scope 收敛到本公司，前端无需区分。
+              <LevelGate minLevel="platform_admin">
                 <AuditLogsPage />
-              </AdminGate>
+              </LevelGate>
             }
           />
           {/* 公司管理：平台最高权限动作，连查看也只给超管（后端 RequireSuperAdmin）。

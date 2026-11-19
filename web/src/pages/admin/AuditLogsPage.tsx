@@ -1,9 +1,14 @@
 /**
- * 审计日志（超级管理员 → 审计日志）。
+ * 审计日志（公司设置 → 审计日志）。
  * 职责：按动作 / 操作者 / 结果筛选，分页展示；点行看详情（detail 的 JSON 原文）。
  * 输入：URL 的 page / pageSize、页面内的筛选条件；输出：只读表格 + 详情抽屉。
  * 边界：只读页面，不提供任何修改/删除入口；日志由服务端在业务动作后自动写入；
  *       模式（单人 / 团队）是记录的固有属性，来自日志所处的分区，不可作为筛选条件。
+ *
+ * 可见范围由服务端决定，前端不做二次过滤：
+ *   - 平台管理员：只看本公司（scope.TenantID）；
+ *   - 超级管理员：看全部公司（scope.All）。
+ * 本页只负责渲染拿到的数据，因此同一个页面在两种身份下都成立。
  */
 import { useEffect, useState } from 'react';
 import type { TableColumnsType } from '@seakoi/console-kit';
@@ -14,6 +19,7 @@ import { Button, Input, Segmented } from '../../components/Controls';
 import { DataTable } from '../../components/DataTable';
 import { DetailDrawer } from '../../components/DetailDrawer';
 import { Empty, ErrorState } from '../../components/States';
+import { useMe } from '../../hooks/useMe';
 import { usePageState } from '../../hooks/usePageState';
 import { formatDate, modeLabel } from '../../utils/format';
 
@@ -48,6 +54,7 @@ const RESULT_OPTIONS: ReadonlyArray<{ value: ResultFilter; label: string }> = [
 
 export function AuditLogsPage(): JSX.Element {
   const { page, pageSize, change } = usePageState();
+  const { me } = useMe();
 
   const [form, setForm] = useState({
     action: '',
@@ -164,7 +171,10 @@ export function AuditLogsPage(): JSX.Element {
       <div className="page-head">
         <div>
           <h1>审计日志</h1>
-          <p className="sub">共 {state.total} 条 · 只读，任何账号都无法修改或删除</p>
+          <p className="sub">
+            共 {state.total} 条 · 只读，任何账号都无法修改或删除
+            {me?.isSuperAdmin ? ' · 覆盖全部公司' : ' · 仅本公司'}
+          </p>
         </div>
       </div>
 

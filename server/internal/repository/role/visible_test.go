@@ -28,7 +28,7 @@ func TestVisibleFilter(t *testing.T) {
 			// 因此可见范围就是一个等值条件。
 			name:     "公司账号只看本公司的角色（含内置副本）",
 			scope:    contract.Scope{TenantID: "t-1"},
-			wantCond: "tenant_id = $1",
+			wantCond: "r.tenant_id = $1",
 			wantArgs: []any{"t-1"},
 		},
 		{

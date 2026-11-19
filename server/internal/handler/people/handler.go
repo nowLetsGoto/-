@@ -14,19 +14,24 @@ import (
 	"dandelion/server/internal/authctx"
 	"dandelion/server/internal/contract"
 	"dandelion/server/internal/handler"
+	auditsvc "dandelion/server/internal/service/audit"
 	authzsvc "dandelion/server/internal/service/authz"
 	peoplesvc "dandelion/server/internal/service/people"
 )
 
-// Handler 只依赖人员业务层。
+// Handler 依赖人员业务层、授权服务（仅 /me）与审计。
+// 审计是"谁改了人员档案"的唯一痕迹：人员变动直接影响权限归属，
+// 公司管理员查审计时最常看的就是这一类。
 type Handler struct {
 	svc *peoplesvc.Service
 	// authz 只用于 /me：把"全局权限集合"一并返回，前端据此裁剪菜单与按钮。
 	authz *authzsvc.Service
+	// audit 记录增删改；写入失败只记日志，不影响业务（见 service/audit.Record）。
+	audit *auditsvc.Service
 }
 
-func NewHandler(svc *peoplesvc.Service, authz *authzsvc.Service) *Handler {
-	return &Handler{svc: svc, authz: authz}
+func NewHandler(svc *peoplesvc.Service, authz *authzsvc.Service, audit *auditsvc.Service) *Handler {
+	return &Handler{svc: svc, authz: authz, audit: audit}
 }
 
 // List 返回全部人员，已带关联的团队与项目。
@@ -63,6 +68,9 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
+	h.audit.Record(r.Context(), authctx.From(r.Context()), "person.created", "person", item.ID,
+		map[string]any{"name": item.Name, "username": item.Username, "roleKey": item.RoleKey},
+		handler.ClientIP(r))
 	return handler.OKWithStatus(w, http.StatusCreated, item)
 }
 
@@ -90,6 +98,9 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
+	// 记下角色键：改角色是本页影响权限最大的动作，事后必须能查到"谁把谁提成了什么"。
+	h.audit.Record(r.Context(), authctx.From(r.Context()), "person.updated", "person", item.ID,
+		map[string]any{"name": item.Name, "roleKey": item.RoleKey}, handler.ClientIP(r))
 	return handler.OK(w, item)
 }
 
@@ -97,9 +108,12 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) error {
 // 「能不能删」由 service 判定并把原因写进 400 的 message，这里只做转发——
 // HTTP 层不该知道"人员还挂在几个团队"这种业务事实。
 func (h *Handler) Delete(w http.ResponseWriter, r *http.Request) error {
-	if err := h.svc.Delete(r.Context(), chi.URLParam(r, "id")); err != nil {
+	id := chi.URLParam(r, "id")
+	if err := h.svc.Delete(r.Context(), id); err != nil {
 		return err
 	}
+	h.audit.Record(r.Context(), authctx.From(r.Context()), "person.deleted", "person", id,
+		nil, handler.ClientIP(r))
 	return handler.OK(w, nil)
 }
 

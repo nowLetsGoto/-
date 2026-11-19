@@ -202,7 +202,24 @@ func NewRouter(d Deps) http.Handler {
 			// 启停与删除公司：比"建"更危险（影响面是整家公司），因此同样只在超管专区。
 			admin.Post("/platform/tenants/{id}/status", middleware.Wrap(d.Tenants.SetStatus))
 			admin.Delete("/platform/tenants/{id}", middleware.Wrap(d.Tenants.Delete))
-			admin.Get("/admin/audit-logs", middleware.Wrap(d.Audit.List))
+		})
+
+		// 审计日志：平台管理员及以上，限本公司；超管（All）看全部平台审计。
+		//
+		// 为什么必须单独成组而不是留在超管专区：
+		//   - 需要 InjectScope 才知道"查哪家公司"——超管专区没有 scope 注入；
+		//   - 下放给平台管理员后，他能查本公司谁改了什么，这才是审计的实际用途。
+		//
+		// 为什么必须叠 RequireTeamMode：solo 分区的审计**不带租户过滤**
+		// （个人工作台没有公司概念，见 repository/audit.List 的说明）。
+		// 若允许在单人模式查询，一个平台管理员用 solo 登录就能看到全平台单人用户的审计记录——
+		// 那是一条跨公司泄漏。审计属于管理能力，只在团队视图存在。
+		api.Group(func(audit chi.Router) {
+			audit.Use(loginmw.RequireAuth(d.Verify))
+			audit.Use(loginmw.InjectScope(d.Authz))
+			audit.Use(loginmw.RequireMinLevel(contract.AccountLevelPlatformAdmin))
+			audit.Use(authzmw.RequireTeamMode)
+			audit.Get("/admin/audit-logs", middleware.Wrap(d.Audit.List))
 		})
 
 		// 平台集成配置：平台管理员及以上，限本公司（超管落到平台兜底行）。

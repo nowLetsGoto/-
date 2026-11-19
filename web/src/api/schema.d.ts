@@ -303,7 +303,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** 审计日志（仅超级管理员，只读） */
+        /**
+         * 审计日志（平台管理员及以上，只读）
+         * @description 可见范围由服务端按身份收敛：平台管理员只看本公司，超级管理员看全部公司。 仅团队模式下可用——单人分区的审计不带公司过滤，允许单人视图查询会跨公司泄漏。
+         */
         get: operations["listAuditLogs"];
         put?: never;
         post?: never;
