@@ -86,7 +86,7 @@ func (r *Repository) SetStatus(ctx context.Context, id, status string) (contract
 	var tenantID string
 	err := r.db.QueryRowContext(ctx, query, status, id).Scan(&tenantID)
 	if errors.Is(err, sql.ErrNoRows) || errors.Is(err, pgx.ErrNoRows) {
-		return contract.Tenant{}, contract.ErrNotFound
+		return contract.Tenant{}, contract.NotFound(contract.ResourceTenant)
 	}
 	if err != nil {
 		return contract.Tenant{}, fmt.Errorf("更新公司状态失败: %w", err)
@@ -161,7 +161,7 @@ func (r *Repository) findByID(ctx context.Context, id string) (contract.Tenant, 
 	item, err := scan(row)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) || errors.Is(err, pgx.ErrNoRows) {
-			return contract.Tenant{}, contract.ErrNotFound
+			return contract.Tenant{}, contract.NotFound(contract.ResourceTenant)
 		}
 		return contract.Tenant{}, fmt.Errorf("读取公司失败: %w", err)
 	}
@@ -234,7 +234,7 @@ func (r *Repository) CreateWithAdmin(ctx context.Context, in contract.TenantInpu
 	item, err := scan(row)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) || errors.Is(err, pgx.ErrNoRows) {
-			return contract.Tenant{}, contract.ErrNotFound
+			return contract.Tenant{}, contract.NotFound(contract.ResourceTenant)
 		}
 		return contract.Tenant{}, fmt.Errorf("读取新建公司失败: %w", err)
 	}

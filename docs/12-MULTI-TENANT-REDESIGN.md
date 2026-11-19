@@ -1384,3 +1384,44 @@ key 才能退化成纯业务字段、按公司划分。
 
 ### 状态
 五道门禁全绿（12 包）；测试数据已清理；未 git commit。
+
+---
+
+## §26 全局错误文案：资源名唯一变量，句式一处生成（2026-11-19）
+
+### 问题
+`contract.ErrNotFound = errors.New("包不存在或已被移除")` 被 20+ 处返回，
+涵盖应用包、团队、人员、角色、公司、账号。结果团队/人员的 404 也提示「包不存在」，
+用户找错方向。既有 `NotFoundError` 场景化类型只有一个调用点（账号），形同虚设。
+
+另外三处同名 `translate` 函数其实做三件不同的事：
+- `repository/project`：无行 → 400 参数错误
+- `service/people`：约束冲突 → 中文 400
+- `service/teams`：外键冲突 → 中文 400
+
+同名不同义，读代码时无法从名字判断行为。
+
+### 设计（一处定义，两处生效）
+1. **资源名集中成契约常量**：`ResourceBuild / Project / Person / Team / User / Role / Tenant / File`
+2. **句式由 `NotFoundError` 统一生成**：`"{资源}不存在或已被移除"`。
+   不提供"自带整句文案"的构造函数——那正是句式漂移的根源。
+3. **`NotFoundError.Is(target)` 让它与 `ErrNotFound` sentinel 等价**：
+   这是平滑改造的关键——仓储返回资源化错误，但 10+ 处
+   `errors.Is(err, contract.ErrNotFound)` 判断无需改动就能继续工作。
+   **「改文案」与「改判定」解耦。**
+4. **兜底 sentinel 改为中性文案**：`"该资源不存在或已被移除"`，不再绑定具体资源。
+5. `EnsureDeleted(result, resource)` 第二参数从内部表名改为上屏资源名。
+6. 三处 `translate` 按真实职责重命名：
+   `noRowsToInvalidProject` / `constraintConflictToMessage`（people、teams 各一份）
+   ——名字说明一切，不再三个函数一个名。
+
+### 验证
+`errors_test.go` 钉住文案准确性 + `errors.Is` 穿透；
+`response_test.go` 钉住资源错误 → 404、包装后仍 404。
+
+端到端 8 类资源：团队/人员/角色/账号/应用包/公司都是各自准确的 404 文案，
+项目是 400「项目不存在，请刷新项目列表后重试」（按既有设计：项目 key 属于参数错误），
+**零串场**。
+
+### 状态
+五道门禁全绿（12 包）；测试数据未改动；未 git commit。

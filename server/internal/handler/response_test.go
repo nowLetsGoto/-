@@ -41,11 +41,34 @@ func TestWriteErrorMapsContractSentinels(t *testing.T) {
 			message: "Webhook 地址不合法",
 		},
 		{
-			name:    "ErrNotFound → 404",
+			name:    "通用 ErrNotFound → 404 且用中性文案",
 			err:     contract.ErrNotFound,
 			status:  http.StatusNotFound,
 			code:    http.StatusNotFound,
 			message: contract.ErrNotFound.Error(),
+		},
+		// 资源化的错误必须映射到同一状态码，但文案要准确到具体资源。
+		// 这是本次改造的核心：团队/人员的 404 不再说"包不存在"。
+		{
+			name:    "团队不存在 → 404 且文案指名团队",
+			err:     contract.NotFound(contract.ResourceTeam),
+			status:  http.StatusNotFound,
+			code:    http.StatusNotFound,
+			message: "团队不存在或已被移除",
+		},
+		{
+			name:    "人员不存在 → 404 且文案指名人员",
+			err:     contract.NotFound(contract.ResourcePerson),
+			status:  http.StatusNotFound,
+			code:    http.StatusNotFound,
+			message: "人员不存在或已被移除",
+		},
+		{
+			name:    "包装后的资源错误仍走 404（errors.Is 穿透）",
+			err:     fmt.Errorf("update team: %w", contract.NotFound(contract.ResourceTeam)),
+			status:  http.StatusNotFound,
+			code:    http.StatusNotFound,
+			message: "团队不存在或已被移除",
 		},
 		{
 			name:    "ErrProjectInvalid → 400 而不是 500",

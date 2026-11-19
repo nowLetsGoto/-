@@ -112,7 +112,7 @@ func (r *Repository) List(ctx context.Context, page contract.PageQuery, scope co
 	return items, total, nil
 }
 
-// FindByID 按 id 查人员（含关联）；无记录统一转 contract.ErrNotFound。
+// FindByID 按 id 查人员（含关联）；无记录统一转 contract.NotFound(contract.ResourcePerson)。
 // scope 必须是调用者的可见范围：查不到本公司之外的人，与「不存在」同一口径，
 // 避免借 id 探测其它公司是否有人。
 func (r *Repository) FindByID(ctx context.Context, id string, scope contract.Scope) (contract.Person, error) {
@@ -122,7 +122,7 @@ func (r *Repository) FindByID(ctx context.Context, id string, scope contract.Sco
 	person, err := scan(row)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) || errors.Is(err, pgx.ErrNoRows) {
-			return contract.Person{}, contract.ErrNotFound
+			return contract.Person{}, contract.NotFound(contract.ResourcePerson)
 		}
 		return contract.Person{}, err
 	}
@@ -135,7 +135,7 @@ func (r *Repository) FindByID(ctx context.Context, id string, scope contract.Sco
 	return person, nil
 }
 
-// FindByUsername 按登录名查人员；登录账号没有对应人员时返回 contract.ErrNotFound。
+// FindByUsername 按登录名查人员；登录账号没有对应人员时返回 contract.NotFound(contract.ResourcePerson)。
 // 身份解析路径（authz.PersonID）会显式传 All：登录时还没算出 scope，
 // 且「账号名对应谁」是身份事实，不受租户视图约束——查到后再由业务接口按 scope 过滤。
 func (r *Repository) FindByUsername(ctx context.Context, username string, scope contract.Scope) (contract.Person, error) {
@@ -144,7 +144,7 @@ func (r *Repository) FindByUsername(ctx context.Context, username string, scope 
 	person, err := scan(row)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) || errors.Is(err, pgx.ErrNoRows) {
-			return contract.Person{}, contract.ErrNotFound
+			return contract.Person{}, contract.NotFound(contract.ResourcePerson)
 		}
 		return contract.Person{}, err
 	}
@@ -206,7 +206,7 @@ func (r *Repository) Delete(ctx context.Context, personID string, scope contract
 	if err != nil {
 		return fmt.Errorf("删除人员失败: %w", err)
 	}
-	return repository.EnsureDeleted(result, "people")
+	return repository.EnsureDeleted(result, contract.ResourcePerson)
 }
 
 // ListProjectKeys 返回该人员关联的项目 key（按项目创建顺序），供「默认项目」使用。
@@ -296,7 +296,7 @@ func (r *Repository) save(ctx context.Context, id string, in contract.PersonInpu
 	var personID string
 	if err := row.Scan(&personID); err != nil {
 		if errors.Is(err, sql.ErrNoRows) || errors.Is(err, pgx.ErrNoRows) {
-			return contract.Person{}, contract.ErrNotFound
+			return contract.Person{}, contract.NotFound(contract.ResourcePerson)
 		}
 		return contract.Person{}, err
 	}

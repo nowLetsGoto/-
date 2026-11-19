@@ -397,12 +397,12 @@ func (s *BuildService) ResolveFile(ctx context.Context, id string) (contract.Fil
 	abs, err := s.paths.SafeResolve(build.RelativePath)
 	if err != nil {
 		log.Printf("下载路径校验失败 id=%s rel=%s err=%v", id, build.RelativePath, err)
-		return contract.FileRef{}, contract.ErrNotFound
+		return contract.FileRef{}, contract.NotFound(contract.ResourceBuild)
 	}
 	info, err := os.Stat(abs)
 	if err != nil || info.IsDir() {
 		log.Printf("下载文件缺失 id=%s path=%s err=%v", id, abs, err)
-		return contract.FileRef{}, contract.ErrNotFound
+		return contract.FileRef{}, contract.NotFound(contract.ResourceBuild)
 	}
 	contentType, err := storage.ContentType(build.Platform)
 	if err != nil {
@@ -424,7 +424,7 @@ func (s *BuildService) ResolveFile(ctx context.Context, id string) (contract.Fil
 // 只给公开链路用——登录态下的读写都必须走 repos.For(mode)，不存在"猜分区"的余地。
 func (s *BuildService) findAnyPartition(ctx context.Context, id string) (contract.Build, error) {
 	if !contract.IsValidUUID(id) {
-		return contract.Build{}, contract.ErrNotFound
+		return contract.Build{}, contract.NotFound(contract.ResourceBuild)
 	}
 	for _, repo := range s.repos.All() {
 		build, err := repo.FindByID(ctx, id)
@@ -435,7 +435,7 @@ func (s *BuildService) findAnyPartition(ctx context.Context, id string) (contrac
 			return contract.Build{}, err
 		}
 	}
-	return contract.Build{}, contract.ErrNotFound
+	return contract.Build{}, contract.NotFound(contract.ResourceBuild)
 }
 
 // IncrDownloadCount 是旁路：只在流成功完成后由 DownloadFile 调用，2 秒短超时、

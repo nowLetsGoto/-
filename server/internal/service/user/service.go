@@ -34,9 +34,9 @@ const (
 // 账号名会进令牌载荷（用 | 分段）与 URL，因此只允许安全字符。
 var usernamePattern = regexp.MustCompile(`^[a-zA-Z0-9._-]{3,32}$`)
 
-// errAccountNotFound 是账号场景的 404：跨模式删除与"账号不存在"共用同一句话，
-// 这样既不会泄漏另一种模式里有没有这个账号，也不会像通用 ErrNotFound 那样说成"包不存在"。
-var errAccountNotFound = &contract.NotFoundError{Message: "账号不存在或已被删除"}
+// errAccountNotFound 是账号场景的 404：目标不存在、跨模式访问、无权查看三种情况共用同一句话，
+// 不透露账号是否真实存在。用统一工厂构造，文案由 contract 生成，这里只声明"缺的是账号"。
+var errAccountNotFound = contract.NotFound(contract.ResourceUser)
 
 // tempPasswordAlphabet 去掉了容易看错的 0/O/1/l/I。
 const tempPasswordAlphabet = "abcdefghijkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789"

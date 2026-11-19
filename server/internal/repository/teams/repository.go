@@ -128,7 +128,7 @@ func (r *Repository) List(ctx context.Context, page contract.PageQuery, scope co
 	return items, total, nil
 }
 
-// FindByID 按 id 查团队（含关联）；无记录统一转 contract.ErrNotFound。
+// FindByID 按 id 查团队（含关联）；无记录统一转 contract.NotFound(contract.ResourceTeam)。
 // scope 限定可见范围：查本公司之外的团队与「不存在」同口径。
 func (r *Repository) FindByID(ctx context.Context, id string, scope contract.Scope) (contract.Team, error) {
 	filter := repository.ScopeFilter(0, "t", scope).Add(`t.id = ?`, id)
@@ -138,7 +138,7 @@ func (r *Repository) FindByID(ctx context.Context, id string, scope contract.Sco
 	team, err := scan(row)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) || errors.Is(err, pgx.ErrNoRows) {
-			return contract.Team{}, contract.ErrNotFound
+			return contract.Team{}, contract.NotFound(contract.ResourceTeam)
 		}
 		return contract.Team{}, err
 	}
@@ -193,7 +193,7 @@ func (r *Repository) Delete(ctx context.Context, teamID string, scope contract.S
 	if err != nil {
 		return fmt.Errorf("删除团队失败: %w", err)
 	}
-	return repository.EnsureDeleted(result, "teams")
+	return repository.EnsureDeleted(result, contract.ResourceTeam)
 }
 
 // Create 新建团队并写入关联；归属公司从 scope 取。
@@ -254,7 +254,7 @@ func (r *Repository) save(ctx context.Context, id string, in contract.TeamInput,
 	team, err := scan(row)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) || errors.Is(err, pgx.ErrNoRows) {
-			return contract.Team{}, contract.ErrNotFound
+			return contract.Team{}, contract.NotFound(contract.ResourceTeam)
 		}
 		return contract.Team{}, err
 	}

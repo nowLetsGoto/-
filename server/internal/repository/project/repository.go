@@ -105,7 +105,7 @@ func (r *Repository) FindByKey(ctx context.Context, key, ownerUserID string, sco
 	row := r.db.QueryRowContext(ctx, query, filter.Args()...)
 	item, err := scan(row)
 	if err != nil {
-		return contract.Project{}, translate(err)
+		return contract.Project{}, noRowsToInvalidProject(err)
 	}
 	return item, nil
 }
@@ -166,7 +166,7 @@ func (r *Repository) Update(ctx context.Context, key, ownerUserID string, in con
 
 	var updated string
 	if err := r.db.QueryRowContext(ctx, query, args...).Scan(&updated); err != nil {
-		return contract.Project{}, translate(err)
+		return contract.Project{}, noRowsToInvalidProject(err)
 	}
 	return r.FindByKey(ctx, updated, ownerUserID, scope)
 }
@@ -287,7 +287,7 @@ func (r *Repository) Delete(ctx context.Context, key, ownerUserID string, scope 
 	}
 	// 这里的 0 行要翻译成 ErrProjectInvalid（400）而不是 404：
 	// 项目 key 来自 URL / 表单，属于参数问题，与既有 FindByKey 的口径保持一致。
-	if err := repository.EnsureDeleted(result, "projects"); err != nil {
+	if err := repository.EnsureDeleted(result, contract.ResourceProject); err != nil {
 		if errors.Is(err, contract.ErrNotFound) {
 			return contract.ErrProjectInvalid
 		}
@@ -307,9 +307,11 @@ func (r *Repository) ownerFilter(base int, ownerUserID string) *repository.Filte
 	return filter
 }
 
-// translate 把「无记录」统一成 contract.ErrProjectInvalid（400 而非 404：
-// 项目 key 通常来自 URL 或表单，属于参数问题）。
-func translate(err error) error {
+// noRowsToInvalidProject 把「查不到项目」翻译成参数错误（400 而非 404）。
+//
+// 名字说明一切：这里只处理"无记录"，不碰约束冲突，也不生成 404——
+// 项目 key 通常来自 URL 或表单，属于调用方参数不对，不是资源被删了。
+func noRowsToInvalidProject(err error) error {
 	if errors.Is(err, sql.ErrNoRows) || errors.Is(err, pgx.ErrNoRows) {
 		return contract.ErrProjectInvalid
 	}

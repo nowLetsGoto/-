@@ -1192,7 +1192,7 @@ export interface components {
                 "application/json": components["schemas"]["ErrorResponse"];
             };
         };
-        /** @description 包不存在或文件缺失 */
+        /** @description 请求的资源不存在或已被移除 */
         NotFound: {
             headers: {
                 [name: string]: unknown;

@@ -53,7 +53,7 @@ const fromClause = ` FROM users u
 LEFT JOIN people p ON p.id = u.person_id
 LEFT JOIN roles r ON r.id = p.role_id`
 
-// FindByUsername 按登录名查账号；无记录转 contract.ErrNotFound（调用方自行决定是否暴露）。
+// FindByUsername 按登录名查账号；无记录转 contract.NotFound(contract.ResourceUser)（调用方自行决定是否暴露）。
 func (r *Repository) FindByUsername(ctx context.Context, username string) (Record, error) {
 	row := r.db.QueryRowContext(ctx, `SELECT `+columns+fromClause+` WHERE u.username = $1`, username)
 	return scanRecord(row)
@@ -203,7 +203,7 @@ func (r *Repository) PersonRoleKey(ctx context.Context, personID string) (string
 		`SELECT coalesce(r.key, '') FROM people p LEFT JOIN roles r ON r.id = p.role_id WHERE p.id = $1`,
 		personID).Scan(&key)
 	if errors.Is(err, sql.ErrNoRows) {
-		return "", contract.ErrNotFound
+		return "", contract.NotFound(contract.ResourceUser)
 	}
 	if err != nil {
 		return "", fmt.Errorf("查询人员角色失败: %w", err)
@@ -407,7 +407,7 @@ func requireAffected(result sql.Result) error {
 		return fmt.Errorf("读取变更行数失败: %w", err)
 	}
 	if affected == 0 {
-		return contract.ErrNotFound
+		return contract.NotFound(contract.ResourceUser)
 	}
 	return nil
 }
@@ -442,7 +442,7 @@ func scanRecord(row scanner) (Record, error) {
 	)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) || errors.Is(err, pgx.ErrNoRows) {
-			return Record{}, contract.ErrNotFound
+			return Record{}, contract.NotFound(contract.ResourceUser)
 		}
 		return Record{}, fmt.Errorf("读取账号失败: %w", err)
 	}

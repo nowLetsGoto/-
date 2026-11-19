@@ -1389,7 +1389,7 @@ components:
           schema:
             $ref: '#/components/schemas/ErrorResponse'
     NotFound:
-      description: 包不存在或文件缺失
+      description: 请求的资源不存在或已被移除
       content:
         application/json:
           schema:

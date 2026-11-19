@@ -16,21 +16,22 @@ import (
 //
 // 为什么需要它：删除接口里「目标不存在」「不属于本公司」「已被别人删掉」
 // 在 SQL 层面都是"影响 0 行"，三者对调用方应当是同一个答案——404。
-// 若各仓储自己写 `if rows == 0 { return contract.ErrNotFound }`，
-// 就会出现有的返回 404、有的静默返回 200 的不一致。
+// 若各仓储自己写 `if rows == 0 { return ... }`，就会出现有的返回 404、
+// 有的静默返回 200 的不一致。
 //
-// entity 只用于错误信息里指明是哪张表的删除，方便排查。
+// resource 是上屏用的资源名（contract.ResourceXxx），不是表名：
+// 它只出现在"删不到"时的中文提示里，必须是用户看得懂的词。
 //
 // 注意：外键为 RESTRICT / NO ACTION 的表，删除会直接抛外键错误，
 // 那种情况必须由调用方在删除**之前**拦掉并给人话提示（见各 service 的引用检查），
 // 本函数只处理"本来就查不到这条记录"。
-func EnsureDeleted(result sql.Result, entity string) error {
+func EnsureDeleted(result sql.Result, resource string) error {
 	affected, err := result.RowsAffected()
 	if err != nil {
-		return fmt.Errorf("读取删除结果失败（%s）: %w", entity, err)
+		return fmt.Errorf("读取删除结果失败（%s）: %w", resource, err)
 	}
 	if affected == 0 {
-		return contract.ErrNotFound
+		return contract.NotFound(resource)
 	}
 	return nil
 }

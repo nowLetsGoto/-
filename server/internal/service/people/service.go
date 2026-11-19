@@ -54,7 +54,7 @@ func (s *Service) List(ctx context.Context, page contract.PageQuery) (contract.P
 // id 不是 UUID 时直接按 404 处理：否则会被绑定到 uuid 列报 SQL 错误而变成 500。
 func (s *Service) Get(ctx context.Context, id string) (contract.Person, error) {
 	if !contract.IsValidUUID(id) {
-		return contract.Person{}, contract.ErrNotFound
+		return contract.Person{}, contract.NotFound(contract.ResourcePerson)
 	}
 	return s.repo.FindByID(ctx, id, authctx.ScopeFrom(ctx))
 }
@@ -74,7 +74,7 @@ func (s *Service) Create(ctx context.Context, in contract.PersonInput) (contract
 	}
 	item, err := s.repo.Create(ctx, normalized, authctx.ScopeFrom(ctx))
 	if err != nil {
-		return contract.Person{}, translate(err)
+		return contract.Person{}, constraintConflictToMessage(err)
 	}
 	return item, nil
 }
@@ -83,7 +83,7 @@ func (s *Service) Create(ctx context.Context, in contract.PersonInput) (contract
 // 同 Create：改角色也要过防提权校验（把某人从 developer 改成 super-admin 是同一类越权）。
 func (s *Service) Update(ctx context.Context, id string, in contract.PersonInput) (contract.Person, error) {
 	if !contract.IsValidUUID(id) {
-		return contract.Person{}, contract.ErrNotFound
+		return contract.Person{}, contract.NotFound(contract.ResourcePerson)
 	}
 	normalized, err := normalize(in)
 	if err != nil {
@@ -94,7 +94,7 @@ func (s *Service) Update(ctx context.Context, id string, in contract.PersonInput
 	}
 	item, err := s.repo.Update(ctx, id, normalized, authctx.ScopeFrom(ctx))
 	if err != nil {
-		return contract.Person{}, translate(err)
+		return contract.Person{}, constraintConflictToMessage(err)
 	}
 	return item, nil
 }
@@ -120,7 +120,7 @@ func (s *Service) Delete(ctx context.Context, id string) error {
 	if !usage.Empty() {
 		return &contract.ValidationError{Message: describePersonUsage(usage)}
 	}
-	return translate(s.repo.Delete(ctx, id, authctx.ScopeFrom(ctx)))
+	return constraintConflictToMessage(s.repo.Delete(ctx, id, authctx.ScopeFrom(ctx)))
 }
 
 // describePersonUsage 把引用统计翻成一句能指导操作的话。
@@ -188,8 +188,11 @@ func (s *Service) Me(ctx context.Context, identity contract.Identity, personID s
 	return me, nil
 }
 
-// translate 把数据库约束冲突翻译成可上屏的中文提示。
-func translate(err error) error {
+// constraintConflictToMessage 把人员的数据库约束冲突翻译成可上屏的 400 提示。
+//
+// 只处理两类约束：登录名重复、关联对象不存在。
+// 404 不在这里处理——那是"目标人员不存在"，由仓储的 NotFound(resource) 负责。
+func constraintConflictToMessage(err error) error {
 	switch {
 	case repository.IsUniqueViolation(err):
 		return &contract.ValidationError{Message: "本公司内已有相同登录名的人员，换一个试试"}

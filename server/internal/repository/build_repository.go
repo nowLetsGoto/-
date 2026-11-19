@@ -4,7 +4,7 @@
 // 边界：全部参数绑定，禁止字符串拼值（表名只能来自 Partition 常量）；
 // 不碰文件系统、不做业务校验、不生成三个 URL 字段——rowToBuild 把它们留空，
 // 由 service.buildURLs 统一填充，避免换域名要刷库；
-// pgx.ErrNoRows / sql.ErrNoRows 统一映射为 contract.ErrNotFound。
+// pgx.ErrNoRows / sql.ErrNoRows 统一映射为 contract.NotFound(contract.ResourceBuild)。
 package repository
 
 import (
@@ -125,13 +125,13 @@ func (r *BuildRepository) List(ctx context.Context, projectID string, q contract
 	return items, nil
 }
 
-// FindByID 返回单个包；无记录统一转成 contract.ErrNotFound 供错误中间件转 404。
+// FindByID 返回单个包；无记录统一转成 contract.NotFound(contract.ResourceBuild) 供错误中间件转 404。
 func (r *BuildRepository) FindByID(ctx context.Context, id string) (contract.Build, error) {
 	row := r.db.QueryRowContext(ctx, `SELECT `+buildColumns+` FROM `+r.table+` WHERE id = $1`, id)
 	build, err := rowToBuild(row)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) || errors.Is(err, pgx.ErrNoRows) {
-			return contract.Build{}, contract.ErrNotFound
+			return contract.Build{}, contract.NotFound(contract.ResourceBuild)
 		}
 		return contract.Build{}, fmt.Errorf("查询包详情失败: %w", err)
 	}
@@ -139,7 +139,7 @@ func (r *BuildRepository) FindByID(ctx context.Context, id string) (contract.Bui
 }
 
 // IncrDownloadCount 单语句原子自增；仅在流成功完成后由 service 旁路调用。
-// 包里没这一行时同样返回 contract.ErrNotFound：调用方据此判断"不在这个分区"，
+// 包里没这一行时同样返回 contract.NotFound(contract.ResourceBuild)：调用方据此判断"不在这个分区"，
 // 不至于把跨分区探测的正常落空当成故障。
 func (r *BuildRepository) IncrDownloadCount(ctx context.Context, id string) (int64, error) {
 	var count int64
@@ -149,7 +149,7 @@ func (r *BuildRepository) IncrDownloadCount(ctx context.Context, id string) (int
 	).Scan(&count)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) || errors.Is(err, pgx.ErrNoRows) {
-			return 0, contract.ErrNotFound
+			return 0, contract.NotFound(contract.ResourceBuild)
 		}
 		return 0, fmt.Errorf("下载计数失败: %w", err)
 	}

@@ -87,7 +87,7 @@ func (r *Repository) List(ctx context.Context, scope contract.Scope) ([]contract
 	return items, nil
 }
 
-// FindByKey 按 key 查角色；无记录转 contract.ErrNotFound。
+// FindByKey 按 key 查角色；无记录转 contract.NotFound(contract.ResourceRole)。
 // scope 限定可见范围：跨公司的自定义角色与「不存在」同口径，避免用 key 探测。
 func (r *Repository) FindByKey(ctx context.Context, key string, scope contract.Scope) (contract.Role, error) {
 	filter := visibleFilter(0, scope).Add(`r.key = ?`, key)
@@ -95,7 +95,7 @@ func (r *Repository) FindByKey(ctx context.Context, key string, scope contract.S
 	item, err := scan(row)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) || errors.Is(err, pgx.ErrNoRows) {
-			return contract.Role{}, contract.ErrNotFound
+			return contract.Role{}, contract.NotFound(contract.ResourceRole)
 		}
 		return contract.Role{}, err
 	}
@@ -133,7 +133,7 @@ func (r *Repository) FindByKeyAny(ctx context.Context, key, tenantID string) (co
 	item, err := scan(row)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) || errors.Is(err, pgx.ErrNoRows) {
-			return contract.Role{}, contract.ErrNotFound
+			return contract.Role{}, contract.NotFound(contract.ResourceRole)
 		}
 		return contract.Role{}, err
 	}
@@ -160,7 +160,7 @@ func (r *Repository) Update(ctx context.Context, key string, in contract.RoleInp
 	existing, err := scan(row)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) || errors.Is(err, pgx.ErrNoRows) {
-			return contract.Role{}, contract.ErrNotFound
+			return contract.Role{}, contract.NotFound(contract.ResourceRole)
 		}
 		return contract.Role{}, err
 	}
@@ -252,7 +252,7 @@ func (r *Repository) Delete(ctx context.Context, key string, scope contract.Scop
 	if err != nil {
 		return fmt.Errorf("删除角色失败: %w", err)
 	}
-	return repository.EnsureDeleted(result, "roles")
+	return repository.EnsureDeleted(result, contract.ResourceRole)
 }
 
 // BuiltinDefinition 是播种内置角色所需的最小信息。

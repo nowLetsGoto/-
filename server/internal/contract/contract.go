@@ -18,7 +18,12 @@ import (
 // 跨层错误标记：service 不依赖 handler，用 sentinel 表达可预期的业务拒绝，
 // 由 handler.WriteError 统一翻译成对应的 HTTP 状态码与中文文案。
 var (
-	ErrNotFound         = errors.New("包不存在或已被移除")
+	// ErrNotFound 是「资源缺失」的兜底 sentinel：只在调用方没有更具体的资源名时使用。
+	//
+	// 为什么文案是通用的而不是"包不存在"：这个错误会被人员/团队/角色/公司等
+	// 多种仓储返回，绑定某一种资源的说法会让其他场景的用户找错方向。
+	// 需要精确文案时请用 NotFound(resource)——把资源名留给调用方，句式由本包统一生成。
+	ErrNotFound         = errors.New("该资源不存在或已被移除")
 	ErrStageInvalid     = errors.New("暂存文件已失效，请重新选择文件")
 	ErrPlatformMismatch = errors.New("所选平台与文件类型不一致")
 	// ErrInvalidCredentials 登录凭据错误 → 400：与全站「业务参数不合法」同一口径，不占用 401。
@@ -52,16 +57,48 @@ type ValidationError struct {
 
 func (e *ValidationError) Error() string { return e.Message }
 
-// NotFoundError 是「要操作的资源不存在」的场景化说法，同样由 handler.WriteError 翻译成 404。
+// 资源名：NotFound 的唯一变量。
 //
-// 为什么不复用 ErrNotFound：那个 sentinel 的文案是为应用包写的（"包不存在或已被移除"），
-// 放到账号、人员等场景上会让用户找错方向。资源种类一多，sentinel 就会变成一串近义错误，
-// 不如让调用方直接给出这一处该说的话。
+// 集中成常量而不是各层手写字符串，理由与枚举常量相同：
+// 一处拼错（"人员"写成"成员"）会让全站同类提示不一致，而且编译器发现不了。
+const (
+	ResourceBuild  = "应用包"
+	ResourceProject = "项目"
+	ResourcePerson = "人员"
+	ResourceTeam   = "团队"
+	ResourceUser   = "账号"
+	ResourceRole   = "角色"
+	ResourceTenant = "公司"
+	ResourceFile   = "文件"
+)
+
+// NotFoundError 是「指定资源不存在」的错误，由 handler.WriteError 翻译成 404。
+//
+// 调用方只声明"缺的是什么"，文案句式由本类型统一决定——这把「错误语义」
+// 和「上屏措辞」分开：业务层不需要知道中文怎么说，展示层不需要知道资源从哪来。
 type NotFoundError struct {
-	Message string
+	Resource string
 }
 
-func (e *NotFoundError) Error() string { return e.Message }
+// Error 返回统一句式："{资源}不存在或已被移除"。
+//
+// 刻意不提供"自带整句文案"的构造函数：一旦允许各处传完整句子，句式就会漂移，
+// 这正是本次要修的问题。所有资源缺失都走同一句式，只有资源名不同。
+func (e *NotFoundError) Error() string {
+	return e.Resource + "不存在或已被移除"
+}
+
+// Is 让资源化的 NotFoundError 与通用 sentinel 等价。
+//
+// 这是整套改造的关键：现有大量 `errors.Is(err, contract.ErrNotFound)` 判断
+// （中间件、service 的兜底分支）无需改动，仍能把带资源名的错误识别为"资源缺失"。
+// 一处定义同时满足两件事——文案精确、判定统一。
+func (e *NotFoundError) Is(target error) bool {
+	return target == ErrNotFound
+}
+
+// NotFound 构造一个资源缺失错误。调用点只需给出 ResourceXxx 常量，不拼文案。
+func NotFound(resource string) error { return &NotFoundError{Resource: resource} }
 
 // 环境枚举：全仓 Go 侧唯一定义处，与 api/openapi.yaml 的 Environment.enum 顺序一致。
 const (

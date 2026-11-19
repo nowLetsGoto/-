@@ -43,7 +43,7 @@ func (s *Service) List(ctx context.Context, page contract.PageQuery) (contract.T
 // id 不是 UUID 时直接按 404 处理：否则会被绑定到 uuid 列报 SQL 错误而变成 500。
 func (s *Service) Get(ctx context.Context, id string) (contract.Team, error) {
 	if !contract.IsValidUUID(id) {
-		return contract.Team{}, contract.ErrNotFound
+		return contract.Team{}, contract.NotFound(contract.ResourceTeam)
 	}
 	return s.repo.FindByID(ctx, id, authctx.ScopeFrom(ctx))
 }
@@ -56,7 +56,7 @@ func (s *Service) Create(ctx context.Context, in contract.TeamInput) (contract.T
 	}
 	item, err := s.repo.Create(ctx, normalized, authctx.ScopeFrom(ctx))
 	if err != nil {
-		return contract.Team{}, translate(err)
+		return contract.Team{}, constraintConflictToMessage(err)
 	}
 	return item, nil
 }
@@ -69,7 +69,7 @@ func (s *Service) Update(ctx context.Context, id string, in contract.TeamInput) 
 	}
 	item, err := s.repo.Update(ctx, id, normalized, authctx.ScopeFrom(ctx))
 	if err != nil {
-		return contract.Team{}, translate(err)
+		return contract.Team{}, constraintConflictToMessage(err)
 	}
 	return item, nil
 }
@@ -92,7 +92,7 @@ func (s *Service) Delete(ctx context.Context, id string) error {
 	if !usage.Empty() {
 		return &contract.ValidationError{Message: describeTeamUsage(usage)}
 	}
-	return translate(s.repo.Delete(ctx, id, authctx.ScopeFrom(ctx)))
+	return constraintConflictToMessage(s.repo.Delete(ctx, id, authctx.ScopeFrom(ctx)))
 }
 
 // describeTeamUsage 把引用统计翻成一句能指导操作的话。
@@ -110,8 +110,11 @@ func describeTeamUsage(usage teamsrepo.Usage) string {
 	return "该团队" + strings.Join(parts, "、") + "，请先解除关联后再删除"
 }
 
-// translate 把外键冲突翻译成可上屏的中文提示。
-func translate(err error) error {
+// constraintConflictToMessage 把团队的外键冲突翻译成可上屏的 400 提示。
+//
+// 删除前的引用检查已在 service 里给出更具体的说明（"该团队还被谁用着"），
+// 这里只兜底并发删除等漏网情况，提示关联对象不存在。
+func constraintConflictToMessage(err error) error {
 	if repository.IsForeignKeyViolation(err) {
 		return &contract.ValidationError{Message: "关联的人员或项目不存在，请刷新后重试"}
 	}
