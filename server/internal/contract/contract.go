@@ -639,7 +639,7 @@ var Permissions = []Permission{
 	{Key: "project.write", Group: "项目", Label: "新建与编辑项目"},
 	{Key: "project.delete", Group: "项目", Label: "删除项目"},
 	{Key: "directory.read", Group: "基础资料", Label: "查看人员与团队"},
-	{Key: PermissionDirectoryWrite, Group: "基础资料", Label: "新增与编辑人员团队、管理账号"},
+	{Key: PermissionDirectoryWrite, Group: "基础资料", Label: "新增与编辑人员与团队"},
 	{Key: PermissionDirectoryDelete, Group: "基础资料", Label: "删除人员与团队"},
 	{Key: PermissionRoleRead, Group: "角色管理", Label: "查看角色定义"},
 	{Key: PermissionRoleWrite, Group: "角色管理", Label: "新建与编辑角色"},
@@ -647,6 +647,10 @@ var Permissions = []Permission{
 	{Key: PermissionSettingsRead, Group: "平台集成", Label: "查看集成配置"},
 	{Key: PermissionSettingsWrite, Group: "平台集成", Label: "修改集成配置与轮换 Key"},
 	{Key: PermissionAuditRead, Group: "审计日志", Label: "查看本公司审计日志"},
+	// account.read 只给"看账号列表"，不含任何写操作。
+	// 账号的新建/编辑/删除是平台治理动作，由 account_level 固有赋予（见 managementPermissions），
+	// 不走角色配置——否则任意角色都能给自己或别人开账号、改归属，等同于绕过公司边界。
+	{Key: PermissionAccountRead, Group: "账号管理", Label: "查看账号列表"},
 }
 
 // 管理类权限点的 key。
@@ -667,6 +671,12 @@ const (
 	PermissionRoleDelete = "role.delete"
 	// PermissionAuditRead 控制本公司审计日志的查看。
 	PermissionAuditRead = "audit.read"
+	// PermissionAccountRead 控制账号列表的**查看**。
+	//
+	// 与 directory.write 分开的理由：过去一个 directory.write 同时表示
+	// 「能改人员/团队」「能看账号」「能改账号」三件事，导致想给某个角色
+	// "只读账号列表"就必须同时给出管人管账号的权力。拆开后各管一件事。
+	PermissionAccountRead = "account.read"
 )
 
 // IsValidPermission 判断权限点是否在**可勾选**目录里，写入角色时用它挡住拼错/伪造的值。
@@ -791,10 +801,9 @@ var Menus = []Menu{
 			{Key: "project.delete", Label: "删除项目"},
 		},
 	},
-	// 账号管理的查看门槛本身就是 directory.write（路由 RequirePermission），
-	// 因此它既作为本菜单的 ViewPermission，也出现在人员/团队菜单的 actions 里——
-	// 同一个权限点服务两处 UI，语义一致："能管人就能管账号"。
-	{Key: "/admin/accounts", Label: "账号管理", Group: "基础资料", ViewPermission: PermissionDirectoryWrite},
+	// 账号管理：查看权限独立成 account.read，可由角色配置。
+	// 新增/编辑等写操作不在菜单里体现——它们只属于平台管理员，不受角色配置影响。
+	{Key: "/admin/accounts", Label: "账号管理", Group: "基础资料", ViewPermission: PermissionAccountRead},
 	{
 		Key: "/directory/roles", Label: "角色管理", Group: "公司设置", ViewPermission: PermissionRoleRead,
 		Actions: []MenuAction{

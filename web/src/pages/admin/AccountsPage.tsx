@@ -3,8 +3,12 @@
  * 职责：服务端分页列出**当前模式下的**账号，支持新建、编辑、重置密码、启用/禁用、删除；
  *       危险操作一律二次确认并写明影响面。
  * 输入：URL 的 page / pageSize、关键字搜索；输出：DataTable + 确认弹窗 + 临时密码 / 结果提示条。
- * 边界：不内嵌编辑表单（编辑与新建走同一套独立路由）；不做权限判断——非超管进不来，接口也会 403；
+ * 边界：不内嵌编辑表单（编辑与新建走同一套独立路由）；
  *       不传模式参数——列表范围由令牌里的登录模式决定，前端无法也不该越权查看另一种模式的账号。
+ *
+ * 两种视图：账号管理页对「有 account.read 的角色」开放只读；
+ * 写操作（新建/编辑/重置密码/启停/删除）只属于平台管理员及以上，
+ * 因此按 canWrite 把相关入口整体隐藏——只读用户看到的是一张纯列表。
  */
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
@@ -17,6 +21,7 @@ import { ConfirmDialog } from '../../components/ConfirmDialog';
 import { DataTable } from '../../components/DataTable';
 import { Empty, ErrorState } from '../../components/States';
 import { useMe } from '../../hooks/useMe';
+import { atLeastLevel } from '../../utils/accountLevel';
 import { usePageState } from '../../hooks/usePageState';
 import { formatDate, MODE_LABELS } from '../../utils/format';
 
@@ -51,6 +56,9 @@ const ACTION_CONFIRMS: Record<PendingAction['kind'], string> = {
 export function AccountsPage(): JSX.Element {
   const { page, pageSize, change } = usePageState();
   const { me } = useMe();
+  // 写操作是平台治理动作，只按身份层级判断，不看角色权限点。
+  // 与路由 LevelGate(minLevel="platform_admin") 同一口径，服务端另有 RequireMinLevel 兜底。
+  const canWrite = atLeastLevel(me, 'platform_admin');
 
   const [keyword, setKeyword] = useState('');
   const [query, setQuery] = useState('');
@@ -193,7 +201,11 @@ export function AccountsPage(): JSX.Element {
       title: '',
       key: 'actions',
       width: 320,
+      // 只读用户不生成这一列：空列头会让人以为按钮丢了。
       render: (_, user) => {
+        if (!canWrite) {
+          return null;
+        }
         const isSelf = user.username === me?.username;
         return (
           <div className="row-actions">
@@ -256,11 +268,11 @@ export function AccountsPage(): JSX.Element {
           >
             清空搜索
           </Button>
-        ) : (
+        ) : canWrite ? (
           <Link className="button button-primary" to="/admin/accounts/new">
             新建第一个账号
           </Link>
-        )
+        ) : undefined
       }
     />
   );
@@ -270,11 +282,16 @@ export function AccountsPage(): JSX.Element {
       <div className="page-head">
         <div>
           <h1>账号管理</h1>
-          <p className="sub">共 {state.total} 个账号 · 禁用会立即让该账号的令牌失效</p>
+          <p className="sub">
+            共 {state.total} 个账号
+            {canWrite ? ' · 禁用会立即让该账号的令牌失效' : ' · 当前为只读视图'}
+          </p>
         </div>
-        <Link className="button button-primary" to="/admin/accounts/new">
-          新建账号
-        </Link>
+        {canWrite ? (
+          <Link className="button button-primary" to="/admin/accounts/new">
+            新建账号
+          </Link>
+        ) : null}
       </div>
 
       {flash ? (

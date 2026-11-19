@@ -108,6 +108,10 @@ func (s *Service) Permissions(ctx context.Context, identity contract.Identity, p
 // 只有 platform_admin 享有固有管理权限——它是超管建公司时连带创建的治理者，
 // 必须天然具备管理本公司的能力，否则公司无人可管。
 //
+// 注意：这里只列"权限点"，账号的新建/编辑/删除**不看权限点**，
+// 而由路由层的 RequireMinLevel(platform_admin) 直接守——它们是平台治理动作，
+// 不允许通过角色配置下放（见 router.go 的账号管理组）。
+//
 // team_admin 与 member 不再有固有权限（产品决策：普通账号完全由角色配置驱动）。
 // 它们需要什么能力，就在角色表单里勾什么权限点；勾不到就进不去对应的管理菜单。
 // 超管由 allPermissions 全量覆盖，不经过这里。
@@ -121,7 +125,7 @@ func managementPermissions(level string) []string {
 		"directory.read", contract.PermissionDirectoryWrite, contract.PermissionDirectoryDelete,
 		contract.PermissionSettingsRead, contract.PermissionSettingsWrite,
 		contract.PermissionRoleRead, contract.PermissionRoleWrite, contract.PermissionRoleDelete,
-		contract.PermissionAuditRead,
+		contract.PermissionAuditRead, contract.PermissionAccountRead,
 	}
 }
 
@@ -360,7 +364,7 @@ func allPermissions() map[string]struct{} {
 	for _, key := range []string{
 		contract.PermissionDirectoryWrite, contract.PermissionDirectoryDelete,
 		contract.PermissionSettingsRead, contract.PermissionSettingsWrite,
-		contract.PermissionAdminAccess, contract.PermissionRoleDelete,
+		contract.PermissionAdminAccess, contract.PermissionRoleDelete, contract.PermissionAccountRead,
 	} {
 		permissions[key] = struct{}{}
 	}

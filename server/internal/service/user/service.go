@@ -62,15 +62,10 @@ type teamLookup interface {
 	MemberTeamIDs(ctx context.Context, personID string) ([]string, error)
 }
 
-// roleAssigner 是账号模块对授权服务的只读依赖，两个方法都由 authz.Service 实现：
-//   - ValidateRoleAssignable：校验能否把某角色分配给人员（防提权）；
-//   - Permissions：取调用者的最终权限，用来判断能否建账号。
-//
-// 合在一个窄接口里而不是加第二个依赖：两者本就是同一次授权判定的两个视角，
-// 装配时传同一个 authz.Service，单测时一个假对象就能覆盖。
+// roleAssigner 校验「调用者能否把某个角色分配给人员」，防提权。
+// 实现是 authz.Service；窄接口让账号模块可以独立单测。
 type roleAssigner interface {
 	ValidateRoleAssignable(ctx context.Context, identity contract.Identity, roleKey string) error
-	Permissions(ctx context.Context, identity contract.Identity, projectKey string) (map[string]struct{}, error)
 }
 
 func NewService(repo *userrepo.Repository, cleanup *repository.AccountCleanup, paths *storage.Paths, teams teamLookup, roles roleAssigner) *Service {
@@ -79,17 +74,16 @@ func NewService(repo *userrepo.Repository, cleanup *repository.AccountCleanup, p
 
 // resolveCreateLevel 校验账号接口能否创建账号，并归一化层级。
 //
-// 产品决策后的规则：
+// 规则（能力门槛不在这里判）：调用者能不能建账号，由路由层
+// RequireMinLevel(platform_admin) 决定——这是平台治理动作，**不走角色配置**。
+// 本函数只负责两件事：
 //
-//   - 能力门槛：必须有 directory.write（路由层已守一次，这里 defense in depth）；
-//   - 经账号接口**只能建 member**。team_admin 与 member 现已统一由角色配置驱动，
-//     层级本身不再有管理含义，建一个 team_admin 没有价值；
-//   - 硬底线：super_admin 是平台身份、platform_admin 只能随公司创建，
-//     两者都不允许经账号接口发放——这条不受任何权限点影响。
+//  1. 归一化：经账号接口只能建 member（更高层级另有专属入口，见下）；
+//  2. 硬底线：super_admin 是平台身份、platform_admin 只能随公司创建，
+//     任何路径都不允许经账号接口发放。
 //
 // 归属固定为调用者所属公司（在 Create 里取 caller.TenantID），请求体无法越权指定。
-// 返回值只保留 level：团队归属来自人员档案（team_members），账号这一层不接受 teamIds。
-func resolveCreateLevel(requested string, hasAccountWrite bool) (string, error) {
+func resolveCreateLevel(requested string) (string, error) {
 	level := strings.TrimSpace(requested)
 	if level == "" {
 		level = contract.AccountLevelMember
@@ -97,7 +91,7 @@ func resolveCreateLevel(requested string, hasAccountWrite bool) (string, error) 
 	if !contract.IsAccountLevel(level) {
 		return "", &contract.ValidationError{Message: "账号层级不合法"}
 	}
-	// 两条硬底线，放在能力校验之前：无论谁、无论配了什么权限都不能突破。
+	// 两条硬底线：无论谁都不能经本接口发放这两种身份。
 	if level == contract.AccountLevelSuperAdmin {
 		return "", contract.ErrForbidden
 	}
@@ -106,9 +100,8 @@ func resolveCreateLevel(requested string, hasAccountWrite bool) (string, error) 
 			Message: "平台管理员需随公司一起创建（公司管理 → 新建公司）",
 		}
 	}
-	if !hasAccountWrite {
-		return "", contract.ErrForbidden
-	}
+	// 其余请求一律归一化为 member：
+	// team_admin 与 member 现已统一由角色配置驱动，层级本身不再有管理含义。
 	return contract.AccountLevelMember, nil
 }
 
@@ -143,17 +136,8 @@ func (s *Service) Create(ctx context.Context, caller contract.Identity, in contr
 	}
 
 	// 层级与归属从调用者推导，请求体无法越权指定。
-	// team_admin 建普通账号时，其可见团队由 ScopeOf 注入的 scope 提供。
-	// 建账号的能力来自权限点：角色配了 directory.write 就能建。
-	// 判定复用 authz 服务（它已按"身份固有 ∪ 角色配置"算好最终权限），
-	// 不在这里重新实现一遍——权限判定必须只有一个出口。
-	permissions, err := s.roles.Permissions(ctx, caller, "")
-	if err != nil {
-		return contract.User{}, err
-	}
-	_, hasAccountWrite := permissions[contract.PermissionDirectoryWrite]
-
-	level, err := resolveCreateLevel(in.AccountLevel, hasAccountWrite)
+	// 建账号的资格已由路由层 RequireMinLevel(platform_admin) 守住，这里只做归一化与硬底线。
+	level, err := resolveCreateLevel(in.AccountLevel)
 	if err != nil {
 		return contract.User{}, err
 	}

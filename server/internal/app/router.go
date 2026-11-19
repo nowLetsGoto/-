@@ -179,24 +179,32 @@ func NewRouter(d Deps) http.Handler {
 			})
 		})
 
-		// 账号管理：门槛由身份改为权限点 directory.write。
+		// 账号管理拆成两组：**看**与**改**是两个不同量级的权力。
 		//
-		// 产品决策：普通账号（team_admin / member）的能力完全由角色配置驱动，
-		// 不再有"team_admin 天然能管账号"这回事；角色勾了 directory.write 才能进门。
-		// 平台管理员固有该权限（见 managementPermissions），不受影响。
-		// 具体能建谁、管谁的边界仍在 service/user（例如只能建 member、只能管本团队）。
+		//   看：account.read，可由角色配置——普通账号配了这个就能看本公司账号列表。
+		//   改：RequireMinLevel(platform_admin)，**不受角色配置影响**。
+		//
+		// 为什么写操作不能用权限点：新建账号要定归属、改账号要动角色与状态，
+		// 一旦能靠角色勾选获得，任意角色都能给自己开号、改别人的团队归属，
+		// 等于绕过公司边界。这类"平台治理动作"只给身份，不给配置。
 		api.Group(func(accounts chi.Router) {
 			accounts.Use(loginmw.RequireAuth(d.Verify))
 			accounts.Use(loginmw.InjectScope(d.Authz))
 			accounts.Use(authzmw.RequireTeamMode)
-			accounts.Use(authzmw.RequirePermission(d.Authz, contract.PermissionDirectoryWrite))
-			accounts.Get("/admin/users", middleware.Wrap(d.Users.List))
-			accounts.Post("/admin/users", middleware.Wrap(d.Users.Create))
-			accounts.Get("/admin/users/{id}", middleware.Wrap(d.Users.Get))
-			accounts.Put("/admin/users/{id}", middleware.Wrap(d.Users.Update))
-			accounts.Delete("/admin/users/{id}", middleware.Wrap(d.Users.Delete))
-			accounts.Post("/admin/users/{id}/reset-password", middleware.Wrap(d.Users.ResetPassword))
-			accounts.Post("/admin/users/{id}/status", middleware.Wrap(d.Users.SetStatus))
+
+			// 只读：角色可配。
+			accounts.With(authzmw.RequirePermission(d.Authz, contract.PermissionAccountRead)).
+				Get("/admin/users", middleware.Wrap(d.Users.List))
+			accounts.With(authzmw.RequirePermission(d.Authz, contract.PermissionAccountRead)).
+				Get("/admin/users/{id}", middleware.Wrap(d.Users.Get))
+
+			// 写操作：平台管理员及以上，不经过权限点。
+			write := accounts.With(loginmw.RequireMinLevel(contract.AccountLevelPlatformAdmin))
+			write.Post("/admin/users", middleware.Wrap(d.Users.Create))
+			write.Put("/admin/users/{id}", middleware.Wrap(d.Users.Update))
+			write.Delete("/admin/users/{id}", middleware.Wrap(d.Users.Delete))
+			write.Post("/admin/users/{id}/reset-password", middleware.Wrap(d.Users.ResetPassword))
+			write.Post("/admin/users/{id}/status", middleware.Wrap(d.Users.SetStatus))
 		})
 
 		// 超级管理员专区：RequireAuth 之后再叠一层 RequireSuperAdmin，

@@ -103,6 +103,11 @@ func (s *Service) EnsureBuiltin(ctx context.Context) error {
 	// 是为了让菜单清单与权限清单各只有 contract 一处定义）：
 	//   1. 权限点：清掉已下线的 key（防止"看不见却生效"的历史权限）；
 	//   2. 菜单：内置角色补齐新菜单、清掉已移除的菜单。
+	// 查看权限随菜单版本演进（如账号管理的查看点从 directory.write 改为 account.read），
+	// 每次启动补一次缺口，保证存量角色不会因为换了权限点而突然进不去页面。
+	if err := s.repo.BackfillViewPermissions(ctx); err != nil {
+		return err
+	}
 	if err := s.repo.ReconcilePermissions(ctx); err != nil {
 		return err
 	}

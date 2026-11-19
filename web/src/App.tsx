@@ -14,6 +14,7 @@ import { Navigate, Outlet, Route, Routes, useLocation } from 'react-router-dom';
 import { readSession } from './api/session';
 import { AdminGate } from './components/AdminGate';
 import { Layout } from './components/Layout';
+import { LevelGate } from './components/LevelGate';
 import { PermissionGate } from './components/PermissionGate';
 import { NoProjectYet } from './components/ProjectGate';
 import { ErrorState, Loading } from './components/States';
@@ -282,11 +283,13 @@ export function App(): JSX.Element {
               </PermissionGate>
             }
           />
-          {/* 账号管理：directory.write 才能进；能建谁、能管谁由服务端再判一层。 */}
+          {/* 账号列表：account.read（角色可配）。
+              表单页：平台管理员专属——写账号是治理动作，不走角色配置。
+              列表里的按钮再由页面按层级隐藏，这里的路由拦截只是防手输 URL。 */}
           <Route
             path="/admin/accounts"
             element={
-              <PermissionGate permission="directory.write">
+              <PermissionGate permission="account.read">
                 <AccountsPage />
               </PermissionGate>
             }
@@ -294,18 +297,18 @@ export function App(): JSX.Element {
           <Route
             path="/admin/accounts/new"
             element={
-              <PermissionGate permission="directory.write">
+              <LevelGate minLevel="platform_admin">
                 <AccountFormPage />
-              </PermissionGate>
+              </LevelGate>
             }
           />
           {/* 新建与编辑复用同一个页面组件：字段几乎相同，拆两份只会让两处慢慢走偏 */}
           <Route
             path="/admin/accounts/:id/edit"
             element={
-              <PermissionGate permission="directory.write">
+              <LevelGate minLevel="platform_admin">
                 <AccountFormPage />
-              </PermissionGate>
+              </LevelGate>
             }
           />
           <Route

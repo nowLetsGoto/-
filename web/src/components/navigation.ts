@@ -160,11 +160,11 @@ export const NAV_SECTIONS: ReadonlyArray<NavSection> = [
         envScoped: false,
       },
       {
-        // 账号管理：门槛由身份层级改为权限点 directory.write。
-        // 普通账号只要角色勾了这个权限就能进；平台管理员固有该权限，不受影响。
+        // 账号管理：只读门槛是 account.read（角色可配）；
+        // 页面内的写操作另按平台管理员层级隐藏，与这里的菜单可见性无关。
         label: '账号管理',
         path: '/admin/accounts',
-        permission: 'directory.write',
+        permission: 'account.read',
         icon: 'people',
         scope: 'platform',
         envScoped: false,

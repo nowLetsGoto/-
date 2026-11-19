@@ -394,6 +394,33 @@ func (r *Repository) ReplaceAuthorization(ctx context.Context, roleID string, pe
 	return nil
 }
 
+// BackfillViewPermissions 按已授权的菜单，补齐每个角色缺失的查看权限。
+//
+// 为什么需要它：查看权限与菜单的对应关系会随版本演进（例如账号管理的查看权限
+// 从 directory.write 改成 account.read）。存量角色的 role_menus 里勾着菜单，
+// 但 role_permissions 里还是旧权限点——不补的话，升级后他们突然进不去那个页面。
+//
+// **只补不删**：补齐的是"勾了菜单却没有对应查看权限"的缺口；
+// 角色已有的操作权限与管理员手工调整都不动。因此每次启动都可以安全执行。
+func (r *Repository) BackfillViewPermissions(ctx context.Context) error {
+	// 逐菜单补齐：SQL 里没法表达 Go 的映射表，但菜单数量固定且很小（十来项），
+	// 用一次参数化 INSERT 即可，不需要为它造临时表。
+	for _, menu := range contract.Menus {
+		if menu.ViewPermission == "" {
+			continue
+		}
+		if _, err := r.db.ExecContext(ctx,
+			`INSERT INTO role_permissions (role_id, permission)
+			 SELECT DISTINCT rm.role_id, $2
+			 FROM role_menus rm
+			 WHERE rm.menu_key = $1
+			 ON CONFLICT DO NOTHING`, menu.Key, menu.ViewPermission); err != nil {
+			return fmt.Errorf("补齐菜单 %s 的查看权限失败: %w", menu.Key, err)
+		}
+	}
+	return nil
+}
+
 // ReconcilePermissions 清掉不在当前目录里的权限点。
 //
 // 与菜单对齐的区别：权限点**只删不补**。
