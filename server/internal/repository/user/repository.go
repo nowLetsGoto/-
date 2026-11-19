@@ -72,11 +72,9 @@ func (r *Repository) List(ctx context.Context, page contract.PageQuery, mode con
 	filter := accountFilter(mode, keyword)
 	repository.ApplyTenant(filter, "u", scope)
 	if !scope.All {
-		// 非超管看不到超管账号：既包括带 is_super_admin 标记的账号，
-		// 也包括绑定了 super-admin 角色的人员的账号——后者登录后拿到的是同一份全量权限，
-		// 在列表里露出来等于把「平台最高权限账号」指给公司管理员看。
+		// 非超管看不到超管账号：在列表里露出来等于把「平台最高权限账号」指给公司管理员看。
+		// 只按 is_super_admin 判——超管是账号身份，与角色无关（角色体系里没有超管这个概念）。
 		// 过滤放在 SQL 而不是内存里，分页的 total 才不会算错。
-		// 只按 is_super_admin 判：超管是账号身份，与角色无关（角色里没有超管这个概念）。
 		filter.AddRaw(`u.is_super_admin = false`)
 	}
 
