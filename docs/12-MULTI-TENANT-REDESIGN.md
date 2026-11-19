@@ -1734,3 +1734,126 @@ JSON 输出 `null` → 前端 `menu.actions.length` 抛错。已由 `AllMenus()`
 
 ### 状态
 未 git commit。
+
+---
+
+## §33 账号管理：查看与操作权限彻底分离（2026-11-19）
+
+### 问题
+`directory.write` 一个权限点承担了三件事：
+「能改人员/团队」「能看账号列表」「能改账号」。
+想给某角色「只读账号列表」就必须同时交出管人管账号的权力——职责严重混在一起。
+
+### 拆分结果
+
+| 能力 | 门槛 | 是否可由角色配置 |
+|---|---|---|
+| 人员/团队 新增编辑 | `directory.write` | ✅ |
+| **账号列表查看** | **`account.read`（新增）** | ✅ |
+| **账号新增/编辑/删除/重置密码/启停** | **`RequireMinLevel(platform_admin)`** | ❌ 只看身份 |
+
+### 实现
+
+**契约**
+- 新增 `PermissionAccountRead = "account.read"`，加入 `Permissions` 目录（可勾选）。
+- 账号管理菜单的 `ViewPermission` 从 `directory.write` 改为 `account.read`。
+- `directory.write` 的 label 改回「新增与编辑人员与团队」——不再暗示它能管账号。
+
+**权限来源**（`authz.managementPermissions`）
+- `platform_admin` 固有权限加 `account.read`；超管经 `allPermissions` 全量覆盖。
+- 普通账号的 `account.read` **完全靠角色配置**，不加默认基线（符合"因角色配置而可看"）。
+
+**路由**（把一组拆成读/写两组）
+```go
+// 只读：角色可配
+accounts.With(RequirePermission(account.read)).Get("/admin/users", ...)
+accounts.With(RequirePermission(account.read)).Get("/admin/users/{id}", ...)
+
+// 写操作：平台管理员及以上，不经过权限点
+write := accounts.With(RequireMinLevel(platform_admin))
+write.Post/Put/Delete("/admin/users...", ...)
+```
+
+**service**
+- `resolveCreateLevel(requested string)` 去掉 `hasAccountWrite` 参数：
+  能力门槛归路由，本函数只做归一化（只能建 member）与两条硬底线
+  （不可发放 super_admin / platform_admin）。
+- 删除 `roleAssigner.Permissions` 方法——它只服务于旧的能力判定，已无调用点。
+
+**前端**
+- 路由：列表页 `PermissionGate(account.read)`；表单页 `LevelGate(platform_admin)`。
+- `AccountsPage` 加 `canWrite = atLeastLevel(me, 'platform_admin')`，
+  统一控制操作列、页头「新建账号」、空状态按钮；只读视图副标题注明「当前为只读视图」。
+- 操作列在只读时不渲染（返回 null），避免空列头让人以为按钮丢了。
+
+### 存量迁移
+12 个角色的 `role_menus` 里有 `/admin/accounts` 但缺 `account.read`（旧推导产物）。
+新增 `Repository.BackfillViewPermissions`：**每次启动**按菜单补齐缺失的查看权限。
+只补不删、幂等——与 `ReconcilePermissions`（只删不在目录里的）互补。
+
+### 验证（13/13）
+- zouliang（member + project-owner）：有 `account.read`，列表与详情 200；
+  五个写接口（POST/PUT/DELETE/reset-password/status）全部 **403**
+- 平台管理员：读 200、建号 201
+- 超管：读 200、有 account.read
+- member 试图建 platform_admin → 403
+- 存量 12/12 角色已补齐 account.read
+- 五道门禁全绿（12 包）
+
+### 备注
+库中存在一个 15:09 创建的孤儿账号 `chendong1`（tenant_id 为空），非本次改动产物，未处理。
+
+### 状态
+未 git commit。
+
+---
+
+## §34 角色表单整页禁用：只读判定没跟上权限模型（2026-11-19）
+
+### 现象
+平台管理员给某普通账号的角色勾了「新建与编辑角色」（`role.write`），
+该账号登录后进入新增角色页，**整个表单都是禁用状态**，无法填写。
+
+### 根因
+`RoleFormPage` 的只读判定还是旧模型：
+
+```ts
+const readOnly = !atLeastLevel(me, 'platform_admin');  // ← 身份层级
+```
+
+这是 §30 之前「角色管理归平台管理员」时代的写法。§30 把角色管理改成
+`role.read` / `role.write` 权限点驱动，路由守卫也跟着换了（`PermissionGate`），
+但这一行没同步——于是普通账号即使有 `role.write`，前端仍按层级判成只读。
+
+路由放行、接口放行、只有表单只读，症状最容易误判成"权限没生效"。
+
+### 修复
+```ts
+const readOnly = !can(me, 'role.write');
+```
+与路由 `PermissionGate(role.write)` 同一口径。并在注释里写明这个坑，
+避免下次再出现"改一处漏一处"。
+
+### 全仓排查
+用 `grep atLeastLevel` 逐项确认其余用法是否仍然正确：
+
+| 位置 | 判定 | 结论 |
+|---|---|---|
+| `RoleFormPage` | ~~`atLeastLevel('platform_admin')`~~ → `can('role.write')` | **本次修复** |
+| `AccountsPage.canWrite` | `atLeastLevel('platform_admin')` | 正确：账号写操作是平台治理动作，不看权限点（§33） |
+| `TeamsPage.canCreate` | `atLeastLevel('platform_admin')` | 正确：新建团队要求非 TeamScoped 的公司级视野，`repository/teams.save` 会拒绝 TeamScoped 身份 |
+| `LevelGate` | `atLeastLevel(minLevel)` | 正确：它本身就是"按层级守卫"组件 |
+
+### 验证
+- zouliang（member，角色含 `role.write`）：`readOnly` 计算结果为 `false`；
+  `POST /roles` 返回 **201**
+- 11 个不含 `role.write` 的角色不受影响
+- 五道门禁全绿（12 包）
+
+### 教训
+权限模型从「身份」迁到「权限点」时，**前端每一处判定都要跟着迁**。
+只改路由守卫不够——页面内部的只读态、按钮可见性同样在判旧模型，
+而它们不出现在路由表里，最容易漏。
+
+### 状态
+未 git commit。

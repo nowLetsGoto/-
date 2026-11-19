@@ -16,7 +16,7 @@ import { FormPage } from '../../components/FormPage';
 import { RolePermissionTree } from '../../components/RolePermissionTree';
 import { ErrorState, Loading } from '../../components/States';
 import { useMe } from '../../hooks/useMe';
-import { atLeastLevel } from '../../utils/accountLevel';
+import { can } from '../../utils/permission';
 
 // menuKeys 留空数组而不是 undefined：新建时"一个菜单都不勾"是管理员的明确选择，
 // 与"旧客户端没传这个字段"要区分开（后端对 nil 会默认全量）。
@@ -42,9 +42,14 @@ export function RoleFormPage(): JSX.Element {
   const [saving, setSaving] = useState(false);
   const [notice, setNotice] = useState('');
 
-  // 只有一种只读情况：层级不足（路由已拦，这里是兜底）。
-  // 内置角色不再置灰——公司管理员维护自己公司的角色定义是正当操作。
-  const readOnly = !atLeastLevel(me, 'platform_admin');
+  // 只读判定必须与路由守卫同一口径：路由用 PermissionGate(role.write)，
+  // 这里就用 role.write 权限点。
+  //
+  // 历史坑：这行曾按 atLeastLevel('platform_admin') 判——那是"角色管理归平台管理员"
+  // 时代的产物。后来角色管理改成权限点驱动，这里没跟着改，导致普通账号
+  // 即使被授了 role.write，进来看到的也是整页禁用（真实发生）。
+  // 编辑已有角色只需要 role.read（查看），改需要 role.write，故按后者判。
+  const readOnly = !can(me, 'role.write');
 
   useEffect(() => {
     let cancelled = false;
