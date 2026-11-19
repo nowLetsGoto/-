@@ -17,8 +17,9 @@ export type Permission = Schemas['Permission'];
 const ROLES_PATH = '/api/v1/roles';
 const PERMISSIONS_PATH = '/api/v1/permissions';
 
-/** 超级管理员角色的 key：权限固定为全量，前端据此把勾选矩阵设为只读。 */
-export const SUPER_ADMIN_ROLE_KEY = 'super-admin';
+// 注意：这里**没有** super-admin / platform-admin 的角色常量。
+// 超级管理员与平台管理员是账号身份（isSuperAdmin / accountLevel），不是角色，
+// 它们不会出现在角色列表里。角色只有 project-owner / developer / tester / guest 及自定义角色。
 
 export function listPermissions(): Promise<{ items: Permission[] }> {
   return get<{ items: Permission[] }>(PERMISSIONS_PATH);

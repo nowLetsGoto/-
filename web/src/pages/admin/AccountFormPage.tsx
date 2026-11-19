@@ -1,6 +1,8 @@
 /**
  * 账号新建 / 编辑页（/admin/accounts/new 与 /admin/accounts/:id/edit）。
- * 职责：新建时填账号名、初始密码、绑定人员与超管标记；编辑时改绑定人员、角色与超管标记。
+ * 职责：新建时填账号名、初始密码、绑定人员、角色与超管标记；编辑时改绑定人员、角色与超管标记。
+ * 下拉选项按调用者权限裁剪：可分配的角色 = 权限点不超出调用者自身的角色，
+ * 因此平台管理员既看不到 super-admin，也绑不了带该角色的人员。
  * 输入：URL 参数 id（有则编辑）、人员全量选项、角色全量选项、当前会话模式。
  * 输出：createUser / updateUser 请求。
  * 边界：不做字段校验（服务端统一判，返回可读提示）；模式在两个页面都只读展示——
@@ -33,6 +35,7 @@ const EMPTY: UserInput = {
   username: '',
   password: '',
   personId: '',
+  roleKey: '',
   isSuperAdmin: false,
   accountLevel: 'member',
   teamIds: [],
@@ -48,6 +51,7 @@ export function AccountFormPage(): JSX.Element {
   const { me } = useMe();
   // 只有超管本人能授予超管标记；判据与服务端 canGrantSuperAdmin 一致。
   const canGrantSuperAdmin = me?.isSuperAdmin === true;
+  const myPermissions = me?.permissions ?? [];
 
   const {
     items: people,
@@ -123,7 +127,59 @@ export function AccountFormPage(): JSX.Element {
     };
   }, [id]);
 
+  /**
+   * 可分配角色 = 权限点不超出调用者自身的角色。
+   *
+   * 这与服务端 authz.ValidateRoleAssignable 是同一条判据，所以界面上能选到的角色
+   * 一定分配得动，选不到的一定会被 403——两层不会各说一套。
+   * 不需要额外排除"超管角色"：角色体系里没有它（超管是账号身份，见 api/roles.ts 的说明）。
+   */
+  const assignableRoles = canGrantSuperAdmin
+    ? roles
+    : roles.filter((role) =>
+        role.permissions.every((permission) => myPermissions.includes(permission)),
+      );
+  const assignableRoleKeys = new Set(assignableRoles.map((role) => role.key));
+
+  /**
+   * 绑定人员选项。两条限制都来自同一个事实——**账号的权限就是绑定人员的权限**：
+   *   1. 非超管不给「未绑定」：没有人员的账号没有角色、登录后什么也做不了，
+   *      让公司管理员建出这种账号只是制造一条"看着正常、实际废掉"的记录；
+   *   2. 人员当前角色超出调用者范围的不列出来：绑一个 super-admin 角色的人，
+   *      账号登录后继承的就是那份权限，和直接把角色分配出去等价。
+   */
+  const personOptions = [
+    ...(canGrantSuperAdmin ? [{ value: '', label: '未绑定' }] : []),
+    ...people
+      .filter((person) => !person.roleKey || assignableRoleKeys.has(person.roleKey))
+      .map((person) => ({ value: person.id, label: person.name })),
+  ];
+
+  // 角色选项：非超管没有「未分配」——未分配等于没角色，等于这个账号建了也没用。
+  const roleOptions = [
+    ...(canGrantSuperAdmin ? [{ value: '', label: '未分配（普通用户）' }] : []),
+    ...assignableRoles.map((role) => ({ value: role.key, label: role.name })),
+  ];
+
+  /**
+   * 换绑定人员时把角色同步成这个人的现有角色。
+   * 角色挂在人身上，下拉里应当显示"这个账号实际会拿到的角色"，
+   * 而不是恒为「未分配」——那会让人以为保存后角色被清空了。
+   */
+  const changePerson = (personId: string): void => {
+    const person = people.find((item) => item.id === personId);
+    const nextRole = person?.roleKey ?? '';
+    setForm({ ...form, personId });
+    setRoleKey(nextRole === '' || assignableRoleKeys.has(nextRole) ? nextRole : '');
+  };
+
   const submit = async (): Promise<void> => {
+    // 非超管必须绑定人员：角色与权限都从人员来，没有人员的账号登录后什么都做不了。
+    // 服务端也拦（personId 为空的高权限角色会被拒），这里先给一句人话。
+    if (!canGrantSuperAdmin && !form.personId) {
+      setNotice('请先选择要绑定的人员：账号的角色与权限都来自绑定人员');
+      return;
+    }
     setSaving(true);
     setNotice('');
     try {
@@ -138,6 +194,7 @@ export function AccountFormPage(): JSX.Element {
           username: form.username.trim(),
           password: form.password,
           personId: form.personId,
+          roleKey: form.personId ? roleKey : '',
           isSuperAdmin: form.isSuperAdmin,
           accountLevel: form.accountLevel,
           teamIds: form.teamIds,
@@ -236,13 +293,17 @@ export function AccountFormPage(): JSX.Element {
           <span>绑定人员</span>
           <Select
             value={form.personId}
-            options={[
-              { value: '', label: '未绑定' },
-              ...people.map((person) => ({ value: person.id, label: person.name })),
-            ]}
-            onChange={(personId) => setForm({ ...form, personId })}
+            options={personOptions}
+            placeholder={canGrantSuperAdmin ? undefined : '请选择人员'}
+            onChange={changePerson}
           />
-          <span className="settings-hint">绑定人员后，该账号以这个人的身份与角色工作。</span>
+          <span className="settings-hint">
+            {canGrantSuperAdmin
+              ? '绑定人员后，该账号以这个人的身份与角色工作。'
+              : personOptions.length > 0
+                ? '账号以这个人的身份与角色工作；角色权限高于你的人员不在可选范围内。'
+                : '还没有可绑定的人员：先到「人员管理」新建人员，再回来建账号。'}
+          </span>
         </label>
       </div>
 
@@ -253,10 +314,8 @@ export function AccountFormPage(): JSX.Element {
         <Select
           value={roleKey}
           disabled={!form.personId}
-          options={[
-            { value: '', label: '未分配（普通用户）' },
-            ...roles.map((role) => ({ value: role.key, label: role.name })),
-          ]}
+          options={roleOptions}
+          placeholder={canGrantSuperAdmin ? undefined : '请选择角色'}
           onChange={setRoleKey}
         />
         <span className="settings-hint">

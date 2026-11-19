@@ -11,13 +11,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { errorMessage } from '../../api/client';
 import type { Permission, RoleInput } from '../../api/roles';
-import {
-  SUPER_ADMIN_ROLE_KEY,
-  createRole,
-  getRole,
-  listPermissions,
-  updateRole,
-} from '../../api/roles';
+import { createRole, getRole, listPermissions, updateRole } from '../../api/roles';
 import { Checkbox, Input } from '../../components/Controls';
 import { FormPage } from '../../components/FormPage';
 import { ErrorState, Loading } from '../../components/States';
@@ -37,20 +31,17 @@ export function RoleFormPage(): JSX.Element {
   const [form, setForm] = useState<RoleInput>(EMPTY);
   const [permissions, setPermissions] = useState<Permission[]>([]);
   // 当前编辑的角色是不是平台内置（tenant_id 为空的那批）。
-  // 后端规则：内置角色只有超管能改，公司管理员改不了（会 404）；前端据此把表单置灰，
-  // 而不是让用户填完再吃 404。
+  // 内置角色可以改（每家公司各持一份副本，改它只影响本公司），只是不能删。
+  // 这里保留 isBuiltin 是为了在标题下方说明它的特殊身份，不再用于置灰。
   const [isBuiltin, setIsBuiltin] = useState(false);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState('');
   const [saving, setSaving] = useState(false);
   const [notice, setNotice] = useState('');
 
-  // 只读的三种情况：超管角色（固定全量）、平台内置角色（非超管不可改）、非管理层级（进不来，兜底）。
-  const isSuperAdmin = me?.isSuperAdmin === true;
-  const readOnly =
-    key === SUPER_ADMIN_ROLE_KEY ||
-    (isBuiltin && !isSuperAdmin) ||
-    !atLeastLevel(me, 'platform_admin');
+  // 只有一种只读情况：层级不足（路由已拦，这里是兜底）。
+  // 内置角色不再置灰——公司管理员维护自己公司的角色定义是正当操作。
+  const readOnly = !atLeastLevel(me, 'platform_admin');
 
   useEffect(() => {
     let cancelled = false;
@@ -153,11 +144,9 @@ export function RoleFormPage(): JSX.Element {
     <FormPage
       title={title}
       subtitle={
-        key === SUPER_ADMIN_ROLE_KEY
-          ? '超级管理员角色的权限固定为全量，不可修改'
-          : isBuiltin
-            ? '平台内置角色对所有公司可见，只有平台超级管理员能修改它的权限'
-            : '勾选的权限点决定该角色「能做什么」；管理能力（管人、改配置）由账号的管理身份决定，不在这里勾选'
+        isBuiltin
+          ? '内置角色：本公司预置，可以修改权限但不能删除；改动只影响本公司，不影响其他公司'
+          : '勾选的权限点决定该角色「能做什么」；管理能力（管人、改配置）由账号的管理身份决定，不在这里勾选'
       }
       backTo={LIST_PATH}
       saving={saving}

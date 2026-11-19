@@ -39,12 +39,13 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) error {
 	return handler.OK(w, data)
 }
 
-// Create 新建账号；请求体 6 个字段（username / password / personId / isSuperAdmin / accountLevel / teamIds）。
+// Create 新建账号；请求体 7 个字段（username / password / personId / roleKey / isSuperAdmin / accountLevel / teamIds）。
 // 归属模式与归属公司都不来自请求体：前者取自调用者登录模式，后者取自调用者归属公司，
 // 这样建出来的账号一定落在调用者能看见的范围里。
+// roleKey 写的是绑定人员的角色，能不能分配由 service 按调用者权限判定（非超管拿不到 super-admin）。
 func (h *Handler) Create(w http.ResponseWriter, r *http.Request) error {
 	var in contract.UserInput
-	if err := handler.DecodeJSON(w, r, &in, "username/password/personId/isSuperAdmin/accountLevel/teamIds"); err != nil {
+	if err := handler.DecodeJSON(w, r, &in, "username/password/personId/roleKey/isSuperAdmin/accountLevel/teamIds"); err != nil {
 		return err
 	}
 	caller := authctx.From(r.Context())

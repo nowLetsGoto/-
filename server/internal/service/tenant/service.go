@@ -10,6 +10,7 @@ package tenant
 import (
 	"context"
 	"fmt"
+	"log"
 	"regexp"
 	"strings"
 
@@ -22,13 +23,21 @@ import (
 // 公司标识进 URL 与对外展示，限定为小写字母 / 数字 / 短横线，避免特殊字符与歧义。
 var codePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{1,31}$`)
 
-// Service 是公司模块的唯一业务入口。
-type Service struct {
-	repo *tenantrepo.Repository
+// roleSeeder 是「给新公司铺一套内置角色」的最小能力。
+// 声明成窄接口而不是直接依赖 role.Service：公司模块只需要这一个动作，
+// 不必把整个角色模块（列表 / 编辑 / 删除）拉进来。
+type roleSeeder interface {
+	SeedForTenant(ctx context.Context, tenantID string) error
 }
 
-func NewService(repo *tenantrepo.Repository) *Service {
-	return &Service{repo: repo}
+// Service 是公司模块的唯一业务入口。
+type Service struct {
+	repo  *tenantrepo.Repository
+	roles roleSeeder
+}
+
+func NewService(repo *tenantrepo.Repository, roles roleSeeder) *Service {
+	return &Service{repo: repo, roles: roles}
 }
 
 // List 分页返回公司列表，供超管的平台视角查看。
@@ -78,6 +87,14 @@ func (s *Service) Create(ctx context.Context, in contract.TenantInput) (contract
 			return contract.TenantResult{}, &contract.ValidationError{Message: "公司名称、标识或管理员账号名已被占用"}
 		}
 		return contract.TenantResult{}, err
+	}
+
+	// 新公司必须立刻拥有内置角色，否则管理员一进去就是"没有任何角色可分配"的空状态。
+	// 放在建公司之后而不是塞进那个事务里：角色定义在 role 模块，公司模块不该复制一份。
+	// 这里的失败不回滚公司——公司已经建好且有管理员，可以正常登录使用，
+	// 缺的角色会由下次启动的 EnsureBuiltin 补齐；若为此回滚，反而会让超管刚才填的一整页白填。
+	if seedErr := s.roles.SeedForTenant(ctx, item.ID); seedErr != nil {
+		log.Printf("为新公司播种内置角色失败 tenant=%s: %v", item.ID, seedErr)
 	}
 	return contract.TenantResult{Tenant: item, Password: in.AdminPassword}, nil
 }

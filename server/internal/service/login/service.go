@@ -102,8 +102,8 @@ func (s *Service) EnsureAdmin(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("生成种子密码失败: %w", err)
 	}
-	// 种子管理员是平台级超管：层级 super_admin、无公司归属；不挂团队。
-	if _, err := s.users.Create(ctx, s.seedUsername, hash, contract.ModeTeam, "", true,
+	// 种子管理员是平台级超管：层级 super_admin、无公司归属；不绑人员、不挂团队。
+	if _, err := s.users.Create(ctx, s.seedUsername, hash, contract.ModeTeam, "", "", true,
 		contract.AccountLevelSuperAdmin, "", nil); err != nil {
 		return fmt.Errorf("创建种子管理员失败: %w", err)
 	}

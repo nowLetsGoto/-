@@ -71,6 +71,14 @@ func (r *Repository) FindByID(ctx context.Context, id string) (Record, error) {
 func (r *Repository) List(ctx context.Context, page contract.PageQuery, mode contract.SessionMode, keyword string, scope contract.Scope) ([]contract.User, int, error) {
 	filter := accountFilter(mode, keyword)
 	repository.ApplyTenant(filter, "u", scope)
+	if !scope.All {
+		// 非超管看不到超管账号：既包括带 is_super_admin 标记的账号，
+		// 也包括绑定了 super-admin 角色的人员的账号——后者登录后拿到的是同一份全量权限，
+		// 在列表里露出来等于把「平台最高权限账号」指给公司管理员看。
+		// 过滤放在 SQL 而不是内存里，分页的 total 才不会算错。
+		// 只按 is_super_admin 判：超管是账号身份，与角色无关（角色里没有超管这个概念）。
+		filter.AddRaw(`u.is_super_admin = false`)
+	}
 
 	var total int
 	countSQL := `SELECT count(*)` + fromClause + filter.Where()
@@ -106,8 +114,10 @@ func (r *Repository) List(ctx context.Context, page contract.PageQuery, mode con
 
 // Create 新建账号；用户名冲突由唯一索引拒绝，service 翻译成可读提示。
 // accountLevel / tenantID 由 service 按调用者层级推导后传入，仓储不自行判断。
+// roleKey 非空时在同一事务里写绑定人员的角色（people.role_id），
+// 「建号 + 绑定 + 定角色」要么全成、要么全不成，不会留下只有半个配置的账号。
 // teamIDs 仅在 team_admin 时写入 team_admins——团队管理员与团队是多对多，关联与账号同事务。
-func (r *Repository) Create(ctx context.Context, username, passwordHash string, mode contract.SessionMode, personID string, isSuperAdmin bool, accountLevel, tenantID string, teamIDs []string) (Record, error) {
+func (r *Repository) Create(ctx context.Context, username, passwordHash string, mode contract.SessionMode, personID, roleKey string, isSuperAdmin bool, accountLevel, tenantID string, teamIDs []string) (Record, error) {
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
 		return Record{}, fmt.Errorf("开启账号创建事务失败: %w", err)
@@ -128,6 +138,11 @@ func (r *Repository) Create(ctx context.Context, username, passwordHash string, 
 	if err := row.Scan(&id); err != nil {
 		return Record{}, fmt.Errorf("创建账号失败: %w", err)
 	}
+	if personID != "" && roleKey != "" {
+		if _, err := tx.ExecContext(ctx, roleAssignmentSQL, personID, roleKey); err != nil {
+			return Record{}, fmt.Errorf("写入人员角色失败: %w", err)
+		}
+	}
 	if err := replaceAdminTeams(ctx, tx, id, teamIDs, tenantID); err != nil {
 		return Record{}, err
 	}
@@ -135,6 +150,30 @@ func (r *Repository) Create(ctx context.Context, username, passwordHash string, 
 		return Record{}, fmt.Errorf("提交账号创建失败: %w", err)
 	}
 	return r.FindByID(ctx, id)
+}
+
+// roleAssignmentSQL 把角色标识解析成 roles.id 再写入人员档案。
+// 角色按「平台内置（tenant_id 为空）+ 本公司自定义」可见，解析不到就是 NULL（无角色）——
+// 与 FindByID 的 JOIN 同一条可见性规则，避免出现"账号列表显示 A、权限判定用 B"。
+const roleAssignmentSQL = `UPDATE people SET role_id = (
+    SELECT ro.id FROM roles ro
+    WHERE ro.key = $2 AND (ro.tenant_id IS NULL OR ro.tenant_id = people.tenant_id)
+  ) WHERE id = $1`
+
+// PersonRoleKey 返回某个人当前的角色标识，没有绑定角色时返回空串。
+// 账号侧只读它一个字段，用来校验「把这个账号绑到这个人身上是否会越权」。
+func (r *Repository) PersonRoleKey(ctx context.Context, personID string) (string, error) {
+	var key string
+	err := r.db.QueryRowContext(ctx,
+		`SELECT coalesce(r.key, '') FROM people p LEFT JOIN roles r ON r.id = p.role_id WHERE p.id = $1`,
+		personID).Scan(&key)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", contract.ErrNotFound
+	}
+	if err != nil {
+		return "", fmt.Errorf("查询人员角色失败: %w", err)
+	}
+	return key, nil
 }
 
 // replaceAdminTeams 写入团队管理员的关联团队；tenantID 非空时团队必须同属该公司。
@@ -199,14 +238,7 @@ func (r *Repository) Update(ctx context.Context, id, personID string, isSuperAdm
 	if personID != "" {
 		// 查不到行不算错：personID 的合法性已由 users.person_id 的外键保证，
 		// 这里 0 行只意味着该人员刚被别处删掉，账号侧的更新仍应成功。
-		//
-		// 角色标识在 SQL 内解析成 roles.id，并按该人员所属公司过滤：
-		// 只能挂本公司自定义角色或平台内置角色，解析不到就是 NULL（无角色）。
-		if _, err := tx.ExecContext(ctx,
-			`UPDATE people SET role_id = (
-			   SELECT ro.id FROM roles ro
-			   WHERE ro.key = $2 AND (ro.tenant_id IS NULL OR ro.tenant_id = people.tenant_id)
-			 ) WHERE id = $1`, personID, roleKey); err != nil {
+		if _, err := tx.ExecContext(ctx, roleAssignmentSQL, personID, roleKey); err != nil {
 			return Record{}, fmt.Errorf("更新账号角色失败: %w", err)
 		}
 	}

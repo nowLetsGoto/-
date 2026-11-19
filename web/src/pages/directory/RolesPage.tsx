@@ -10,7 +10,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import type { TableColumnsType } from '@seakoi/console-kit';
 import { errorMessage } from '../../api/client';
 import type { Role } from '../../api/roles';
-import { SUPER_ADMIN_ROLE_KEY, deleteRole, listRoles } from '../../api/roles';
+import { deleteRole, listRoles } from '../../api/roles';
 import { Button } from '../../components/Controls';
 import { ConfirmDialog } from '../../components/ConfirmDialog';
 import { DataTable } from '../../components/DataTable';
@@ -75,6 +75,20 @@ export function RolesPage(): JSX.Element {
       key: 'key',
       render: (_, role) => <code className="cell-sub">{role.key}</code>,
     },
+    // 归属公司列只对超管有意义：他跨公司看全部角色，同名角色会出现多份
+    // （每家公司的 developer 各一条），没有这一列就分不清哪条属于谁。
+    // 公司管理员只看本公司，所有行的公司名相同，显示出来是噪音。
+    ...(me?.isSuperAdmin
+      ? [
+          {
+            title: '归属公司',
+            key: 'tenantName',
+            render: (_: unknown, role: Role) => (
+              <span className="cell-sub">{role.tenantName || '—'}</span>
+            ),
+          } as TableColumnsType<Role>[number],
+        ]
+      : []),
     {
       title: '类型',
       key: 'isBuiltin',
@@ -108,13 +122,13 @@ export function RolesPage(): JSX.Element {
             type="button"
             onClick={() => navigate(`/directory/roles/${role.key}/edit`)}
           >
-            {role.key === SUPER_ADMIN_ROLE_KEY ? '查看' : '编辑'}
+            编辑
           </Button>
           {/*
-            内置角色与超管角色不显示删除：后端也会拒绝，但先把不可能成功的按钮藏起来，
-            比让用户点了才收到"不可删除"要好。判据与后端一致（isBuiltin / 超管 key）。
+            内置角色不显示删除：它是本公司预置的默认角色，删掉之后新成员就没有可分配的
+            起点（后端也会拒绝）。可以改它的权限——这正是内置角色作为"模板"的用法。
           */}
-          {deletable && !role.isBuiltin && role.key !== SUPER_ADMIN_ROLE_KEY ? (
+          {deletable && !role.isBuiltin ? (
             <Button
               className="button button-ghost button-small button-danger"
               type="button"
@@ -134,7 +148,8 @@ export function RolesPage(): JSX.Element {
         <div>
           <h1>角色管理</h1>
           <p className="sub">
-            共 {state.items.length} 个角色 · 角色决定「能做什么」，分配给人由项目成员管理
+            共 {state.items.length} 个角色 ·
+            角色决定「能做什么」；超级管理员与平台管理员是账号身份，不在此列
           </p>
         </div>
         {/* 能进到这个页面就一定是超管（路由由 AdminGate 把关），新建入口无条件渲染。 */}

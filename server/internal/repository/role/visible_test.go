@@ -24,9 +24,11 @@ func TestVisibleFilter(t *testing.T) {
 			wantArgs: nil,
 		},
 		{
-			name:     "公司账号看内置加本公司自定义",
+			// 内置角色每家公司各持一份独立副本，不再有全局共享那一份，
+			// 因此可见范围就是一个等值条件。
+			name:     "公司账号只看本公司的角色（含内置副本）",
 			scope:    contract.Scope{TenantID: "t-1"},
-			wantCond: "(tenant_id IS NULL OR tenant_id = $1)",
+			wantCond: "tenant_id = $1",
 			wantArgs: []any{"t-1"},
 		},
 		{

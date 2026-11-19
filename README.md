@@ -150,14 +150,14 @@ make build          # 前端产物 → server/public/，再 CGO_ENABLED=0 go bui
 | 23 | GET | `/api/v1/people/{id}` | 需登录 | 人员详情（编辑页回填），id 非 UUID 或不存在均 404 |
 | 24 | GET | `/api/v1/teams/{id}` | 需登录 | 团队详情（编辑页回填），同上 |
 | 25 | GET | `/api/v1/admin/users` | **超管** | 账号列表（分页 + 关键字），非超管 403 |
-| 26 | POST | `/api/v1/admin/users` | **超管** | 新建账号（账号名 + 初始密码 + 是否超管），返回 201 |
-| 27 | PUT | `/api/v1/admin/users/{id}` | **超管** | 改超管标记 / 绑定人员（登录名不可改） |
+| 26 | POST | `/api/v1/admin/users` | **超管** | 新建账号（账号名 + 初始密码 + 绑定人员 + 角色 + 是否超管），返回 201 |
+| 27 | PUT | `/api/v1/admin/users/{id}` | **超管** | 改超管标记 / 绑定人员 / 角色（登录名不可改；非超管不能分配超出自己权限的角色） |
 | 28 | POST | `/api/v1/admin/users/{id}/reset-password` | **超管** | 重置密码，返回**一次性临时密码**并让旧令牌失效 |
 | 29 | POST | `/api/v1/admin/users/{id}/status` | **超管** | 启用 / 禁用；禁用会让该账号令牌立即失效 |
 | 30 | GET | `/api/v1/admin/audit-logs` | **超管** | 审计日志（只读，可按 action / actor / result 筛选） |
 | 31 | POST | `/api/v1/settings/api-key/rotate` | **超管** | 轮换外部接口 Key：旧 Key 立即失效，新 Key 只在响应里出现一次 |
 | 32 | GET | `/api/v1/permissions` | 需登录 | 权限点目录（前端据此渲染勾选矩阵，不硬编码 key） |
-| 33 | GET | `/api/v1/roles` | 需登录 | 角色列表（含各自权限点） |
+| 33 | GET | `/api/v1/roles` | 需登录 | 角色列表（含各自权限点；非超管看不到 `super-admin`） |
 | 34 | POST | `/api/v1/roles` | **超管** | 新建自定义角色 |
 | 35 | GET | `/api/v1/roles/{key}` | 需登录 | 角色详情（编辑页回填） |
 | 36 | PUT | `/api/v1/roles/{key}` | **超管** | 编辑角色名称 / 描述 / 权限；**超管角色权限不可改** |

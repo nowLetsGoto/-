@@ -337,7 +337,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** 角色列表（仅超级管理员；含各自权限点） */
+        /** 角色列表（平台管理员起可读；含各自权限点，非超管看不到 super-admin） */
         get: operations["listRoles"];
         put?: never;
         /** 新建自定义角色（仅超级管理员） */
@@ -804,8 +804,10 @@ export interface components {
         UserInput: {
             username: string;
             password: string;
-            /** @description 绑定的人员档案 id，可留空（之后再绑定） */
+            /** @description 绑定的人员档案 id；留空会建出一个没有角色、登录后也拿不到业务权限的账号， 因此平台管理员与团队管理员创建时必填（超管可先建号、之后再绑）。 */
             personId: string;
+            /** @description 随绑定人员一起写入的角色标识（写的是 people.role_key，users 表没有角色列）。 留空表示沿用该人员现有角色；非空时服务端校验调用者能否分配该角色—— 非超管分配 super-admin 一律拒绝。 */
+            roleKey?: string;
             isSuperAdmin: boolean;
             accountLevel: components["schemas"]["AccountLevel"];
             /** @description 仅 accountLevel=team_admin 时有意义，且必须落在调用者可见的团队内 */
@@ -876,17 +878,20 @@ export interface components {
             group: string;
             label: string;
         };
+        /** @description 角色决定「能做什么业务」。超级管理员与平台管理员**不是角色**， 它们是账号身份（isSuperAdmin / accountLevel），不会出现在角色列表里。 */
         Role: {
             /** Format: uuid */
             id: string;
-            /** @description 全局唯一；本公司自定义角色需带公司前缀（取公司 id 前 8 位） */
+            /** @description 同一公司内唯一；不同公司可以有同名角色（各自独立） */
             key: string;
             name: string;
             description: string;
-            /** @description 内置角色不可删除；超管角色的权限不可修改 */
+            /** @description 本公司预置的角色。可以修改权限，但不能删除 */
             isBuiltin: boolean;
-            /** @description 为空表示平台内置角色（所有公司可见、只有超管能改）；非空表示某公司的自定义角色 */
+            /** @description 角色归属的公司；角色始终属于某一家公司（没有跨公司共享的角色） */
             tenantId: string;
+            /** @description 归属公司名。超管跨公司查看时靠它区分同名角色 */
+            tenantName: string;
             permissions: string[];
             /** Format: date-time */
             createdAt: string;

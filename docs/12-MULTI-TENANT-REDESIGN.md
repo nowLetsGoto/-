@@ -666,8 +666,9 @@ Webhook 路由：甲→`/alpha`、乙→`/beta`，payload 的 `tenantId` 分别�
 （P3 后端强制 `key` 带公司 UUID 前 8 位，不提示的话用户会莫名吃 400）。
 
 ### 身份展示
-`AccountMenu` 在团队模式下新增两行：「管理身份」与「所属公司」。与「当前角色」并列展示，
-明确两者正交（一个 team_admin 也可以是 developer）。
+`AccountMenu` 团队模式只展示「当前角色」与「所属公司」两行。
+原先并列的「管理身份」行已移除：`member` 这一层不再作为对外概念呈现，
+管理范围（能管谁、管多大范围）完全由服务端按 `account_level` + scope 判定，不在个人信息卡上暴露。
 
 ### 端到端验证
 四种身份 `/me` 数据正确：超管 10 项权限、平台管理员 9 项（无 admin.access）、团队管理员 6 项、普通成员 3 项；
@@ -1141,6 +1142,114 @@ key 才能退化成纯业务字段、按公司划分。
 ### 修法
 按 `me.isSuperAdmin` 条件渲染，判据与服务端 `canGrantSuperAdmin` 完全一致。
 同一文件顶部写清"前端隐藏 + 后端拒绝，两层各自负责"，避免后人以为前端这层是安全边界。
+
+### 状态
+五道门禁全绿；测试数据已清理；未 git commit。
+
+---
+
+## §23 super-admin 角色与账号的可见性（2026-11-18）
+
+### 需求
+1. 公司平台管理员**看不到** `super-admin` 角色，也看不到超管账号；
+2. 平台管理员可以给新建账号绑定**本公司角色清单里除 super-admin 外的任何角色**；
+3. 只有超管本人能给账号分配 `super-admin`。
+
+### 关键发现：只靠「权限点比较」挡不住
+`authz.ValidateRoleAssignable` 原本只做「角色权限 ⊆ 调用者权限」。
+测试库里 `wordCompany1` 的**绑定人员带 super-admin 角色**（`chendong` 同一人），
+它的权限集因此是全量——逐点比较会得出"它可以分配 super-admin"的错误结论。
+这是本次最该拦住的一次纵向提权，权限比较恰好失效。
+
+### 修法（后端为唯一边界）
+- `authz.guardSuperAdminAssignment`：`role.key == super-admin && !identity.IsSuperAdmin` → 403。
+  只看身份，不看权限点，并有单测钉住（`assignment_test.go`）。
+- `service/role.List/Get`：非超管过滤掉 `super-admin`（按 key 查按 404 处理，不透露存在）。
+- `service/user`：新建与编辑都过 `ValidateRoleAssignable`；`roleKey` 为空但换了绑定人员时，
+  校验的是**该人员当前的角色**——绑一个带 super-admin 角色的人等价于把那份权限发出去。
+  编辑时只在「角色或绑定人员真的变了」时校验，避免存量数据让日常编辑莫名 403。
+- `repository/user.List`：非 `scope.All` 时在 SQL 里排除 `is_super_admin` 与
+  「角色是 super-admin」的账号（放 SQL 里分页 total 才准）；`ensureInScope` 对这类账号
+  单条读写一律 404，与列表隐藏同口径。
+- `UserInput.roleKey`：新建时一并写入 `people.role_key`（与编辑同一列、同一事务），
+  过去前端下拉选完被丢弃的问题一并修掉。
+
+### 前端（只做同一规则的投影）
+`AccountFormPage`：可分配角色 = `role.permissions ⊆ me.permissions` 且排除 `super-admin`；
+可绑定人员 = 当前角色可分配的人（没有角色的人可绑）；非超管没有「未绑定」「未分配」选项，
+换绑人员时角色下拉自动同步成该人员的现有角色。非超管必须绑定人员才允许保存。
+
+### 已知数据副作用
+`wordCompany1`、`chendong` 都绑在带 super-admin 角色的陈冬身上，两者现在对非超管不可见
+（包括 `wordCompany1` 自己那一行）。这不是代码回归，是测试数据与「超管不可见」规则的冲突：
+把陈冬的角色改回普通角色（或改用种子超管 `admin` 验证超管视图）即可恢复。
+
+---
+
+## §23 角色与身份彻底分离；内置角色改为每公司独立副本（2026-11-18）
+
+### 问题的根源
+`super-admin` 曾作为一个**内置角色**存在，但它从未被权限判定读取过——
+`permissionsOf` 第一步就 `if identity.IsSuperAdmin { return allPermissions() }` 短路，压根不查角色。
+它唯一的作用是在角色列表里制造「挂上它就是超管」的误解，且已经被人误解过一次
+（库中 `chendong` 挂着它，前端也把它列为可分配项）。
+
+**领域规则（本次确立）**：
+| | 身份 | 角色 |
+| --- | --- | --- |
+| 存哪 | `users.is_super_admin` / `users.account_level` | `roles` 表，人员经 `people.role_id` 关联 |
+| 绑谁 | 账号 | 人员 |
+| 取值 | 固定 4 级 | 可自由增删 |
+| 回答 | 能管到哪一层（决定可见范围） | 能做什么业务 |
+| 授予 | 只有超管本人 | 团队管理员及以上 |
+
+**超级管理员 = 账号身份**（全平台固定，靠 `is_super_admin`）；
+**平台管理员 = 账号身份**（`account_level='platform_admin'`，由超管建公司时连带创建）。
+两者都不该出现在角色体系里。
+
+### 改动
+1. **删除 `super-admin` 角色**：从 `builtinRoles` 移除，并写幂等迁移删除存量行；
+   挂过它的人由外键 `ON DELETE SET NULL` 变「未分配」，回到默认读取基线
+   （这些人本来就不是超管，真超管不需要角色）。
+2. **内置角色改为 4 个业务角色**：`project-owner`（恢复）/ `developer` / `tester` / `guest`。
+3. **内置角色从「全局共享一份」改为「每公司独立副本」**：
+   - 旧模型 `tenant_id IS NULL` 表示所有公司共享；
+   - 新模型 `tenant_id = 公司id`，`is_builtin` 的含义变为「本公司预置，可改不可删」。
+   - 这样甲公司改 `developer` 不会影响乙公司——否则一家公司的管理员能改另一家的权限，那是越权。
+4. **开放内置角色给平台管理员维护**：去掉 `Update` 里 `tenant_id IS NOT NULL` 的限制
+   与 `RoleFormPage` 的置灰逻辑（原来内置角色只有超管能改）。
+5. **清理冗余代码**：删除 `SuperAdminKey` 常量、`visibleRoles` 过滤、
+   `guardSuperAdminAssignment` 守卫、`allPermissionKeys`，以及对应的 3 个测试文件。
+   `user/repository` 与 `user/service` 里「按角色 key 隐藏超管」的判据也一并去掉——
+   现在只看 `is_super_admin`。
+
+### 迁移顺序（踩过的坑，务必记住）
+第一版 `AdoptGlobalBuiltins` 先删全局角色行、再分发副本，结果**把所有人员的角色清空**：
+`people.role_id` 是 `ON DELETE SET NULL`，删全局行时引用全被置空。
+（实测触发，已从迁移前快照恢复 `linanan` / `zouliang` 的 `guest`。）
+
+正确顺序**必须**是：
+1. 给每家公司插入副本（`ON CONFLICT DO NOTHING`）；
+2. 从全局行复制权限到副本（只补不删，保留管理员此前的调整）；
+3. **把 `people.role_id` / `team.projects.role_id` 改指到同公司同 key 的副本**；
+4. 核对是否还有引用指向全局行，**有就整个事务回滚**（宁可迁移失败，也不要静默清空角色）；
+5. 确认无引用后才删全局行。
+
+教训：凡是「删除被外键引用且行为 SET NULL 的行」，迁移的第 3 步必须先于删除。
+这次是靠一次实测事故发现的，不是靠推演——所以**迁移脚本必须先在真实数据上验证结果**。
+
+### 顺带修的呈现问题
+超管 `scope.All` 会跨公司看到全部角色，同名角色出现多份（3 公司 × 4 = 12 条）无法区分。
+给 `Role` 新增 `tenantName`，列表在超管视角显示「归属公司」列；公司管理员只有一个公司，
+不显示该列（全是同一行名，是噪音）。
+
+### 验证（17 项全过）
+- 角色列表无 `super-admin` / `platform-admin`；`project-owner` 已恢复
+- 新公司建好后自动拥有 4 个内置角色
+- 平台管理员可改本公司 `developer`，**别家同角色不受影响**（核心）
+- 内置角色不可删（400，提示可改权限）
+- 超管身份特权未被破坏（公司管理、审计日志仍 200）
+- 迁移幂等：重启前后数据完全一致，无重复、无丢失
 
 ### 状态
 五道门禁全绿；测试数据已清理；未 git commit。

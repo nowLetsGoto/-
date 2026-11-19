@@ -149,7 +149,7 @@ func run() error {
 	}
 	// 修正存量内置角色：tenant_id 归零为"平台级共享"，并清掉残留的管理类权限点
 	// （directory.write / settings.* 等已改由 account_level 直接赋予）。
-	if err := roleService.NormalizeBuiltins(context.Background()); err != nil {
+	if err := roleService.NormalizeRoles(context.Background()); err != nil {
 		return err
 	}
 
@@ -159,11 +159,12 @@ func run() error {
 	auditService := auditsvc.NewService(auditRepos)
 
 	// 删账号要顺带清掉它在单人分区的项目与文件，因此账号服务依赖清理器与存储路径。
-	// teams 仓储用于校验团队管理员的团队归属，防止跨公司/跨团队授权。
-	userService := usersvc.NewService(usersRepository, repository.NewAccountCleanup(db), paths, teamsRepository)
+	// teams 仓储用于校验团队管理员的团队归属，防止跨公司/跨团队授权；
+	// authzService 用于校验「调用者有没有资格分配这个角色」（非超管拿不到 super-admin）。
+	userService := usersvc.NewService(usersRepository, repository.NewAccountCleanup(db), paths, teamsRepository, authzService)
 
 	// 公司管理：建公司时原子地建其平台管理员；只有超管可达（路由层把关）。
-	tenantService := tenantsvc.NewService(tenantRepository)
+	tenantService := tenantsvc.NewService(tenantRepository, roleService)
 
 	loginService := loginsvc.NewService(cfg, usersRepository, tenantRepository)
 	if err := loginService.EnsureAdmin(context.Background()); err != nil {

@@ -43,11 +43,13 @@ const tempPasswordAlphabet = "abcdefghijkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23
 
 // Service 是账号管理的唯一业务入口。
 type Service struct {
-	repo   *userrepo.Repository
+	repo    *userrepo.Repository
 	cleanup *repository.AccountCleanup
-	paths  *storage.Paths
+	paths   *storage.Paths
 	// teams 只用于校验 team_admin 的关联团队落在自己可见范围内；窄接口便于单测。
 	teams teamLookup
+	// roles 只用于校验「调用者能不能分配这个角色」；窄接口，不必为它拉起整套权限判定。
+	roles roleAssigner
 }
 
 // teamLookup 是账号创建时校验团队归属所需的最小读取面。
@@ -55,8 +57,15 @@ type teamLookup interface {
 	AdminTeamIDs(ctx context.Context, userID string) ([]string, error)
 }
 
-func NewService(repo *userrepo.Repository, cleanup *repository.AccountCleanup, paths *storage.Paths, teams teamLookup) *Service {
-	return &Service{repo: repo, cleanup: cleanup, paths: paths, teams: teams}
+// roleAssigner 校验「调用者能否把某个角色分配给人员」。
+// 实现是 authz.Service（与 people 用的是同一个方法），保证账号页与人员页同一条判据：
+// 非超管只能分配权限点不超出自己范围的角色，因此拿不到 super-admin。
+type roleAssigner interface {
+	ValidateRoleAssignable(ctx context.Context, identity contract.Identity, roleKey string) error
+}
+
+func NewService(repo *userrepo.Repository, cleanup *repository.AccountCleanup, paths *storage.Paths, teams teamLookup, roles roleAssigner) *Service {
+	return &Service{repo: repo, cleanup: cleanup, paths: paths, teams: teams, roles: roles}
 }
 
 // resolveCreateLevel 校验调用者能否创建指定层级，并归一化默认值。
@@ -175,13 +184,21 @@ func (s *Service) Create(ctx context.Context, caller contract.Identity, in contr
 		return contract.User{}, contract.ErrForbidden
 	}
 
+	personID := strings.TrimSpace(in.PersonID)
+	roleKey := strings.TrimSpace(in.RoleKey)
+	// 角色写的是 people.role_key：先校验调用者有没有资格发这个角色，
+	// 再落库——不合格的请求不该在库里留下半截数据。
+	if err := s.ensureAssignableRole(ctx, caller, personID, roleKey); err != nil {
+		return contract.User{}, err
+	}
+
 	hash, err := loginsvc.HashPassword(in.Password)
 	if err != nil {
 		return contract.User{}, err
 	}
 
 	// 归属固定为调用者所属公司：平台管理员与团队管理员都只能在本公司建账号。
-	record, err := s.repo.Create(ctx, username, hash, caller.Mode, strings.TrimSpace(in.PersonID),
+	record, err := s.repo.Create(ctx, username, hash, caller.Mode, personID, roleKey,
 		in.IsSuperAdmin, level, caller.TenantID, teamIDs)
 	if err != nil {
 		if repository.IsUniqueViolation(err) {
@@ -210,11 +227,44 @@ func canGrantSuperAdmin(caller contract.Identity) bool {
 	return caller.Level() == contract.AccountLevelSuperAdmin
 }
 
+// ensureAssignableRole 校验「调用者能给这个账号配这个角色」。
+//
+// 两条路径都要守：roleKey 非空时校验角色本身（调用者要把它写进 people.role_key）；
+// roleKey 为空但绑定了人员时，校验该人员**当前**的角色——把账号绑到一个
+// super-admin 角色的人身上，登录后就继承了那份权限，这和不传 roleKey 的绕过没有区别。
+// 角色归属校验统一交给 authz.ValidateRoleAssignable，与人员管理页同一条判据。
+func (s *Service) ensureAssignableRole(ctx context.Context, caller contract.Identity, personID, roleKey string) error {
+	if roleKey != "" {
+		if personID == "" {
+			return &contract.ValidationError{Message: "角色要挂在绑定人员上，请先选择绑定人员"}
+		}
+		return s.roles.ValidateRoleAssignable(ctx, caller, roleKey)
+	}
+	if personID == "" {
+		return nil
+	}
+	current, err := s.repo.PersonRoleKey(ctx, personID)
+	if err != nil {
+		if errors.Is(err, contract.ErrNotFound) {
+			return &contract.ValidationError{Message: "绑定的人员不存在，请刷新后重试"}
+		}
+		return err
+	}
+	return s.roles.ValidateRoleAssignable(ctx, caller, current)
+}
+
 // ensureInScope 校验目标账号在当前调用者的可见范围内。
 // 超管看全部；公司账号只能碰本公司账号，跨公司按「不存在」处理，不泄漏对方是否有这个 id。
+// 超管账号（超管标记或 super-admin 角色）对非超管一律按「不存在」处理：
+// 列表里已经隐藏，单条读写也必须同一口径，否则知道 id 就能绕过列表的隐藏。
 func ensureInScope(caller contract.Identity, target userrepo.Record) error {
 	if caller.Level() == contract.AccountLevelSuperAdmin {
 		return nil
+	}
+	// 超管账号对公司管理员不可见（按 id 访问一律 404，不透露它存在）。
+	// 只看 is_super_admin：超管是账号身份，不可能通过挂某个角色获得。
+	if target.User.IsSuperAdmin {
+		return errAccountNotFound
 	}
 	if caller.TenantID == "" || target.TenantID != caller.TenantID {
 		return errAccountNotFound
@@ -252,7 +302,19 @@ func (s *Service) Update(ctx context.Context, caller contract.Identity, id strin
 		}
 	}
 
-	record, err := s.repo.Update(ctx, id, strings.TrimSpace(in.PersonID), in.IsSuperAdmin, strings.TrimSpace(in.RoleKey))
+	personID := strings.TrimSpace(in.PersonID)
+	roleKey := strings.TrimSpace(in.RoleKey)
+	// 只在"真的换了角色或换了绑定人员"时校验：存量账号可能已经绑着高权限人员，
+	// 平台管理员改它的其他字段（例如超管标记）不该因为历史数据而莫名 403。
+	// 判据用「角色是否变化」而不是「roleKey 是否非空」——前端会回传当前值，
+	// 没改动就不该重新过一遍权限门槛。
+	if personID != current.User.PersonID || roleKey != current.User.RoleKey {
+		if err := s.ensureAssignableRole(ctx, caller, personID, roleKey); err != nil {
+			return contract.User{}, err
+		}
+	}
+
+	record, err := s.repo.Update(ctx, id, personID, in.IsSuperAdmin, roleKey)
 	if err != nil {
 		if repository.IsForeignKeyViolation(err) {
 			return contract.User{}, &contract.ValidationError{Message: "绑定的人员或角色不存在，请刷新后重试"}

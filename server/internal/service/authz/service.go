@@ -366,9 +366,11 @@ func allPermissions() map[string]struct{} {
 //
 //  1. 角色对调用者可见：平台内置（tenant_id 为空）或调用者所属公司的自定义角色。
 //     否则团队管理员能给别人挂一个猜到的、别家公司的角色键。
-//  2. 角色的权限不超出调用者自身的权限：否则可以把一个权限更宽的角色挂到别人身上，
+//  2. super-admin 只有超管本人能分配——它的权限是全量，逐点比较在
+//     "调用者自己也带 super-admin 角色"时会失效，所以必须单独拦。
+//  3. 角色的权限不超出调用者自身的权限：否则可以把一个权限更宽的角色挂到别人身上，
 //     再借那个人的账号拿到自己本来没有的能力——典型的纵向提权。
-//     超管天然满足第 2 条（它是全量），所以只需检查可见性。
+//     超管天然满足第 3 条（它是全量），所以只需检查可见性。
 //
 // 空 roleKey 表示「不分配角色」，直接放行（清空角色是降权，不是提权）。
 //
@@ -396,6 +398,8 @@ func (s *Service) ValidateRoleAssignable(ctx context.Context, identity contract.
 	}
 
 	// 2) 防提权：超管全量，无需比较；其余身份逐点比较。
+	// 这里不再需要"单独拦住超管角色"那一步——角色体系里已经没有超管角色了
+	// （超管是账号身份，靠 is_super_admin，不可能通过挂角色获得）。
 	if identity.IsSuperAdmin {
 		return nil
 	}
@@ -413,3 +417,4 @@ func (s *Service) ValidateRoleAssignable(ctx context.Context, identity contract.
 	}
 	return nil
 }
+

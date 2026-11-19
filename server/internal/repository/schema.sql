@@ -258,12 +258,19 @@ SELECT setval(
 );
 
 -- roles / role_permissions：角色与权限点。权限点目录的唯一来源是 contract.Permissions，
--- 这里只存"角色拥有哪些"；内置角色由启动时的 EnsureBuiltinRoles 播种，
--- 之后在页面上改过就不再被覆盖。
+-- 这里只存"角色拥有哪些"。
+--
+-- **内置角色每家公司各持一份独立副本**（tenant_id = 该公司，is_builtin = true）：
+-- 它只是"新公司开张时送的默认模板"，之后改它只影响本公司。若做成一份全局共享行，
+-- 甲公司的管理员改 developer 就会改掉乙公司的同名角色——那是越权。
+-- 播种在 service/role（建公司时 SeedForTenant、启动时 EnsureBuiltin 全量补齐）。
+--
+-- **角色里没有「超级管理员」和「平台管理员」**：它们是账号身份
+-- （users.is_super_admin / users.account_level），不在这张表里。
 CREATE TABLE IF NOT EXISTS roles (
   id          UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
-  -- key 只在本公司内唯一（见下方 idx_roles_tenant_key）；平台内置角色 tenant_id 为空，
-  -- 归到同一个"平台"分组，因此内置之间仍然互不重名。
+  -- key 只在本公司内唯一（见下方 idx_roles_tenant_key）；内置角色也归属本公司，
+  -- 因此同公司内 developer 与自定义 developer 互斥，跨公司可重名。
   --
   -- 建表时**不能**写 UNIQUE：roles.key 曾是 people/projects 的外键目标，
   -- 老库里那两个外键还挂着，删约束会被依赖挡住。旧约束的清理放在 people /
@@ -287,20 +294,9 @@ CREATE TABLE IF NOT EXISTS role_permissions (
 -- 这里删的是两个已收归超管的权限点：角色管理改由 RequireSuperAdmin 把关，见 contract.Permissions。
 DELETE FROM role_permissions WHERE permission IN ('role.read', 'role.write');
 
--- 修掉一处权限倒挂：团队模式的默认基线已含 directory.read（普通成员能看内部通讯录），
--- 而老库里 guest 没有它 —— 分配了 guest 的人反而比"没有角色"的人少看一个菜单。
--- 只补这一个点、只对内置 guest：EnsureBuiltin 不会覆盖已存在的角色，存量库只能靠这条。
-INSERT INTO role_permissions (role_id, permission)
-SELECT id, 'directory.read' FROM roles WHERE key = 'guest'
-ON CONFLICT DO NOTHING;
-
--- developer 的内置定义新增了 build.delete（"能传就能删"），但 EnsureBuiltin 刻意不覆盖
--- 已存在的角色（用户的调整不该被重启冲掉），所以存量库只能靠这条补。
--- 只补这一个点、只对内置 developer：新增权限点是"扩大默认能力"，与上面的 guest 同理，
--- 属于一次性回填，不是每次启动都重新授予。
-INSERT INTO role_permissions (role_id, permission)
-SELECT id, 'build.delete' FROM roles WHERE key = 'developer' AND tenant_id IS NULL
-ON CONFLICT DO NOTHING;
+-- 说明：内置角色的默认权限点由 service/role 的 builtinRoles 定义在播种时写入，
+-- 不需要在这里逐条回填。历史上有两条回填（guest 的 directory.read、developer 的
+-- build.delete）是基于"内置角色全局共享一份"的旧模型，已随每公司独立副本一起移除。
 
 -- people：人员档案。username 为空表示"只在通讯录里，不能登录"。
 -- 一个人只挂一个角色（权限取单一集合，避免"多角色取并集"的歧义）。

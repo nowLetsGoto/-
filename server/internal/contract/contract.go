@@ -618,16 +618,31 @@ func IsValidPermission(key string) bool {
 	return false
 }
 
+// 注意：这里**没有** super-admin / platform-admin 这类"角色 key"。
+//
+// 超级管理员与平台管理员是**账号身份**，不是角色：
+//   - 超级管理员：users.is_super_admin 标记，全平台固定；权限判定第一步就短路为全量，
+//     从不查角色（见 service/authz.permissionsOf）。
+//   - 平台管理员：users.account_level = 'platform_admin'，由超管在「公司管理」建公司时连带创建。
+//
+// 历史上曾有一个 key=super-admin 的内置角色，它从未被权限判定读取过，
+// 只会让角色列表出现一个"看起来像超管"的选项而引人误解，已删除。
+// 内置角色现在只有 project-owner / developer / tester / guest 四个业务角色。
+
 // Role 是角色：key 用于代码引用，name 给人看，permissions 是权限点集合。
 type Role struct {
 	ID          string   `json:"id"`
 	Key         string   `json:"key"`
 	Name        string   `json:"name"`
 	Description string   `json:"description"`
-	IsBuiltin   bool     `json:"isBuiltin"`
-	// TenantID 为空表示平台内置角色（所有公司可见、只有超管能改）；
-	// 非空表示某公司的自定义角色，只有本公司管理员看得到、改得了。
+	// IsBuiltin 表示"本公司预置的角色"：可以改权限，但不能删除。
+	// 内置角色每家公司各持一份独立副本（见 service/role 的说明），不是全局共享。
+	IsBuiltin bool `json:"isBuiltin"`
+	// TenantID / TenantName 是角色归属的公司。
+	// 公司账号只会看到自己公司的角色（TenantName 与自己的公司名相同，可忽略）；
+	// 超管跨公司看全部，同名角色会出现多份，靠 TenantName 区分是哪家公司的。
 	TenantID    string   `json:"tenantId"`
+	TenantName  string   `json:"tenantName"`
 	Permissions []string `json:"permissions"`
 	CreatedAt   string   `json:"createdAt"`
 }
@@ -716,15 +731,21 @@ type User struct {
 
 // UserInput 新建账号：账号名 + 初始密码 + 可选绑定人员 + 管理身份层级。
 // **没有 mode 字段**：账号归属由创建者的登录模式决定，页面上的模式是只读展示。
-// **也没有 roleKey**：角色挂在人员身上，先建好账号、绑定了人员，再去编辑页设角色。
+//
+// roleKey 写的是**绑定人员**的角色（people.role_key），不是账号自己的列：
+// users 表永远没有角色字段，这样「账号页改角色」与「人员页改角色」写的是同一处。
+// 传空表示沿用该人员现有角色；传非空则由 service 校验调用者有没有资格分配这个角色
+// （super-admin 角色只有超管能分配），不合格直接 403/400。
 //
 // accountLevel 只能传比调用者低的层级，具体规则由 service/user 判定——
 // 请求里传 super_admin 不会让任何人变成超管，那是越权尝试。
 // teamIds 仅在 accountLevel=team_admin 时有意义，且必须落在调用者可见的团队内。
 type UserInput struct {
-	Username     string   `json:"username"`
-	Password     string   `json:"password"`
-	PersonID     string   `json:"personId"`
+	Username string `json:"username"`
+	Password string `json:"password"`
+	PersonID string `json:"personId"`
+	// RoleKey 是随人员一起写入的角色标识；为空时沿用人员现有角色。
+	RoleKey      string   `json:"roleKey"`
 	IsSuperAdmin bool     `json:"isSuperAdmin"`
 	AccountLevel string   `json:"accountLevel"`
 	TeamIDs      []string `json:"teamIds"`

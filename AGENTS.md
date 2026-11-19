@@ -173,8 +173,11 @@ main.tsx（挂载） → App
   - 禁止删自己；删在用超管前先确保还有别的超管。删除不可撤销，UI 需同时给出「想暂时停用请改用禁用」的替代路径，并按模式说明清理范围。
 - **账号没有自己的角色，角色挂在人身上**：真相来源是 `people.role_key → roles.key`，账号侧通过 `users.person_id` 关联。列表与详情里的 `User.roleKey/roleName` 是仓储两次 `LEFT JOIN`（`users → people → roles`）**JOIN 出来的展示投影**，不是 `users` 表的列。
   - 因此账号编辑页改角色，改的是**绑定人员的档案**；与人员管理页改角色是同一件事，两个入口写同一列。不为了"账号自己的角色"给 `users` 加 `role_key`，那会造出第二个真相来源。
-  - `UserUpdate.roleKey` 只能改角色，**新建时不能设**（`UserInput` 里没有该字段）：账号还没绑定人员，没有地方落这个值。未绑人员时前端角色下拉置灰。
-  - `repository/user.Update` 用**一个事务**同时写 `users.person_id / is_super_admin` 与 `people.role_key`，保证「换绑定人员 + 改角色」不会半截生效。`UPDATE people` 影响 0 行不算错误（人员合法性已由 `users.person_id` 的外键保证）。
+  - `UserUpdate.roleKey` 改角色；`UserInput.roleKey` 在新建时一并写入——两者写的都是 `people.role_key`，`users` 表仍然没有角色列。新建时传空表示"沿用该人员现有角色"；绑定人员为空却传了角色会被拒（角色必须挂在人身上）。
+  - **角色分配是一条权限边界，不只是字段校验**：`service/user` 的新建与编辑都会过 `authz.ValidateRoleAssignable`（与人员管理页同一条判据），非超管只能分配权限点不超出自己范围的角色，因此拿不到 `super-admin`。`roleKey` 为空但换了绑定人员时，校验的是**该人员当前的角色**——绑一个带 super-admin 角色的人，等价于把那份权限发出去。
+  - **super-admin 对非超管不可见**：`GET /roles` 列表里过滤掉这一行、按 key 查按 404 处理；`GET /admin/users` 列表隐藏 `is_super_admin` 与"角色是 super-admin"的账号，单条读写同样按 404 处理（列表隐藏 + 单条拒绝必须同口径，否则知道 id 就能绕过）。前端只做同一规则的投影：可分配角色 = `role.permissions ⊆ me.permissions`，可绑定人员 = 角色可分配的人。
+  - 前端新建账号时非超管没有「未绑定」与「未分配」选项：没有人员的账号没有角色，登录后什么都做不了，不给这条入口比建完再解释更省事。
+  - `repository/user.Update` 用**一个事务**同时写 `users.person_id / is_super_admin` 与 `people.role_key`，保证「换绑定人员 + 改角色」不会半截生效。`Create` 同理：建号、绑人、定角色同事务。`UPDATE people` 影响 0 行不算错误（人员合法性已由 `users.person_id` 的外键保证）。
   - 账号编辑页 := `/admin/accounts/new` 与 `/admin/accounts/:id/edit` 复用同一个 `AccountFormPage`；编辑时登录名 `disabled`、不渲染密码输入，回填走 `GET /admin/users/{id}`。
 - 修改自己的密码：`PUT /me/password`。`SetPassword` 必然自增 `token_version`，改密成功即等于旧令牌当场失效，所以前端必须清会话回登录页——不要试图换发新令牌把用户留在原地。
 
