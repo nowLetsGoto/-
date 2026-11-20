@@ -188,7 +188,7 @@ export function App(): JSX.Element {
       <Route
         path="/d/:id"
         element={
-          <div className="public-shell">
+          <div className="public-shell public-download-shell">
             <PageBoundary text="正在打开下载页…">
               <DownloadPage />
             </PageBoundary>

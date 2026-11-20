@@ -138,6 +138,47 @@ func (r *BuildRepository) FindByID(ctx context.Context, id string) (contract.Bui
 	return build, nil
 }
 
+// ListSiblingVersions 返回与目标包同项目、同应用（app_name + package_id）的其它包，按时间倒序。
+// 只给公开下载页用：调用方先按 id 定位分区，SQL 再把范围钉在同一个项目 / 应用 / owner 内，
+// 不依赖调用方传 projectID（Build DTO 本身不带这一列）。
+func (r *BuildRepository) ListSiblingVersions(ctx context.Context, id string, limit int) ([]contract.Build, string, error) {
+	var projectKey string
+	check := `SELECT (SELECT key FROM ` + r.project + ` WHERE id = b.project_id)
+		FROM ` + r.table + ` b WHERE b.id = $1`
+	if err := r.db.QueryRowContext(ctx, check, id).Scan(&projectKey); err != nil {
+		if errors.Is(err, sql.ErrNoRows) || errors.Is(err, pgx.ErrNoRows) {
+			return nil, "", contract.NotFound(contract.ResourceBuild)
+		}
+		return nil, "", fmt.Errorf("查询包所在分区失败: %w", err)
+	}
+
+	query := `SELECT ` + buildColumns + ` FROM ` + r.table + `
+		WHERE id <> $1
+		  AND project_id = (SELECT project_id FROM ` + r.table + ` WHERE id = $1)
+		  AND app_name = (SELECT app_name FROM ` + r.table + ` WHERE id = $1)
+		  AND package_id = (SELECT package_id FROM ` + r.table + ` WHERE id = $1)
+		  AND owner_user_id = (SELECT owner_user_id FROM ` + r.table + ` WHERE id = $1)
+		ORDER BY created_at DESC LIMIT $2`
+	rows, err := r.db.QueryContext(ctx, query, id, limit)
+	if err != nil {
+		return nil, "", fmt.Errorf("查询同应用版本失败: %w", err)
+	}
+	defer rows.Close()
+
+	items := make([]contract.Build, 0)
+	for rows.Next() {
+		build, err := rowToBuild(rows)
+		if err != nil {
+			return nil, "", err
+		}
+		items = append(items, build)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, "", fmt.Errorf("遍历同应用版本失败: %w", err)
+	}
+	return items, projectKey, nil
+}
+
 // IncrDownloadCount 单语句原子自增；仅在流成功完成后由 service 旁路调用。
 // 包里没这一行时同样返回 contract.NotFound(contract.ResourceBuild)：调用方据此判断"不在这个分区"，
 // 不至于把跨分区探测的正常落空当成故障。

@@ -80,6 +80,7 @@ var allowedMethods = map[string]string{
 	contract.RouteBuilds:       "GET, POST",
 	contract.RouteStage:        "POST",
 	contract.RouteBuildByID:    "GET",
+	contract.RouteBuildVersions: "GET",
 	contract.RouteBuildFile:    "GET",
 }
 
@@ -133,6 +134,7 @@ func NewRouter(d Deps) http.Handler {
 
 		// 下载链路必须公开：扫码的人没有账号，点开链接就要能看详情、能下载。
 		api.Get("/builds/{id}", middleware.Wrap(d.Builds.Get))
+		api.Get("/builds/{id}/versions", middleware.Wrap(d.Builds.Versions))
 		api.Get("/builds/{id}/file", middleware.Wrap(d.Builds.DownloadFile))
 
 		// 外部系统上传：X-API-Key 鉴权，与管理端登录态互不影响。

@@ -6,18 +6,18 @@
  */
 
 .login-page {
-  /* 局部设计变量：统一 login- 前缀，避免与全站绿色主题互相污染 */
-  --login-ink: #0f2c36;
-  --login-muted: #4b6a76;
+  /* 局部设计变量：login- 前缀，色值与 styles.scss :root 保持一致 */
+  --login-ink: #102b36;
+  --login-muted: #35525f;
   /* faint 用于 12px 辅助文字与占位符：在 #fbfeff 与品牌底色上都保持 ≥4.5:1 */
   --login-faint: #526d78;
   --login-line: #d7e8ee;
   /* 与 styles.scss 的 --color-primary 保持一致 */
   --login-primary: #0369a1;
   --login-primary-strong: #075985;
-  --login-primary-soft: rgba(14, 116, 144, 0.08);
-  --login-ring: rgba(14, 116, 144, 0.16);
-  --login-danger: #a03c3c;
+  --login-primary-soft: rgba(3, 105, 161, 0.08);
+  --login-ring: rgba(3, 105, 161, 0.18);
+  --login-danger: #b42318;
   --login-serif: 'Iowan Old Style', 'Palatino Linotype', Palatino, Georgia, serif;
   --login-ease: cubic-bezier(0.22, 1, 0.36, 1);
 
@@ -64,7 +64,7 @@
   bottom: -240px;
   width: 520px;
   height: 520px;
-  border: 1px solid rgba(14, 116, 144, 0.12);
+  border: 1px solid rgba(3, 105, 161, 0.12);
   border-radius: 50%;
   pointer-events: none;
 }
@@ -73,7 +73,7 @@
   content: '';
   position: absolute;
   inset: 58px;
-  border: 1px solid rgba(14, 116, 144, 0.08);
+  border: 1px solid rgba(3, 105, 161, 0.08);
   border-radius: 50%;
 }
 
@@ -82,7 +82,7 @@
   position: absolute;
   width: 1px;
   height: 38px;
-  background: linear-gradient(to bottom, rgba(14, 116, 144, 0.3), rgba(14, 116, 144, 0));
+  background: linear-gradient(to bottom, rgba(3, 105, 161, 0.3), rgba(3, 105, 161, 0));
   pointer-events: none;
   animation: login-drift 14s var(--login-ease) infinite alternate;
 }
@@ -95,9 +95,9 @@
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  background: rgba(14, 116, 144, 0.42);
+  background: rgba(3, 105, 161, 0.42);
   /* 柔光晕暗示蒲公英冠毛，比纯圆点更像"种子" */
-  box-shadow: 0 0 7px 3px rgba(14, 116, 144, 0.1);
+  box-shadow: 0 0 7px 3px rgba(3, 105, 161, 0.1);
 }
 
 .login-seed-a {
@@ -188,7 +188,7 @@
 
 .login-envs li {
   padding: 4px 12px;
-  border: 1px solid rgba(14, 116, 144, 0.16);
+  border: 1px solid rgba(3, 105, 161, 0.16);
   border-radius: 999px;
   background: rgba(255, 255, 255, 0.55);
   color: #2c5c6b;
@@ -255,7 +255,7 @@
   flex-direction: column;
   justify-content: center;
   padding: 10px 12px;
-  border: 1px solid var(--login-border);
+  border: 1px solid var(--login-line);
   border-radius: 9px;
   background: #fff;
   cursor: pointer;
@@ -361,7 +361,7 @@
 }
 
 .login-input:hover {
-  border-color: #bfdae3;
+  border-color: var(--login-line);
 }
 
 .login-input:focus {
@@ -459,7 +459,7 @@
 
 .login-submit:hover:not(:disabled) {
   background: var(--login-primary-strong);
-  box-shadow: 0 10px 24px rgba(14, 116, 144, 0.22);
+  box-shadow: 0 10px 24px rgba(3, 105, 161, 0.22);
   transform: translateY(-1px);
 }
 

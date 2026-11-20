@@ -1298,6 +1298,27 @@ paths:
         '500':
           $ref: '#/components/responses/InternalError'
 
+  /builds/{id}/versions:
+    get:
+      operationId: getBuildVersions
+      summary: 同项目同应用的其它版本（公开下载页用）
+      description: >
+        按目标包定位分区与项目，只返回同项目、同 appName、同 packageId 的其它包，
+        字段经白名单收敛，不含相对路径、上传者或原始文件名。
+      parameters:
+        - $ref: '#/components/parameters/BuildId'
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PublicBuildVersionsResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
   /builds/{id}/file:
     get:
       operationId: downloadBuildFile
@@ -2421,6 +2442,51 @@ components:
         ownerUserId:
           type: string
           description: 上传者账号 id；system 表示外部 API 或历史数据
+
+    PublicBuildVersion:
+      type: object
+      description: 公开下载页「其它版本」列表项；只暴露跳转与辨识所需字段
+      required:
+        - id
+        - version
+        - buildNumber
+        - environment
+        - platform
+        - createdAt
+        - downloadPagePath
+        - projectKey
+      properties:
+        id:
+          type: string
+          format: uuid
+        version:
+          type: string
+        buildNumber:
+          type: string
+        environment:
+          $ref: '#/components/schemas/Environment'
+        platform:
+          $ref: '#/components/schemas/Platform'
+        createdAt:
+          type: string
+          format: date-time
+        downloadPagePath:
+          type: string
+          description: 相对路径 /d/{id}；只用于前端路由跳转，严禁用于二维码 / 复制 / 下载
+        projectKey:
+          type: string
+          description: 包所属项目 key；「查看更多」据此跳回应用包列表
+
+    PublicBuildVersionsResponse:
+      allOf:
+        - $ref: '#/components/schemas/ApiResponse'
+        - type: object
+          required: [data]
+          properties:
+            data:
+              type: array
+              items:
+                $ref: '#/components/schemas/PublicBuildVersion'
 
     ListBuildsResult:
       type: object

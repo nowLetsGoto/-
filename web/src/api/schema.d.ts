@@ -555,6 +555,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/builds/{id}/versions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 同项目同应用的其它版本（公开下载页用）
+         * @description 按目标包定位分区与项目，只返回同项目、同 appName、同 packageId 的其它包， 字段经白名单收敛，不含相对路径、上传者或原始文件名。
+         */
+        get: operations["getBuildVersions"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/builds/{id}/file": {
         parameters: {
             query?: never;
@@ -1085,6 +1105,24 @@ export interface components {
             createdAt: string;
             /** @description 上传者账号 id；system 表示外部 API 或历史数据 */
             ownerUserId?: string;
+        };
+        /** @description 公开下载页「其它版本」列表项；只暴露跳转与辨识所需字段 */
+        PublicBuildVersion: {
+            /** Format: uuid */
+            id: string;
+            version: string;
+            buildNumber: string;
+            environment: components["schemas"]["Environment"];
+            platform: components["schemas"]["Platform"];
+            /** Format: date-time */
+            createdAt: string;
+            /** @description 相对路径 /d/{id}；只用于前端路由跳转，严禁用于二维码 / 复制 / 下载 */
+            downloadPagePath: string;
+            /** @description 包所属项目 key；「查看更多」据此跳回应用包列表 */
+            projectKey: string;
+        };
+        PublicBuildVersionsResponse: components["schemas"]["ApiResponse"] & {
+            data: components["schemas"]["PublicBuildVersion"][];
         };
         ListBuildsResult: {
             items: components["schemas"]["Build"][];
@@ -2627,6 +2665,31 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["BuildResponse"];
+                };
+            };
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    getBuildVersions: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description 包稳定唯一标识 */
+                id: components["parameters"]["BuildId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 成功 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PublicBuildVersionsResponse"];
                 };
             };
             404: components["responses"]["NotFound"];

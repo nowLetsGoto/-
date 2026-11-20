@@ -388,6 +388,41 @@ func (s *BuildService) Get(ctx context.Context, id string) (contract.Build, erro
 	return build, nil
 }
 
+// Versions 返回同项目、同应用的其它版本，给公开下载页的「其它版本」板块用。
+// 公开链路没有登录态，沿用 findAnyPartition 的思路跨分区找目标包；找到后只返回白名单字段。
+func (s *BuildService) Versions(ctx context.Context, id string) ([]contract.PublicBuildVersion, error) {
+	if !contract.IsValidUUID(id) {
+		return nil, contract.NotFound(contract.ResourceBuild)
+	}
+	// 前端只展示 10 条；多取一条用于判断是否还有更多，避免额外 count 查询。
+	const limit = 11
+	for _, repo := range s.repos.All() {
+		builds, projectKey, err := repo.ListSiblingVersions(ctx, id, limit)
+		if errors.Is(err, contract.ErrNotFound) {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		items := make([]contract.PublicBuildVersion, 0, len(builds))
+		for _, build := range builds {
+			pagePath, _, _ := s.buildURLs(build.ID)
+			items = append(items, contract.PublicBuildVersion{
+				ID:               build.ID,
+				Version:          build.Version,
+				BuildNumber:      build.BuildNumber,
+				Environment:      build.Environment,
+				Platform:         build.Platform,
+				CreatedAt:        build.CreatedAt,
+				DownloadPagePath: pagePath,
+				ProjectKey:       projectKey,
+			})
+		}
+		return items, nil
+	}
+	return nil, contract.NotFound(contract.ResourceBuild)
+}
+
 // ResolveFile 先校验 id 形式，再查库拿相对路径，经 safeResolve 前缀校验防路径穿越，最后确认文件存在。
 func (s *BuildService) ResolveFile(ctx context.Context, id string) (contract.FileRef, error) {
 	build, err := s.findAnyPartition(ctx, id)

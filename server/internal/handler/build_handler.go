@@ -125,6 +125,17 @@ func (h *BuildHandler) Get(w http.ResponseWriter, r *http.Request) error {
 	return OK(w, build)
 }
 
+// Versions 返回同项目、同应用的其它版本，供公开下载页展示版本列表。
+func (h *BuildHandler) Versions(w http.ResponseWriter, r *http.Request) error {
+	id := chi.URLParam(r, "id")
+	AttachLogFields(r, "id="+id)
+	versions, err := h.svc.Versions(r.Context(), id)
+	if err != nil {
+		return err
+	}
+	return OK(w, versions)
+}
+
 // DownloadFile 流式下载原始包。计数时点严格在 io.Copy 成功且 written == Content-Length 之后；
 // 客户端中断 / copy 出错 / 字节不足一律不计数，且计数旁路失败绝不阻断已完成的下载。
 func (h *BuildHandler) DownloadFile(w http.ResponseWriter, r *http.Request) error {

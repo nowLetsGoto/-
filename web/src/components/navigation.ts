@@ -16,10 +16,6 @@ export interface NavItem {
   icon: IconName;
   /** project：跟随项目切换；platform：全平台唯一 */
   scope: 'project' | 'platform';
-  /** 该板块是否受「环境」维度影响；基础资料与设置这类全局页面设为 false。缺省视为 true。 */
-  envScoped?: boolean;
-  /** 该板块是否在顶栏暴露「上传包」主行动；只有应用包需要。缺省视为 false。 */
-  canUpload?: boolean;
   /** 进入该页面需要的权限点；缺省表示不限（只要求登录）。前端仅做隐藏，服务端另有判定。 */
   permission?: string;
   /**
@@ -127,7 +123,6 @@ export const NAV_SECTIONS: ReadonlyArray<NavSection> = [
         permission: 'build.read',
         icon: 'packages',
         scope: 'project',
-        canUpload: true,
       },
       { label: '应用', path: '/apps', permission: 'build.read', icon: 'apps', scope: 'project' },
     ],
@@ -141,7 +136,6 @@ export const NAV_SECTIONS: ReadonlyArray<NavSection> = [
         permission: 'directory.read',
         icon: 'people',
         scope: 'platform',
-        envScoped: false,
       },
       {
         label: '团队管理',
@@ -149,7 +143,6 @@ export const NAV_SECTIONS: ReadonlyArray<NavSection> = [
         permission: 'directory.read',
         icon: 'team',
         scope: 'platform',
-        envScoped: false,
       },
       {
         label: '项目管理',
@@ -157,7 +150,6 @@ export const NAV_SECTIONS: ReadonlyArray<NavSection> = [
         permission: 'project.read',
         icon: 'project',
         scope: 'platform',
-        envScoped: false,
       },
       {
         // 账号管理：只读门槛是 account.read（角色可配）；
@@ -167,7 +159,6 @@ export const NAV_SECTIONS: ReadonlyArray<NavSection> = [
         permission: 'account.read',
         icon: 'people',
         scope: 'platform',
-        envScoped: false,
       },
     ],
   },
@@ -183,7 +174,6 @@ export const NAV_SECTIONS: ReadonlyArray<NavSection> = [
         permission: 'role.read',
         icon: 'shield',
         scope: 'platform',
-        envScoped: false,
       },
       {
         // 审计日志：本公司范围内"谁改了什么"，由 audit.read 控制。
@@ -193,7 +183,6 @@ export const NAV_SECTIONS: ReadonlyArray<NavSection> = [
         permission: 'audit.read',
         icon: 'overview',
         scope: 'platform',
-        envScoped: false,
       },
       {
         label: '平台集成',
@@ -201,7 +190,6 @@ export const NAV_SECTIONS: ReadonlyArray<NavSection> = [
         permission: 'settings.read',
         icon: 'settings',
         scope: 'platform',
-        envScoped: false,
       },
     ],
   },
@@ -217,7 +205,6 @@ export const NAV_SECTIONS: ReadonlyArray<NavSection> = [
         minLevel: 'super_admin',
         icon: 'team',
         scope: 'platform',
-        envScoped: false,
       },
     ],
   },
@@ -267,16 +254,6 @@ function findNav(relativePath: string): NavItem | undefined {
 export function boardLabel(pathname: string): string {
   const relative = projectRelativePath(pathname);
   return findNav(relative)?.label ?? EXTRA_LABELS[relative] ?? '概览';
-}
-
-/** isEnvScoped 判断当前板块是否按环境区分；未登记路径（如上传页）默认区分。 */
-export function isEnvScoped(pathname: string): boolean {
-  return findNav(projectRelativePath(pathname))?.envScoped !== false;
-}
-
-/** canUpload 判断当前板块是否要显示顶栏的「上传包」主行动。 */
-export function canUpload(pathname: string): boolean {
-  return findNav(projectRelativePath(pathname))?.canUpload === true;
 }
 
 /** isProjectScoped 判断当前板块是否落在项目下；未登记路径（如上传页）默认属于项目。 */

@@ -1,29 +1,34 @@
 /**
  * 应用包列表页。
- * 职责：按「全局环境 + 页面内平台筛选」查列表，渲染工具栏与表格；空结果给引导而不是「暂无」。
- * 输入：URL 的 env（全局）、project（路径）与 platform（本页）；输出：listBuilds 请求与表格。
+ * 职责：按「页面内环境切换 + 平台筛选」查列表，渲染工具栏与表格；空结果给引导而不是「暂无」。
+ * 输入：URL 的 env、project（路径）与 platform（本页）；输出：listBuilds 请求与表格。
  * 边界：不直接 fetch（走 api/builds）、不拼 API 路径、环境不在这里独立存一份；
+ *       环境切换与上传入口只在本页出现，其它板块不再展示；
  *       表格统一走 components/DataTable，页面只声明「有哪些列」。
  */
 import { useEffect, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import type { TableColumnsType } from '@seakoi/console-kit';
-import type { Build, ListBuildsResult, Platform } from '../../api/builds';
+import type { Build, Environment, ListBuildsResult, Platform } from '../../api/builds';
 import { listBuilds } from '../../api/builds';
 import { errorMessage } from '../../api/client';
 import { Button, Segmented } from '../../components/Controls';
 import { DataTable } from '../../components/DataTable';
 import { ProjectSelect } from '../../components/ProjectSelect';
 import { Empty, ErrorState } from '../../components/States';
+import { Icon } from '../../components/icons';
 import { useEnvironment } from '../../hooks/useEnvironment';
+import { useMe } from '../../hooks/useMe';
 import { useCurrentProject, useProjects } from '../../hooks/useProjects';
 import {
+  ENVIRONMENTS,
   PLATFORMS,
   environmentLabel,
   formatBytes,
   formatDate,
   platformLabel,
 } from '../../utils/format';
+import { can } from '../../utils/permission';
 
 interface PageState {
   loading: boolean;
@@ -47,10 +52,12 @@ function readPlatform(value: string | null): PlatformFilter {
 export function PackagesPage(): JSX.Element {
   const { key } = useCurrentProject();
   const { projects } = useProjects();
-  const [environment] = useEnvironment();
+  const [environment, setEnvironment] = useEnvironment();
+  const { me } = useMe();
   const [params, setParams] = useSearchParams();
   const platform = readPlatform(params.get('platform'));
   const navigate = useNavigate();
+  const showUpload = can(me, 'build.write');
 
   const [state, setState] = useState<PageState>({ loading: true, data: null, error: '' });
   const [reloadKey, setReloadKey] = useState(0);
@@ -187,8 +194,23 @@ export function PackagesPage(): JSX.Element {
           </p>
         </div>
         <div className="page-head-actions">
+          {showUpload ? (
+            <Link className="button button-primary" to={`/p/${key}/upload`}>
+              <Icon name="plus" />
+              上传包
+            </Link>
+          ) : null}
           <ProjectSelect projects={projects} currentKey={key} />
         </div>
+      </div>
+
+      <div className="page-env-bar">
+        <Segmented<Environment>
+          aria-label="环境"
+          value={environment}
+          options={ENVIRONMENTS.map((item) => ({ value: item.value, label: item.label }))}
+          onChange={setEnvironment}
+        />
       </div>
 
       <div className="card">

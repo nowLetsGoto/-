@@ -227,6 +227,7 @@ const (
 	RouteStage             = APIPrefix + "/builds/stage"
 	RouteBuilds            = APIPrefix + "/builds"
 	RouteBuildByID         = APIPrefix + "/builds/{id}"
+	RouteBuildVersions     = APIPrefix + "/builds/{id}/versions"
 	RouteBuildFile         = APIPrefix + "/builds/{id}/file"
 	RouteHealth            = "/healthz"
 	RouteDownloadPage      = "/d/{id}"
@@ -275,7 +276,7 @@ var APIRoutes = []string{
 	RoutePeople, RoutePersonByID, RouteTeams, RouteTeamByID,
 	RoutePermissions, RouteMenus, RouteRoles, RouteRoleByID,
 	RouteSettings, RouteWebhookTest, RouteAPIKeyRotate, RouteOpenBuilds,
-	RouteStage, RouteBuilds, RouteBuildByID, RouteBuildFile, RouteHealth,
+	RouteStage, RouteBuilds, RouteBuildByID, RouteBuildVersions, RouteBuildFile, RouteHealth,
 }
 
 // Webhook 可推送字段的键：与 api/openapi.yaml 的 x-webhook-fields 键集合一致。
@@ -1131,6 +1132,20 @@ type Build struct {
 	CreatedAt        string `json:"createdAt"`
 	// OwnerUserID 是上传者账号 id；system 表示由外部 API 或历史数据产生。
 	OwnerUserID string `json:"ownerUserId"`
+}
+
+// PublicBuildVersion 是公开下载页「其它版本」列表的最小投影：
+// 只暴露跳转与辨识所需字段，绝不把相对路径、上传者、原始文件名带到公网。
+type PublicBuildVersion struct {
+	ID               string `json:"id"`
+	Version          string `json:"version"`
+	BuildNumber      string `json:"buildNumber"`
+	Environment      string `json:"environment"`
+	Platform         string `json:"platform"`
+	CreatedAt        string `json:"createdAt"`
+	DownloadPagePath string `json:"downloadPagePath"`
+	// ProjectKey 用于「查看更多」跳回应用包列表；公开页只有 build id，无法自行推出项目。
+	ProjectKey string `json:"projectKey"`
 }
 
 // ParsedMeta 是自动解析的 4 个规范字段。

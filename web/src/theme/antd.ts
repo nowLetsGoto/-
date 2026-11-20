@@ -9,16 +9,19 @@ import type { ThemeConfig } from '@seakoi/console-kit';
 
 /** 与 styles.scss :root 一一对应的色板（antd 需要字面量，不能用 CSS 变量）。 */
 const palette = {
+  bg: '#f4f7f9',
   primary: '#0369a1',
-  primaryStrong: '#075985',
-  text: '#0f2c36',
-  textSecondary: '#5b7884',
-  faint: '#7d97a2',
-  border: '#e3eef2',
-  borderSoft: '#edf5f8',
+  primaryHover: '#075985',
+  primaryActive: '#064e73',
+  text: '#102b36',
+  textSecondary: '#35525f',
+  faint: '#8a9ea7',
+  border: '#e2ebef',
+  borderSoft: '#edf3f6',
   surface: '#ffffff',
-  surface2: '#fafdfe',
+  surface2: '#f8fafb',
   danger: '#b42318',
+  success: '#127a5c',
   fontSans:
     '-apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", "Segoe UI", sans-serif',
 } as const;
@@ -26,9 +29,12 @@ const palette = {
 export const antdTheme: ThemeConfig = {
   token: {
     colorPrimary: palette.primary,
+    colorPrimaryHover: palette.primaryHover,
+    colorPrimaryActive: palette.primaryActive,
     colorInfo: palette.primary,
     colorLink: palette.primary,
     colorError: palette.danger,
+    colorSuccess: palette.success,
     colorText: palette.text,
     colorTextSecondary: palette.textSecondary,
     colorTextTertiary: palette.faint,
@@ -36,6 +42,10 @@ export const antdTheme: ThemeConfig = {
     colorBorderSecondary: palette.borderSoft,
     colorBgContainer: palette.surface,
     colorBgElevated: palette.surface,
+    colorBgLayout: palette.bg,
+    // primary 按钮的文字色。组件库在 hover/active 时会把它派生到 colorPrimaryHover，
+    // 与这里拿来做背景的深蓝撞色，必须显式锁白，否则文字直接融进背景。
+    colorTextLightSolid: '#ffffff',
     borderRadius: 8,
     borderRadiusLG: 12,
     fontSize: 14,
@@ -49,10 +59,12 @@ export const antdTheme: ThemeConfig = {
       defaultShadow: 'none',
       primaryShadow: 'none',
       dangerShadow: 'none',
+      // 实心按钮三种状态都用同一个前景色；hover/active 只换背景，文字保持白色可读。
+      primaryColor: '#ffffff',
     },
     Table: {
       headerBg: palette.surface2,
-      headerColor: palette.faint,
+      headerColor: palette.textSecondary,
       headerSplitColor: 'transparent',
       borderColor: palette.borderSoft,
       rowHoverBg: palette.surface2,
