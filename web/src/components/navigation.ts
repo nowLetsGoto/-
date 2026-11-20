@@ -296,3 +296,29 @@ export function navHref(item: NavItem, projectKey: string): string {
   }
   return projectKey ? `/p/${projectKey}${item.path}` : '/';
 }
+
+/**
+ * pathMatches 判断当前路径是否落在 base 或其子路径上。
+ * 详情页（如 /directory/projects/new）仍要高亮列表菜单，所以按路径段前缀比较，
+ * 而不是裸 startsWith——后者会让 /packages 误命中 /packages-export 这种路径。
+ */
+function pathMatches(pathname: string, base: string): boolean {
+  const normalized = pathname.length > 1 ? pathname.replace(/\/+$/, '') : pathname;
+  return normalized === base || normalized.startsWith(`${base}/`);
+}
+
+/**
+ * isNavItemActive 判断单个菜单项是否高亮。
+ * 不能复用 NavLink 的默认 URL 匹配：没有项目 key 时，所有项目级 navHref 都退回 `/`，
+ * NavLink 会把它们（以及 `/` 前缀命中的平台页）同时判成 active。这里按 scope 精确处理：
+ * 平台菜单匹配自身/子路径；项目菜单仅在拿到当前 key 且路径落在对应 /p/:key 下时高亮。
+ */
+export function isNavItemActive(item: NavItem, pathname: string, projectKey: string): boolean {
+  if (item.scope === 'platform') {
+    return pathMatches(pathname, item.path);
+  }
+  if (!projectKey) {
+    return false;
+  }
+  return pathMatches(pathname, `/p/${projectKey}${item.path}`);
+}

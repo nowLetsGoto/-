@@ -6,17 +6,25 @@
  *       项目选择放在各页面的头部筛选里，侧栏不再重复一个全局切换器；
  *       账号卡、改密与退出都收在 AccountMenu 内，本组件只决定它出现的位置。
  */
-import { NavLink } from 'react-router-dom';
+import { Link, useLocation } from 'react-router-dom';
 import { readSession } from '../api/session';
 import { useMe } from '../hooks/useMe';
 import { useProjectKey } from '../hooks/useProjects';
 import { AccountMenu } from './AccountMenu';
 import { Icon } from './icons';
-import { NAV_SECTIONS, canSeeNavItem, canSeeNavSection, navHref } from './navigation';
+import {
+  NAV_SECTIONS,
+  canSeeNavItem,
+  canSeeNavSection,
+  isNavItemActive,
+  navHref,
+} from './navigation';
 import type { NavItem } from './navigation';
 import { levelRank } from '../utils/accountLevel';
 
 export function Sidebar(): JSX.Element {
+  // 高亮改由本组件按路径精确判定，不再让每个 NavLink 各自做 URL 前缀匹配。
+  const { pathname } = useLocation();
   // 模式来自签名令牌签发时写入的会话，仅用于菜单投影；服务端另有强制边界。
   const mode = readSession()?.mode ?? 'solo';
   // 只读 URL / localStorage：侧栏不为拼链接去拉项目列表（平台级页面因此零额外请求）。
@@ -92,16 +100,20 @@ export function Sidebar(): JSX.Element {
                 {section.title}
                 {isAdminSection ? <span className="admin-badge">{badge}</span> : null}
               </p>
-              {section.items.map((item) => (
-                <NavLink
-                  key={item.path}
-                  to={navHref(item, projectKey)}
-                  className={({ isActive }) => (isActive ? 'nav-item nav-item-active' : 'nav-item')}
-                >
-                  <Icon name={item.icon} />
-                  {item.label}
-                </NavLink>
-              ))}
+              {section.items.map((item) => {
+                const active = isNavItemActive(item, pathname, projectKey);
+                return (
+                  <Link
+                    key={item.path}
+                    to={navHref(item, projectKey)}
+                    className={active ? 'nav-item nav-item-active' : 'nav-item'}
+                    aria-current={active ? 'page' : undefined}
+                  >
+                    <Icon name={item.icon} />
+                    {item.label}
+                  </Link>
+                );
+              })}
             </div>
           );
         })}
