@@ -17,8 +17,9 @@ import { formatDate, platformLabel } from '../../utils/format';
 interface AppSummary {
   name: string;
   packageId: string;
+  iconUrl: string;
   latestAt: string;
-  prodVersion: string;
+  latestVersion: string;
   platforms: string[];
   count: number;
 }
@@ -60,7 +61,7 @@ export function AppsPage(): JSX.Element {
       {!loading && !error && apps.length > 0 ? (
         <div className="apps-grid">
           {apps.map((app) => (
-            <AppCard key={app.name} app={app} />
+            <AppCard key={app.name} app={app} projectKey={key} />
           ))}
         </div>
       ) : null}
@@ -68,37 +69,50 @@ export function AppsPage(): JSX.Element {
   );
 }
 
-function AppCard({ app }: { app: AppSummary }): JSX.Element {
+function AppCard({ app, projectKey }: { app: AppSummary; projectKey: string }): JSX.Element {
   return (
-    <div className="card app-card">
+    <article className="card app-card">
       <div className="app-card-head">
-        <span className="app-avatar" aria-hidden="true">
-          {app.name.slice(0, 1).toUpperCase()}
-        </span>
-        <div>
-          <div className="app-name">{app.name}</div>
-          <div className="app-pkg">{app.packageId || '—'}</div>
-        </div>
-      </div>
-      <div className="app-rows">
-        <div className="app-row">
-          最新生产版本 <b>{app.prodVersion}</b>
-        </div>
-        <div className="app-row">
-          累计包数量 <b>{app.count}</b>
-        </div>
-        <div className="app-row">
-          最近更新 <b>{formatDate(app.latestAt)}</b>
-        </div>
-      </div>
-      <div className="app-tags">
-        {app.platforms.map((platform) => (
-          <span key={platform} className={`badge badge-${platform}`}>
-            {platformLabel(platform)}
+        {app.iconUrl ? (
+          <img className="app-avatar app-avatar-img" src={app.iconUrl} alt="" />
+        ) : (
+          <span className="app-avatar" aria-hidden="true">
+            {app.name.slice(0, 1).toUpperCase()}
           </span>
-        ))}
+        )}
+        <div className="app-card-title">
+          <h3 className="app-name">{app.name}</h3>
+          <p className="app-pkg">{app.packageId || '未填写包名'}</p>
+        </div>
+        <div className="app-card-platforms">
+          {app.platforms.map((platform) => (
+            <span key={platform} className={`badge badge-${platform}`}>
+              {platformLabel(platform)}
+            </span>
+          ))}
+        </div>
       </div>
-    </div>
+
+      <div className="app-card-stats">
+        <div>
+          <span>最新版本</span>
+          <strong>{app.latestVersion}</strong>
+        </div>
+        <div>
+          <span>累计包</span>
+          <strong>{app.count}</strong>
+        </div>
+        <div>
+          <span>最近更新</span>
+          <strong>{formatDate(app.latestAt)}</strong>
+        </div>
+      </div>
+
+      <div className="app-card-foot">
+        <span>由包列表自动归集</span>
+        <Link to={`/p/${projectKey}/packages`}>查看包列表 →</Link>
+      </div>
+    </article>
   );
 }
 
@@ -118,12 +132,12 @@ function summarize(builds: Build[]): AppSummary[] {
     const latest = items.reduce((newest, build) =>
       build.createdAt > newest.createdAt ? build : newest,
     );
-    const prod = items.find((build) => build.environment === 'prd');
     return {
       name,
       packageId: latest.packageId,
+      iconUrl: latest.projectIconUrl,
       latestAt: latest.createdAt,
-      prodVersion: prod?.version ?? '—',
+      latestVersion: latest.version,
       platforms: Array.from(new Set(items.map((build) => build.platform))),
       count: items.length,
     };

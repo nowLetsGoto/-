@@ -65,7 +65,7 @@ func projectView(identity contract.Identity) projectsvc.View {
 // 单人模式也允许自建：项目是自己上传包的前提，不需要管理员先建好。
 func (h *Handler) Create(w http.ResponseWriter, r *http.Request) error {
 	var in contract.ProjectInput
-	if err := handler.DecodeJSON(w, r, &in, "key/name/description/repoUrl/roleKey"); err != nil {
+	if err := handler.DecodeJSON(w, r, &in, "key/name/description/repoUrl/iconUrl/roleKey"); err != nil {
 		return err
 	}
 	identity := authctx.From(r.Context())
@@ -85,7 +85,7 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) error {
 // Update 按 key 编辑项目；key 本身不可改，因此请求体里即使带上也会被忽略。
 func (h *Handler) Update(w http.ResponseWriter, r *http.Request) error {
 	var in contract.ProjectInput
-	if err := handler.DecodeJSON(w, r, &in, "key/name/description/repoUrl/roleKey"); err != nil {
+	if err := handler.DecodeJSON(w, r, &in, "key/name/description/repoUrl/iconUrl/roleKey"); err != nil {
 		return err
 	}
 	identity := authctx.From(r.Context())

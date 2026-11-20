@@ -6,6 +6,7 @@
  * 边界：项目标识是 URL 段，创建后只读；列表与表单是两个独立路由。
  */
 import { useEffect, useState } from 'react';
+import { Upload } from '@seakoi/console-kit';
 import { useNavigate, useParams } from 'react-router-dom';
 import type { ProjectInput } from '../../api/projects';
 import { createProject, getProject, updateProject } from '../../api/projects';
@@ -13,16 +14,25 @@ import type { Role } from '../../api/roles';
 import { listRoles } from '../../api/roles';
 import { errorMessage } from '../../api/client';
 import { readSession } from '../../api/session';
-import { Input } from '../../components/Controls';
+import { Button, Input } from '../../components/Controls';
 import { FormPage } from '../../components/FormPage';
 import { Select } from '../../components/Select';
 import { ErrorState, Loading } from '../../components/States';
 import { useMe } from '../../hooks/useMe';
 import { invalidateProjects } from '../../hooks/useProjects';
 
-const EMPTY_FORM: ProjectInput = { key: '', name: '', description: '', repoUrl: '', roleKey: '' };
+const EMPTY_FORM: ProjectInput = {
+  key: '',
+  name: '',
+  description: '',
+  repoUrl: '',
+  iconUrl: '',
+  roleKey: '',
+};
 
 const LIST_PATH = '/directory/projects';
+const MAX_ICON_BYTES = 512 * 1024;
+const ICON_TYPES = ['image/png', 'image/jpeg', 'image/webp'];
 
 export function ProjectFormPage(): JSX.Element {
   const { key } = useParams<{ key: string }>();
@@ -40,6 +50,7 @@ export function ProjectFormPage(): JSX.Element {
   const [loadError, setLoadError] = useState('');
   const [saving, setSaving] = useState(false);
   const [notice, setNotice] = useState('');
+  const [iconError, setIconError] = useState('');
 
   useEffect(() => {
     // 只有超管能拿到角色清单；其他人不必发这个注定 403 的请求。
@@ -82,6 +93,7 @@ export function ProjectFormPage(): JSX.Element {
           name: project.name,
           description: project.description,
           repoUrl: project.repoUrl,
+          iconUrl: project.iconUrl ?? '',
           roleKey: project.roleKey ?? '',
         });
         setLoading(false);
@@ -96,6 +108,24 @@ export function ProjectFormPage(): JSX.Element {
       cancelled = true;
     };
   }, [key]);
+
+  const handleIcon = (file: File): false | typeof Upload.LIST_IGNORE => {
+    if (!ICON_TYPES.includes(file.type)) {
+      setIconError('请选择 PNG / JPG / WebP 图片');
+      return Upload.LIST_IGNORE;
+    }
+    if (file.size > MAX_ICON_BYTES) {
+      setIconError('项目图标不能超过 512 KB');
+      return Upload.LIST_IGNORE;
+    }
+    const reader = new FileReader();
+    reader.onload = () =>
+      setForm((current) => ({ ...current, iconUrl: String(reader.result ?? '') }));
+    reader.onerror = () => setIconError('读取图片失败，请重试');
+    reader.readAsDataURL(file);
+    setIconError('');
+    return false;
+  };
 
   const submit = async (): Promise<void> => {
     setSaving(true);
@@ -166,6 +196,34 @@ export function ProjectFormPage(): JSX.Element {
             onChange={(event) => setForm({ ...form, key: event.target.value })}
           />
         </label>
+        <div className="field field-full">
+          <span className="field-label">项目图标</span>
+          <Upload.Dragger
+            className="icon-dropzone"
+            accept=".png,.jpg,.jpeg,.webp"
+            multiple={false}
+            maxCount={1}
+            showUploadList={false}
+            beforeUpload={handleIcon}
+            aria-label="选择项目图标"
+          >
+            <p className="dropzone-title">拖拽图片到此处，或点击选择</p>
+            <p className="dropzone-hint">PNG / JPG / WebP，不超过 512 KB</p>
+          </Upload.Dragger>
+          {form.iconUrl ? (
+            <div className="icon-preview">
+              <img src={form.iconUrl} alt="项目图标预览" />
+              <Button
+                className="button button-ghost button-small"
+                type="button"
+                onClick={() => setForm((current) => ({ ...current, iconUrl: '' }))}
+              >
+                移除图标
+              </Button>
+            </div>
+          ) : null}
+          {iconError ? <p className="field-error">{iconError}</p> : null}
+        </div>
         <label className="field">
           <span>项目库地址</span>
           <Input

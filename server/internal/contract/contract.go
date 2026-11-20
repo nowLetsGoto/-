@@ -68,14 +68,14 @@ func (e *ValidationError) Error() string { return e.Message }
 // 集中成常量而不是各层手写字符串，理由与枚举常量相同：
 // 一处拼错（"人员"写成"成员"）会让全站同类提示不一致，而且编译器发现不了。
 const (
-	ResourceBuild  = "应用包"
+	ResourceBuild   = "应用包"
 	ResourceProject = "项目"
-	ResourcePerson = "人员"
-	ResourceTeam   = "团队"
-	ResourceUser   = "账号"
-	ResourceRole   = "角色"
-	ResourceTenant = "公司"
-	ResourceFile   = "文件"
+	ResourcePerson  = "人员"
+	ResourceTeam    = "团队"
+	ResourceUser    = "账号"
+	ResourceRole    = "角色"
+	ResourceTenant  = "公司"
+	ResourceFile    = "文件"
 )
 
 // NotFoundError 是「指定资源不存在」的错误，由 handler.WriteError 翻译成 404。
@@ -191,24 +191,24 @@ func EffectiveAccountLevel(level string, superAdmin bool) string {
 
 // 路由常量：servers.url + paths 键组成完整路径；契约测试比对同一份列表。
 const (
-	APIPrefix              = "/api/v1"
-	RouteLogin             = APIPrefix + "/auth/login"
-	RouteProjects          = APIPrefix + "/projects"
-	RouteProjectByKey      = APIPrefix + "/projects/{key}"
-	RoutePeople            = APIPrefix + "/people"
-	RoutePersonByID        = APIPrefix + "/people/{id}"
-	RouteTeams             = APIPrefix + "/teams"
-	RouteTeamByID          = APIPrefix + "/teams/{id}"
-	RouteMe                = APIPrefix + "/me"
-	RouteMePassword        = APIPrefix + "/me/password"
-	RoutePermissions       = APIPrefix + "/permissions"
+	APIPrefix         = "/api/v1"
+	RouteLogin        = APIPrefix + "/auth/login"
+	RouteProjects     = APIPrefix + "/projects"
+	RouteProjectByKey = APIPrefix + "/projects/{key}"
+	RoutePeople       = APIPrefix + "/people"
+	RoutePersonByID   = APIPrefix + "/people/{id}"
+	RouteTeams        = APIPrefix + "/teams"
+	RouteTeamByID     = APIPrefix + "/teams/{id}"
+	RouteMe           = APIPrefix + "/me"
+	RouteMePassword   = APIPrefix + "/me/password"
+	RoutePermissions  = APIPrefix + "/permissions"
 	// RouteMenus 暴露平台级菜单目录，供角色授权页渲染菜单树。
 	// 只读：菜单结构由代码定义，任何公司都不能增删改（见 Menus 的说明）。
 	RouteMenus = APIPrefix + "/menus"
-	RouteRoles             = APIPrefix + "/roles"
+	RouteRoles = APIPrefix + "/roles"
 	// RouteRoleByID 是单个角色的读写入口。
 	// 用 id 而不是 key：key 只保证公司内唯一，超管视角下会歧义（见 service/role.Get）。
-	RouteRoleByID = APIPrefix + "/roles/{id}"
+	RouteRoleByID          = APIPrefix + "/roles/{id}"
 	RouteAdminUsers        = APIPrefix + "/admin/users"
 	RouteAdminUserByID     = APIPrefix + "/admin/users/{id}"
 	RouteAdminUserPassword = APIPrefix + "/admin/users/{id}/reset-password"
@@ -220,17 +220,17 @@ const (
 	RoutePlatformTenantByID = APIPrefix + "/platform/tenants/{id}"
 	// RoutePlatformTenantStatus 启停公司；与 ByID 分开是因为它是"改状态"而非"改资料"。
 	RoutePlatformTenantStatus = APIPrefix + "/platform/tenants/{id}/status"
-	RouteSettings          = APIPrefix + "/settings"
-	RouteWebhookTest       = APIPrefix + "/settings/webhook/test"
-	RouteAPIKeyRotate      = APIPrefix + "/settings/api-key/rotate"
-	RouteOpenBuilds        = APIPrefix + "/open/builds"
-	RouteStage             = APIPrefix + "/builds/stage"
-	RouteBuilds            = APIPrefix + "/builds"
-	RouteBuildByID         = APIPrefix + "/builds/{id}"
-	RouteBuildVersions     = APIPrefix + "/builds/{id}/versions"
-	RouteBuildFile         = APIPrefix + "/builds/{id}/file"
-	RouteHealth            = "/healthz"
-	RouteDownloadPage      = "/d/{id}"
+	RouteSettings             = APIPrefix + "/settings"
+	RouteWebhookTest          = APIPrefix + "/settings/webhook/test"
+	RouteAPIKeyRotate         = APIPrefix + "/settings/api-key/rotate"
+	RouteOpenBuilds           = APIPrefix + "/open/builds"
+	RouteStage                = APIPrefix + "/builds/stage"
+	RouteBuilds               = APIPrefix + "/builds"
+	RouteBuildByID            = APIPrefix + "/builds/{id}"
+	RouteBuildVersions        = APIPrefix + "/builds/{id}/versions"
+	RouteBuildFile            = APIPrefix + "/builds/{id}/file"
+	RouteHealth               = "/healthz"
+	RouteDownloadPage         = "/d/{id}"
 )
 
 // 契约级上限，与 x-constants 对齐。
@@ -248,6 +248,7 @@ const (
 	MaxProjectNameLen    = 60
 	MaxProjectDescLen    = 200
 	MaxRepoURLLen        = 300
+	MaxProjectIconURLLen = 700000
 	MaxPersonNameLen     = 40
 	MaxUsernameLen2      = 64
 	MaxEmailLen          = 120
@@ -425,9 +426,9 @@ type WebhookFieldOption struct {
 // 这里**不再返回 API Key 明文**：库里只存 SHA-256 摘要，明文只在「轮换」的那一次响应里出现。
 // 设置页需要的只是「有没有配过」，所以用 APIKeyConfigured 这个布尔表达。
 type Settings struct {
-	Webhook         WebhookConfig        `json:"webhook"`
-	APIKeyConfigured bool                `json:"apiKeyConfigured"`
-	AvailableFields []WebhookFieldOption `json:"availableFields"`
+	Webhook          WebhookConfig        `json:"webhook"`
+	APIKeyConfigured bool                 `json:"apiKeyConfigured"`
+	AvailableFields  []WebhookFieldOption `json:"availableFields"`
 }
 
 // WebhookTestResult 是测试投递结果；目标不可达也返回 200，用 Delivered 表达。
@@ -451,6 +452,7 @@ type Project struct {
 	Name        string `json:"name"`
 	Description string `json:"description"`
 	RepoURL     string `json:"repoUrl"`
+	IconURL     string `json:"iconUrl"`
 	RoleKey     string `json:"roleKey"`
 	RoleName    string `json:"roleName"`
 	CreatedAt   string `json:"createdAt"`
@@ -459,12 +461,13 @@ type Project struct {
 	TenantID string `json:"tenantId"`
 }
 
-// ProjectInput 是新建 / 编辑项目请求，恰好 4 个字段。
+// ProjectInput 是新建 / 编辑项目请求；iconUrl 可省略，省略时保留原图。
 type ProjectInput struct {
 	Key         string `json:"key"`
 	Name        string `json:"name"`
 	Description string `json:"description"`
 	RepoURL     string `json:"repoUrl"`
+	IconURL     string `json:"iconUrl"`
 	RoleKey     string `json:"roleKey"`
 }
 
@@ -673,8 +676,8 @@ const (
 	PermissionAdminAccess     = "admin.access"
 	// PermissionRoleRead/Write 控制角色定义的查看与编辑；Delete 控制删除。
 	// 拆成三个是为了让"只看不改"这种配置成立（审计员场景）。
-	PermissionRoleRead  = "role.read"
-	PermissionRoleWrite = "role.write"
+	PermissionRoleRead   = "role.read"
+	PermissionRoleWrite  = "role.write"
 	PermissionRoleDelete = "role.delete"
 	// PermissionAuditRead 控制本公司审计日志的查看。
 	PermissionAuditRead = "audit.read"
@@ -710,10 +713,10 @@ func IsValidPermission(key string) bool {
 
 // Role 是角色：key 用于代码引用，name 给人看，permissions 是权限点集合。
 type Role struct {
-	ID          string   `json:"id"`
-	Key         string   `json:"key"`
-	Name        string   `json:"name"`
-	Description string   `json:"description"`
+	ID          string `json:"id"`
+	Key         string `json:"key"`
+	Name        string `json:"name"`
+	Description string `json:"description"`
 	// IsBuiltin 表示"本公司预置的角色"：可以改权限，但不能删除。
 	// 内置角色每家公司各持一份独立副本（见 service/role 的说明），不是全局共享。
 	IsBuiltin bool `json:"isBuiltin"`
@@ -951,9 +954,9 @@ type User struct {
 	Username string `json:"username"`
 	// Mode 是账号归属的模式：创建它的人用的是哪个登录模式，它就属于哪个模式。
 	// 登录时已经选定模式，所以这里只做展示（列表按模式筛选、删除按模式匹配），不接受修改。
-	Mode         SessionMode `json:"mode"`
-	PersonID     string      `json:"personId"`
-	PersonName   string      `json:"personName"`
+	Mode       SessionMode `json:"mode"`
+	PersonID   string      `json:"personId"`
+	PersonName string      `json:"personName"`
 	// RoleKey / RoleName 是账号对应人员的角色，随账号一起返回，省得账号列表为显示角色名再拉人员列表。
 	// 角色的真相在 people.role_key：账号只是"以哪个人的身份登录"，它自己没有角色。
 	RoleKey      string `json:"roleKey"`
@@ -995,10 +998,10 @@ type UserInput struct {
 // TenantInput 新建公司：公司名 + 公司标识 + 平台管理员的初始账号与密码。
 // 公司的平台管理员随公司在同一事务里创建，初始密码只在响应里返回一次。
 type TenantInput struct {
-	Name            string `json:"name"`
-	Code            string `json:"code"`
-	AdminUsername   string `json:"adminUsername"`
-	AdminPassword   string `json:"adminPassword"`
+	Name          string `json:"name"`
+	Code          string `json:"code"`
+	AdminUsername string `json:"adminUsername"`
+	AdminPassword string `json:"adminPassword"`
 }
 
 // Tenant 是账号管理视角的一家公司（含其平台管理员账号名）。
@@ -1112,10 +1115,12 @@ var errInvalidHTTPURL = errors.New("必须是 http:// 或 https:// 开头的绝�
 
 // Build 是完整包 DTO；三个 URL 字段由 service.buildURLs 填充，repository 映射时留空。
 type Build struct {
-	ID               string `json:"id"`
-	Environment      string `json:"environment"`
-	Platform         string `json:"platform"`
-	AppName          string `json:"appName"`
+	ID          string `json:"id"`
+	Environment string `json:"environment"`
+	Platform    string `json:"platform"`
+	AppName     string `json:"appName"`
+	// ProjectIconURL 是所属项目图标的 data URL，供公开下载页直接展示；空串表示未上传。
+	ProjectIconURL   string `json:"projectIconUrl"`
 	PackageID        string `json:"packageId"`
 	Version          string `json:"version"`
 	BuildNumber      string `json:"buildNumber"`

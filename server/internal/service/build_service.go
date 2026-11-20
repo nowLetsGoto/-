@@ -301,6 +301,7 @@ func (s *BuildService) Create(ctx context.Context, in contract.CommitInput, iden
 		Environment:      in.Environment,
 		Platform:         in.Platform,
 		AppName:          appName,
+		ProjectIconURL:   project.IconURL,
 		PackageID:        packageID,
 		Version:          version,
 		BuildNumber:      buildNumber,
@@ -368,10 +369,14 @@ func (s *BuildService) List(ctx context.Context, q contract.ListQuery, identity 
 	if platform == "" {
 		platform = "all"
 	}
+	environment := q.Environment
+	if environment == "" {
+		environment = "all"
+	}
 	return contract.ListResult{
 		Items:       items,
 		Total:       len(items),
-		Environment: q.Environment,
+		Environment: environment,
 		Platform:    platform,
 	}, nil
 }

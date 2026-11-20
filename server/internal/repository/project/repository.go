@@ -45,7 +45,7 @@ func newRepository(db *sql.DB, schema repository.Schema, ownerScoped bool) *Repo
 // solo.projects 也加了 role_id 列（恒为 NULL，单人模式不需要项目角色），
 // 保留同构列是为了两套表共用同一份查询 SQL。
 const selectColumns = `p.id::text, p.key, p.name, p.description, p.repo_url,
-coalesce(r.key, ''), coalesce(r.name, ''), coalesce(p.tenant_id::text, ''), p.created_at`
+coalesce(p.icon_url, ''), coalesce(r.key, ''), coalesce(r.name, ''), coalesce(p.tenant_id::text, ''), p.created_at`
 
 const fromClause = ` LEFT JOIN roles r ON r.id = p.role_id`
 
@@ -128,16 +128,16 @@ func (r *Repository) Create(ctx context.Context, in contract.ProjectInput, owner
 	// 两处都用 NULLIF(...)::uuid 而不是在 Go 侧传 nil：
 	// 单人分区的 tenantID 是空串，直接传 '' 会被 uuid 转换拒绝（invalid input syntax for type uuid: ""）。
 	// NULLIF 把空串先变 NULL，再转 uuid 才安全。
-	query := `INSERT INTO ` + r.table + ` (key, name, description, repo_url, role_id, owner_user_id, tenant_id)
-	VALUES ($1, $2, $3, $4,
+	query := `INSERT INTO ` + r.table + ` (key, name, description, repo_url, icon_url, role_id, owner_user_id, tenant_id)
+	VALUES ($1, $2, $3, $4, $5,
 	        (SELECT ro.id FROM roles ro
-	         WHERE ro.key = $5 AND (ro.tenant_id IS NULL OR ro.tenant_id = NULLIF($8, '')::uuid)),
-	        $6, NULLIF($7, '')::uuid)
+	         WHERE ro.key = $6 AND (ro.tenant_id IS NULL OR ro.tenant_id = NULLIF($9, '')::uuid)),
+	        $7, NULLIF($8, '')::uuid)
 	RETURNING key`
 
 	var created string
 	err := r.db.QueryRowContext(ctx, query,
-		in.Key, in.Name, in.Description, in.RepoURL, in.RoleKey, ownerUserID, tenantID, tenantID).Scan(&created)
+		in.Key, in.Name, in.Description, in.RepoURL, in.IconURL, in.RoleKey, ownerUserID, tenantID, tenantID).Scan(&created)
 	if err != nil {
 		return contract.Project{}, err
 	}
@@ -148,21 +148,21 @@ func (r *Repository) Create(ctx context.Context, in contract.ProjectInput, owner
 // ownerUserID 非空时只有创建者本人能改，别人的项目会命中 0 行并转成参数错误。
 // 团队分区叠加 tenant_id 条件：只能改本公司的项目。
 func (r *Repository) Update(ctx context.Context, key, ownerUserID string, in contract.ProjectInput, scope contract.Scope) (contract.Project, error) {
-	// SET 先占满 $1..$4，因此条件必须从 $5 起算（base=4）。
+	// SET 先占满 $1..$5，因此条件必须从 $6 起算（base=5）。
 	// 表必须起别名 p：条件由 ownerFilter 统一生成，列引用一律带 p. 前缀。
-	filter := r.ownerFilter(4, ownerUserID)
+	filter := r.ownerFilter(5, ownerUserID)
 	if !r.ownerScoped {
 		repository.ApplyTenant(filter, "p", scope)
 		repository.ApplyTeam(filter, `p.id IN (SELECT tp.project_id FROM team_projects tp WHERE tp.team_id = ANY(?))`, scope)
 	}
 	filter.Add(`p.key = ?`, key)
 	query := `UPDATE ` + r.table + ` p
-	SET name = $1, description = $2, repo_url = $3,
+	SET name = $1, description = $2, repo_url = $3, icon_url = $4,
 	    role_id = (SELECT ro.id FROM roles ro
-	               WHERE ro.key = $4 AND (ro.tenant_id IS NULL OR ro.tenant_id = p.tenant_id))
+	               WHERE ro.key = $5 AND (ro.tenant_id IS NULL OR ro.tenant_id = p.tenant_id))
 	WHERE ` + filter.Cond() + ` RETURNING p.key`
 
-	args := append([]any{in.Name, in.Description, in.RepoURL, in.RoleKey}, filter.Args()...)
+	args := append([]any{in.Name, in.Description, in.RepoURL, in.IconURL, in.RoleKey}, filter.Args()...)
 
 	var updated string
 	if err := r.db.QueryRowContext(ctx, query, args...).Scan(&updated); err != nil {
@@ -327,7 +327,7 @@ func scan(row scanner) (contract.Project, error) {
 	var item contract.Project
 	var createdAt time.Time
 	if err := row.Scan(&item.ID, &item.Key, &item.Name, &item.Description, &item.RepoURL,
-		&item.RoleKey, &item.RoleName, &item.TenantID, &createdAt); err != nil {
+		&item.IconURL, &item.RoleKey, &item.RoleName, &item.TenantID, &createdAt); err != nil {
 		return contract.Project{}, err
 	}
 	item.CreatedAt = createdAt.UTC().Format(time.RFC3339)

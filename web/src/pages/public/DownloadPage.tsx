@@ -221,9 +221,13 @@ export function DownloadPage(): JSX.Element {
 
         <div className="download-hero">
           <div className="download-hero-main">
-            <div className="app-icon" aria-hidden="true">
-              {build.appName.slice(0, 1).toUpperCase()}
-            </div>
+            {build.projectIconUrl ? (
+              <img className="app-icon app-icon-img" src={build.projectIconUrl} alt="" />
+            ) : (
+              <div className="app-icon" aria-hidden="true">
+                {build.appName.slice(0, 1).toUpperCase()}
+              </div>
+            )}
             <p className="download-eyebrow">
               {platform} 安装包 · {environmentLabel(build.environment)}环境
             </p>

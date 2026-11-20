@@ -171,6 +171,7 @@ func normalize(in contract.ProjectInput, withKey bool) (contract.ProjectInput, e
 		Key:         strings.ToLower(strings.TrimSpace(in.Key)),
 		Name:        strings.TrimSpace(in.Name),
 		Description: strings.TrimSpace(in.Description),
+		IconURL:     strings.TrimSpace(in.IconURL),
 		RoleKey:     strings.TrimSpace(in.RoleKey),
 	}
 
@@ -198,6 +199,14 @@ func normalize(in contract.ProjectInput, withKey bool) (contract.ProjectInput, e
 			return contract.ProjectInput{}, &contract.ValidationError{Message: "项目库地址" + err.Error()}
 		}
 		out.RepoURL = normalized
+	}
+
+	if out.IconURL != "" {
+		if len(out.IconURL) > contract.MaxProjectIconURLLen ||
+			!strings.HasPrefix(out.IconURL, "data:image/") ||
+			!strings.Contains(out.IconURL, ";base64,") {
+			return contract.ProjectInput{}, &contract.ValidationError{Message: "项目图标格式不正确或过大"}
+		}
 	}
 	return out, nil
 }

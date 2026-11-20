@@ -30,7 +30,7 @@ const ROUTES = {
 export interface ListQuery {
   /** 项目 key：不同项目的包互不可见 */
   project: string;
-  environment: Environment;
+  environment: Environment | 'all';
   platform?: Platform | 'all';
 }
 

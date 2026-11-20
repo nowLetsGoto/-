@@ -99,9 +99,13 @@ function OverviewDashboard({ groups }: { groups: EnvGroup[] }): JSX.Element {
           <ul className="feed">
             {recent.map((build) => (
               <li className="feed-row" key={build.id}>
-                <span className="app-mark" aria-hidden="true">
-                  {build.appName.slice(0, 1).toUpperCase()}
-                </span>
+                {build.projectIconUrl ? (
+                  <img className="app-mark app-mark-img" src={build.projectIconUrl} alt="" />
+                ) : (
+                  <span className="app-mark" aria-hidden="true">
+                    {build.appName.slice(0, 1).toUpperCase()}
+                  </span>
+                )}
                 <div className="feed-main">
                   <div className="feed-name">
                     {build.appName} · {build.version}

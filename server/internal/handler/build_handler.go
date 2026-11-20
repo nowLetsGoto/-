@@ -90,7 +90,10 @@ func (h *BuildHandler) Commit(w http.ResponseWriter, r *http.Request) error {
 func (h *BuildHandler) List(w http.ResponseWriter, r *http.Request) error {
 	identity := authctx.From(r.Context())
 	environment := r.URL.Query().Get("environment")
-	if !contract.IsValidEnvironment(environment) {
+	// all 与平台筛选的 all 同义：不按该维度收敛，仓储侧省略对应 WHERE 条件。
+	if environment == "all" {
+		environment = ""
+	} else if !contract.IsValidEnvironment(environment) {
 		return BadRequest("环境参数不合法")
 	}
 	platform := r.URL.Query().Get("platform")

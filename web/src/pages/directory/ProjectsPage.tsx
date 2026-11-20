@@ -50,9 +50,18 @@ export function ProjectsPage(): JSX.Element {
       title: '项目名称',
       key: 'name',
       render: (_, project) => (
-        <Button className="project-link" type="button" onClick={() => setDetailKey(project.key)}>
-          {project.name}
-        </Button>
+        <div className="cell-project">
+          {project.iconUrl ? (
+            <img className="project-icon" src={project.iconUrl} alt="" />
+          ) : (
+            <span className="project-icon project-icon-fallback" aria-hidden="true">
+              {project.name.slice(0, 1).toUpperCase()}
+            </span>
+          )}
+          <Button className="project-link" type="button" onClick={() => setDetailKey(project.key)}>
+            {project.name}
+          </Button>
+        </div>
       ),
     },
     {

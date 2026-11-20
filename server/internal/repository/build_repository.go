@@ -24,6 +24,12 @@ const buildColumns = `id, environment, platform, app_name, package_id, version, 
 	changelog, original_file_name, file_size, file_ext, relative_path, meta_source,
 	download_count, created_at, owner_user_id`
 
+// columns 在固定列后追加项目图标：公开下载页需要它，但 Build 表本身不冗余存，
+// 统一从同分区的 projects 表按 project_id 子查询，避免图标更新后包记录还是旧值。
+func (r *BuildRepository) columns() string {
+	return buildColumns + `, (SELECT p.icon_url FROM ` + r.project + ` p WHERE p.id = project_id)`
+}
+
 // BuildRepository 是一个分区内的 builds 表访问器；分区在构造时固定，实例本身无状态。
 type BuildRepository struct {
 	db      *sql.DB
@@ -89,7 +95,7 @@ func (r *BuildRepository) Insert(ctx context.Context, projectID string, b *contr
 	return nil
 }
 
-// List 固定 WHERE project_id=$1 AND environment=$2 [AND platform=$3] [AND owner_user_id=$n]
+// List 固定 WHERE project_id=$1 [AND environment=$2] [AND platform=$3] [AND owner_user_id=$n]
 // ORDER BY created_at DESC，命中 idx_builds_project_env_platform_created；第一版不分页，
 // 空结果返回空切片而不是 404。
 //
@@ -99,11 +105,11 @@ func (r *BuildRepository) Insert(ctx context.Context, projectID string, b *contr
 func (r *BuildRepository) List(ctx context.Context, projectID string, q contract.ListQuery, ownerUserID string) ([]contract.Build, error) {
 	filter := NewFilter(0).
 		Add(`project_id = ?`, projectID).
-		Add(`environment = ?`, q.Environment).
+		AddIf(q.Environment != "", `environment = ?`, q.Environment).
 		AddIf(q.Platform != "", `platform = ?`, q.Platform).
 		AddIf(r.ownerScoped && ownerUserID != "", `owner_user_id = ?`, ownerUserID)
 
-	query := `SELECT ` + buildColumns + ` FROM ` + r.table + filter.Where() + ` ORDER BY created_at DESC`
+	query := `SELECT ` + r.columns() + ` FROM ` + r.table + filter.Where() + ` ORDER BY created_at DESC`
 
 	rows, err := r.db.QueryContext(ctx, query, filter.Args()...)
 	if err != nil {
@@ -127,7 +133,7 @@ func (r *BuildRepository) List(ctx context.Context, projectID string, q contract
 
 // FindByID 返回单个包；无记录统一转成 contract.NotFound(contract.ResourceBuild) 供错误中间件转 404。
 func (r *BuildRepository) FindByID(ctx context.Context, id string) (contract.Build, error) {
-	row := r.db.QueryRowContext(ctx, `SELECT `+buildColumns+` FROM `+r.table+` WHERE id = $1`, id)
+	row := r.db.QueryRowContext(ctx, `SELECT `+r.columns()+` FROM `+r.table+` WHERE id = $1`, id)
 	build, err := rowToBuild(row)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) || errors.Is(err, pgx.ErrNoRows) {
@@ -152,7 +158,7 @@ func (r *BuildRepository) ListSiblingVersions(ctx context.Context, id string, li
 		return nil, "", fmt.Errorf("查询包所在分区失败: %w", err)
 	}
 
-	query := `SELECT ` + buildColumns + ` FROM ` + r.table + `
+	query := `SELECT ` + r.columns() + ` FROM ` + r.table + `
 		WHERE id <> $1
 		  AND project_id = (SELECT project_id FROM ` + r.table + ` WHERE id = $1)
 		  AND app_name = (SELECT app_name FROM ` + r.table + ` WHERE id = $1)
@@ -209,7 +215,7 @@ func rowToBuild(row rowScanner) (contract.Build, error) {
 		&b.ID, &b.Environment, &b.Platform, &b.AppName, &b.PackageID,
 		&b.Version, &b.BuildNumber, &b.Changelog, &b.OriginalFileName,
 		&b.FileSize, &b.FileExt, &b.RelativePath, &b.MetaSource,
-		&b.DownloadCount, &createdAt, &b.OwnerUserID,
+		&b.DownloadCount, &createdAt, &b.OwnerUserID, &b.ProjectIconURL,
 	)
 	if err != nil {
 		return contract.Build{}, err

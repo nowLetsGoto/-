@@ -56,6 +56,7 @@ BEGIN
         name          TEXT        NOT NULL,
         description   TEXT        NOT NULL DEFAULT '',
         repo_url      TEXT        NOT NULL DEFAULT '',
+        icon_url      TEXT        NOT NULL DEFAULT '',
         role_key      TEXT,
         owner_user_id TEXT        NOT NULL DEFAULT '',
         created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
@@ -112,6 +113,7 @@ DECLARE
 BEGIN
   FOREACH s IN ARRAY ARRAY['team', 'solo'] LOOP
     EXECUTE format($q$ALTER TABLE %I.projects ADD COLUMN IF NOT EXISTS repo_url TEXT NOT NULL DEFAULT ''$q$, s);
+    EXECUTE format($q$ALTER TABLE %I.projects ADD COLUMN IF NOT EXISTS icon_url TEXT NOT NULL DEFAULT ''$q$, s);
     EXECUTE format('ALTER TABLE %I.projects ADD COLUMN IF NOT EXISTS role_key TEXT', s);
     EXECUTE format($q$ALTER TABLE %I.projects ADD COLUMN IF NOT EXISTS owner_user_id TEXT NOT NULL DEFAULT ''$q$, s);
     EXECUTE format($q$ALTER TABLE %I.builds ADD COLUMN IF NOT EXISTS owner_user_id TEXT NOT NULL DEFAULT 'system'$q$, s);

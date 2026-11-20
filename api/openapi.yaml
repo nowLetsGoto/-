@@ -1260,7 +1260,7 @@ paths:
           in: query
           required: true
           schema:
-            $ref: '#/components/schemas/Environment'
+            $ref: '#/components/schemas/EnvironmentQuery'
         - name: platform
           in: query
           required: false
@@ -1595,6 +1595,11 @@ components:
       description: 平台枚举；label / ext / contentType 见 x-platforms
       enum: [android, ios, harmony]
 
+    EnvironmentQuery:
+      type: string
+      description: 环境筛选，all 表示全部环境
+      enum: [all, test, hotfix, pre, prd]
+
     PlatformQuery:
       type: string
       description: 平台筛选，省略或 all 表示不筛
@@ -1603,7 +1608,7 @@ components:
     Project:
       type: object
       description: 项目是业务数据的一级归属：应用包、应用、热更新都挂在项目下
-      required: [id, key, name, description, repoUrl, roleKey, roleName, createdAt]
+      required: [id, key, name, description, repoUrl, iconUrl, roleKey, roleName, createdAt]
       properties:
         id:
           type: string
@@ -1618,6 +1623,9 @@ components:
         repoUrl:
           type: string
           description: 项目库地址（GitLab / GitHub 等），空串表示未填；详情页渲染为可点击链接
+        iconUrl:
+          type: string
+          description: 项目图标 data URL；空串表示未上传，列表回退首字母占位
         roleKey:
           type: string
           description: 项目角色标识；为空表示沿用人员自身角色
@@ -1648,6 +1656,10 @@ components:
           type: string
           maxLength: 300
           description: http(s) 绝对地址；留空表示未填
+        iconUrl:
+          type: string
+          maxLength: 700000
+          description: 项目图标 data URL（png/jpg/webp，≤512KB）；留空表示不上传
         roleKey:
           type: string
           description: 项目角色标识；留空表示沿用人员自身角色
@@ -1655,7 +1667,7 @@ components:
     ProjectDetail:
       type: object
       description: 项目详情 = 项目本身 + 关联的人员与团队（带名字）
-      required: [id, key, name, description, repoUrl, roleKey, roleName, createdAt, persons, teams]
+      required: [id, key, name, description, repoUrl, iconUrl, roleKey, roleName, createdAt, persons, teams]
       properties:
         id:
           type: string
@@ -1667,6 +1679,8 @@ components:
         description:
           type: string
         repoUrl:
+          type: string
+        iconUrl:
           type: string
         roleKey:
           type: string
@@ -2374,6 +2388,7 @@ components:
         - environment
         - platform
         - appName
+        - projectIconUrl
         - packageId
         - version
         - buildNumber
@@ -2398,6 +2413,9 @@ components:
           $ref: '#/components/schemas/Platform'
         appName:
           type: string
+        projectIconUrl:
+          type: string
+          description: 所属项目图标的 data URL；空串表示未上传，下载页回退首字母
         packageId:
           type: string
         version:

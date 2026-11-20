@@ -693,6 +693,11 @@ export interface components {
          */
         Platform: "android" | "ios" | "harmony";
         /**
+         * @description 环境筛选，all 表示全部环境
+         * @enum {string}
+         */
+        EnvironmentQuery: "all" | "test" | "hotfix" | "pre" | "prd";
+        /**
          * @description 平台筛选，省略或 all 表示不筛
          * @enum {string}
          */
@@ -707,6 +712,8 @@ export interface components {
             description: string;
             /** @description 项目库地址（GitLab / GitHub 等），空串表示未填；详情页渲染为可点击链接 */
             repoUrl: string;
+            /** @description 项目图标 data URL；空串表示未上传，列表回退首字母占位 */
+            iconUrl: string;
             /** @description 项目角色标识；为空表示沿用人员自身角色 */
             roleKey: string;
             roleName: string;
@@ -721,6 +728,8 @@ export interface components {
             description: string;
             /** @description http(s) 绝对地址；留空表示未填 */
             repoUrl: string;
+            /** @description 项目图标 data URL（png/jpg/webp，≤512KB）；留空表示不上传 */
+            iconUrl?: string;
             /** @description 项目角色标识；留空表示沿用人员自身角色 */
             roleKey: string;
         };
@@ -732,6 +741,7 @@ export interface components {
             name: string;
             description: string;
             repoUrl: string;
+            iconUrl: string;
             roleKey: string;
             roleName: string;
             /** Format: date-time */
@@ -1068,6 +1078,8 @@ export interface components {
             environment: components["schemas"]["Environment"];
             platform: components["schemas"]["Platform"];
             appName: string;
+            /** @description 所属项目图标的 data URL；空串表示未上传，下载页回退首字母 */
+            projectIconUrl: string;
             packageId: string;
             version: string;
             buildNumber: string;
@@ -2595,7 +2607,7 @@ export interface operations {
             query: {
                 /** @description 项目 key；不同项目的包互不可见 */
                 project: string;
-                environment: components["schemas"]["Environment"];
+                environment: components["schemas"]["EnvironmentQuery"];
                 platform?: components["schemas"]["PlatformQuery"];
             };
             header?: never;
