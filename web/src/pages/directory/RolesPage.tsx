@@ -65,13 +65,18 @@ export function RolesPage(): JSX.Element {
       title: '角色名称',
       key: 'name',
       render: (_, role) => (
-        <Button
-          className="project-link"
-          type="button"
-          onClick={() => navigate(`/directory/roles/${role.id}/edit`)}
-        >
-          {role.name}
-        </Button>
+        <div className="identity-cell">
+          <span className="identity-avatar" aria-hidden="true">
+            {role.name.slice(0, 1).toUpperCase()}
+          </span>
+          <Button
+            className="project-link"
+            type="button"
+            onClick={() => navigate(`/directory/roles/${role.id}/edit`)}
+          >
+            {role.name}
+          </Button>
+        </div>
       ),
     },
     {
@@ -151,10 +156,7 @@ export function RolesPage(): JSX.Element {
       <div className="page-head">
         <div>
           <h1>角色管理</h1>
-          <p className="sub">
-            共 {state.items.length} 个角色 ·
-            角色决定「能做什么」；超级管理员与平台管理员是账号身份，不在此列
-          </p>
+          <p className="sub">角色决定「能做什么」；账号身份不在此列</p>
         </div>
         {writable ? (
           <Link className="button button-primary" to="/directory/roles/new">
@@ -164,6 +166,19 @@ export function RolesPage(): JSX.Element {
       </div>
 
       <div className="card">
+        <div className="toolbar">
+          <span className="toolbar-title">角色列表</span>
+          <span className="toolbar-meta">共 {state.items.length} 个角色</span>
+          <span className="toolbar-spacer" />
+          <Button
+            className="button button-ghost button-small"
+            type="button"
+            onClick={() => setVersion((value) => value + 1)}
+          >
+            刷新
+          </Button>
+        </div>
+
         {state.error ? (
           <ErrorState message={state.error} onRetry={() => setVersion((value) => value + 1)} />
         ) : (

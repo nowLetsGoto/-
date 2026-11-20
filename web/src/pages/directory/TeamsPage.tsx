@@ -9,6 +9,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import type { TableColumnsType } from '@seakoi/console-kit';
 import type { Team } from '../../api/teams';
 import { deleteTeam } from '../../api/teams';
+import { ChipList } from '../../components/ChipList';
 import { Button } from '../../components/Controls';
 import { ConfirmDialog } from '../../components/ConfirmDialog';
 import { DataTable } from '../../components/DataTable';
@@ -40,7 +41,14 @@ export function TeamsPage(): JSX.Element {
     {
       title: '团队名称',
       key: 'name',
-      render: (_, team) => <span className="cell-name">{team.name}</span>,
+      render: (_, team) => (
+        <div className="identity-cell">
+          <span className="identity-avatar" aria-hidden="true">
+            {team.name.slice(0, 1).toUpperCase()}
+          </span>
+          <span className="cell-name">{team.name}</span>
+        </div>
+      ),
     },
     {
       title: '描述',
@@ -50,34 +58,12 @@ export function TeamsPage(): JSX.Element {
     {
       title: '成员',
       key: 'persons',
-      render: (_, team) =>
-        team.persons.length === 0 ? (
-          <span className="cell-sub">—</span>
-        ) : (
-          <div className="chip-row">
-            {team.persons.map((person) => (
-              <span className="chip" key={person.id}>
-                {person.name}
-              </span>
-            ))}
-          </div>
-        ),
+      render: (_, team) => <ChipList items={team.persons} />,
     },
     {
       title: '关联项目',
       key: 'projects',
-      render: (_, team) =>
-        team.projects.length === 0 ? (
-          <span className="cell-sub">—</span>
-        ) : (
-          <div className="chip-row">
-            {team.projects.map((project) => (
-              <span className="chip" key={project.id}>
-                {project.name}
-              </span>
-            ))}
-          </div>
-        ),
+      render: (_, team) => <ChipList items={team.projects} />,
     },
     {
       title: '',
@@ -118,7 +104,7 @@ export function TeamsPage(): JSX.Element {
       <div className="page-head">
         <div>
           <h1>团队管理</h1>
-          <p className="sub">共 {total} 个团队 · 可关联多名人员与多个项目</p>
+          <p className="sub">按团队组织成员，并关联到项目</p>
         </div>
         {canCreate ? (
           <Link className="button button-primary" to="/directory/teams/new">
@@ -128,6 +114,15 @@ export function TeamsPage(): JSX.Element {
       </div>
 
       <div className="card">
+        <div className="toolbar">
+          <span className="toolbar-title">团队列表</span>
+          <span className="toolbar-meta">共 {total} 个团队</span>
+          <span className="toolbar-spacer" />
+          <Button className="button button-ghost button-small" type="button" onClick={reload}>
+            刷新
+          </Button>
+        </div>
+
         {error ? (
           <ErrorState message={error} onRetry={reload} />
         ) : (

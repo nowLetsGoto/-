@@ -141,7 +141,7 @@ export function ProjectsPage(): JSX.Element {
         <div>
           <h1>项目管理</h1>
           <p className="sub">
-            {solo ? `共 ${total} 个你的项目` : `共 ${total} 个项目 · 应用包与应用都挂在项目下`}
+            {solo ? '管理你自己的项目，应用包与应用都挂在项目下' : '应用包与应用都挂在项目下'}
           </p>
         </div>
         {writable ? (
@@ -152,6 +152,15 @@ export function ProjectsPage(): JSX.Element {
       </div>
 
       <div className="card">
+        <div className="toolbar">
+          <span className="toolbar-title">项目列表</span>
+          <span className="toolbar-meta">共 {total} 个项目</span>
+          <span className="toolbar-spacer" />
+          <Button className="button button-ghost button-small" type="button" onClick={reload}>
+            刷新
+          </Button>
+        </div>
+
         {error ? (
           <ErrorState message={error} onRetry={reload} />
         ) : (

@@ -10,6 +10,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import type { TableColumnsType } from '@seakoi/console-kit';
 import type { Person } from '../../api/people';
 import { deletePerson } from '../../api/people';
+import { ChipList } from '../../components/ChipList';
 import { Button } from '../../components/Controls';
 import { ConfirmDialog } from '../../components/ConfirmDialog';
 import { DataTable } from '../../components/DataTable';
@@ -39,7 +40,14 @@ export function PeoplePage(): JSX.Element {
     {
       title: '姓名',
       key: 'name',
-      render: (_, person) => <span className="cell-name">{person.name}</span>,
+      render: (_, person) => (
+        <div className="identity-cell">
+          <span className="identity-avatar" aria-hidden="true">
+            {person.name.slice(0, 1).toUpperCase()}
+          </span>
+          <span className="cell-name">{person.name}</span>
+        </div>
+      ),
     },
     {
       title: '登录名',
@@ -74,34 +82,12 @@ export function PeoplePage(): JSX.Element {
     {
       title: '关联团队',
       key: 'teams',
-      render: (_, person) =>
-        person.teams.length === 0 ? (
-          <span className="cell-sub">—</span>
-        ) : (
-          <div className="chip-row">
-            {person.teams.map((team) => (
-              <span className="chip" key={team.id}>
-                {team.name}
-              </span>
-            ))}
-          </div>
-        ),
+      render: (_, person) => <ChipList items={person.teams} />,
     },
     {
       title: '关联项目',
       key: 'projects',
-      render: (_, person) =>
-        person.projects.length === 0 ? (
-          <span className="cell-sub">—</span>
-        ) : (
-          <div className="chip-row">
-            {person.projects.map((project) => (
-              <span className="chip" key={project.id}>
-                {project.name}
-              </span>
-            ))}
-          </div>
-        ),
+      render: (_, person) => <ChipList items={person.projects} />,
     },
     {
       title: '',
@@ -142,7 +128,7 @@ export function PeoplePage(): JSX.Element {
       <div className="page-head">
         <div>
           <h1>人员管理</h1>
-          <p className="sub">共 {total} 人 · 可关联多个团队与项目</p>
+          <p className="sub">维护通讯录，并把人员关联到团队与项目</p>
         </div>
         {writable ? (
           <Link className="button button-primary" to="/directory/people/new">
@@ -152,6 +138,15 @@ export function PeoplePage(): JSX.Element {
       </div>
 
       <div className="card">
+        <div className="toolbar">
+          <span className="toolbar-title">人员列表</span>
+          <span className="toolbar-meta">共 {total} 人</span>
+          <span className="toolbar-spacer" />
+          <Button className="button button-ghost button-small" type="button" onClick={reload}>
+            刷新
+          </Button>
+        </div>
+
         {error ? (
           <ErrorState message={error} onRetry={reload} />
         ) : (

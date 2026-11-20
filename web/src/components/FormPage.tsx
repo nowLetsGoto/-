@@ -50,7 +50,7 @@ export function FormPage({
         </Link>
       </div>
 
-      <form className="card settings-card" onSubmit={handleSubmit}>
+      <form className="card form-page" onSubmit={handleSubmit}>
         {children}
 
         {notice ? <p className="field-error">{notice}</p> : null}

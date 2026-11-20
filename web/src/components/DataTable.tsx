@@ -9,6 +9,7 @@
 import { Table } from '@seakoi/console-kit';
 import type { TableColumnsType } from '@seakoi/console-kit';
 import type { ReactNode } from 'react';
+import { TableSkeleton } from './Skeleton';
 import { Empty } from './States';
 
 const PAGE_SIZE_OPTIONS = [10, 20, 50];
@@ -47,6 +48,11 @@ export function DataTable<T extends object>({
   pageSize = 10,
   serverPagination,
 }: DataTableProps<T>): JSX.Element {
+  // 首屏加载还没有任何行时，用骨架替代空表 + 转圈：列宽和行高提前占位，加载完不跳版。
+  if (loading && dataSource.length === 0) {
+    return <TableSkeleton />;
+  }
+
   return (
     <Table<T>
       className="data-table"

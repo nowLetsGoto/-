@@ -179,40 +179,50 @@ export function AuditLogsPage(): JSX.Element {
       </div>
 
       <div className="card">
-        <div className="toolbar">
-          <Input
-            className="text-input toolbar-search"
-            placeholder="动作，如 user.disabled"
-            value={form.action}
-            onChange={(event) => setForm({ ...form, action: event.target.value })}
-            onKeyDown={(event) => {
-              if (event.key === 'Enter') {
-                setApplied(form);
-              }
-            }}
-          />
-          <Input
-            className="text-input toolbar-search"
-            placeholder="操作者账号"
-            value={form.actor}
-            onChange={(event) => setForm({ ...form, actor: event.target.value })}
-            onKeyDown={(event) => {
-              if (event.key === 'Enter') {
-                setApplied(form);
-              }
-            }}
-          />
-          <Segmented<ResultFilter>
-            aria-label="结果"
-            value={form.result}
-            options={RESULT_OPTIONS.map((option) => ({
-              value: option.value,
-              label: option.label,
-            }))}
-            onChange={(value) => setForm({ ...form, result: value })}
-          />
+        <div className="toolbar toolbar-filters">
+          <div className="filter-group">
+            <span className="filter-label">动作</span>
+            <Input
+              className="text-input toolbar-search"
+              placeholder="如 user.disabled"
+              value={form.action}
+              onChange={(event) => setForm({ ...form, action: event.target.value })}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter') {
+                  setApplied(form);
+                }
+              }}
+            />
+          </div>
+          <div className="filter-group">
+            <span className="filter-label">操作者</span>
+            <Input
+              className="text-input toolbar-search"
+              placeholder="账号"
+              value={form.actor}
+              onChange={(event) => setForm({ ...form, actor: event.target.value })}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter') {
+                  setApplied(form);
+                }
+              }}
+            />
+          </div>
+          <div className="filter-group">
+            <span className="filter-label">结果</span>
+            <Segmented<ResultFilter>
+              aria-label="结果"
+              value={form.result}
+              options={RESULT_OPTIONS.map((option) => ({
+                value: option.value,
+                label: option.label,
+              }))}
+              onChange={(value) => setForm({ ...form, result: value })}
+            />
+          </div>
+          <span className="toolbar-spacer" />
           <Button
-            className="button button-ghost button-small"
+            className="button button-primary button-small"
             type="button"
             onClick={() => setApplied(form)}
           >

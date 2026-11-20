@@ -12,7 +12,7 @@ import type { Settings, WebhookConfig, WebhookField, WebhookTestResult } from '.
 import { getSettings, rotateApiKey, testWebhook, updateWebhook } from '../../api/settings';
 import { errorMessage } from '../../api/client';
 import { useCurrentProject } from '../../hooks/useProjects';
-import { Button, Checkbox, Input } from '../../components/Controls';
+import { Button, Checkbox, Input, Segmented } from '../../components/Controls';
 import { ConfirmDialog } from '../../components/ConfirmDialog';
 import { ErrorState, Loading } from '../../components/States';
 
@@ -151,25 +151,16 @@ export function SettingsPage(): JSX.Element {
         </div>
       </div>
 
-      <div className="tabs" role="tablist">
-        <Button
-          type="button"
-          role="tab"
-          aria-selected={tab === 'webhook'}
-          className={tab === 'webhook' ? 'tab tab-active' : 'tab'}
-          onClick={() => setTab('webhook')}
-        >
-          Webhook
-        </Button>
-        <Button
-          type="button"
-          role="tab"
-          aria-selected={tab === 'api'}
-          className={tab === 'api' ? 'tab tab-active' : 'tab'}
-          onClick={() => setTab('api')}
-        >
-          外部 API
-        </Button>
+      <div className="settings-tabs">
+        <Segmented<Tab>
+          aria-label="平台集成模块"
+          value={tab}
+          options={[
+            { value: 'webhook', label: 'Webhook' },
+            { value: 'api', label: '外部 API' },
+          ]}
+          onChange={setTab}
+        />
       </div>
 
       {tab === 'webhook' ? (

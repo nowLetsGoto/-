@@ -9,7 +9,8 @@ import { Link } from 'react-router-dom';
 import type { Build } from '../../api/builds';
 import { Button } from '../../components/Controls';
 import { ProjectSelect } from '../../components/ProjectSelect';
-import { Empty, ErrorState, Loading } from '../../components/States';
+import { Skeleton } from '../../components/Skeleton';
+import { Empty, ErrorState } from '../../components/States';
 import { useAllBuilds } from '../../hooks/useAllBuilds';
 import { useCurrentProject, useProjects } from '../../hooks/useProjects';
 import { formatDate, platformLabel } from '../../utils/format';
@@ -45,7 +46,7 @@ export function AppsPage(): JSX.Element {
         </div>
       </div>
 
-      {loading ? <Loading text="正在汇总应用…" /> : null}
+      {loading ? <AppsSkeleton /> : null}
       {!loading && error ? <ErrorState message={error} onRetry={reload} /> : null}
       {!loading && !error && apps.length === 0 ? (
         <Empty
@@ -66,6 +67,35 @@ export function AppsPage(): JSX.Element {
         </div>
       ) : null}
     </section>
+  );
+}
+
+function AppsSkeleton(): JSX.Element {
+  return (
+    <div className="apps-grid" role="status" aria-label="正在汇总应用">
+      {Array.from({ length: 3 }, (_, index) => (
+        <div className="card app-card" key={`app-skeleton-${index}`}>
+          <div className="app-card-head">
+            <Skeleton className="skeleton-icon" />
+            <div className="app-card-title">
+              <Skeleton className="skeleton-line skeleton-line-lg" />
+              <Skeleton className="skeleton-line skeleton-line-short" />
+            </div>
+          </div>
+          <div className="app-card-stats">
+            {Array.from({ length: 3 }, (_, cell) => (
+              <div key={`app-skeleton-cell-${cell}`}>
+                <Skeleton className="skeleton-line skeleton-line-sm" />
+                <Skeleton className="skeleton-line" />
+              </div>
+            ))}
+          </div>
+          <div className="app-card-foot">
+            <Skeleton className="skeleton-line skeleton-line-short" />
+          </div>
+        </div>
+      ))}
+    </div>
   );
 }
 

@@ -200,7 +200,7 @@ export function AccountsPage(): JSX.Element {
     {
       title: '',
       key: 'actions',
-      width: 320,
+      width: 170,
       // 只读用户不生成这一列：空列头会让人以为按钮丢了。
       render: (_, user) => {
         if (!canWrite) {
@@ -208,7 +208,7 @@ export function AccountsPage(): JSX.Element {
         }
         const isSelf = user.username === me?.username;
         return (
-          <div className="row-actions">
+          <div className="row-actions row-actions-wrap">
             <Link
               className="button button-ghost button-small"
               to={`/admin/accounts/${user.id}/edit`}
@@ -283,8 +283,7 @@ export function AccountsPage(): JSX.Element {
         <div>
           <h1>账号管理</h1>
           <p className="sub">
-            共 {state.total} 个账号
-            {canWrite ? ' · 禁用会立即让该账号的令牌失效' : ' · 当前为只读视图'}
+            {canWrite ? '管理登录账号；禁用会立即让该账号的令牌失效' : '当前为只读视图'}
           </p>
         </div>
         {canWrite ? (
@@ -321,6 +320,9 @@ export function AccountsPage(): JSX.Element {
 
       <div className="card">
         <div className="toolbar">
+          <span className="toolbar-title">账号列表</span>
+          <span className="toolbar-meta">共 {state.total} 个账号</span>
+          <span className="toolbar-spacer" />
           <Input
             className="text-input toolbar-search"
             placeholder="搜索账号或姓名"

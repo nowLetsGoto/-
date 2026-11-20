@@ -41,10 +41,9 @@ type EnvironmentFilter = Environment | typeof ALL_ENVIRONMENTS;
 type PlatformFilter = Platform | typeof ALL_PLATFORMS;
 
 function readEnvironment(value: string | null): EnvironmentFilter {
-  if (value === ALL_ENVIRONMENTS) {
-    return ALL_ENVIRONMENTS;
-  }
-  return ENVIRONMENTS.some((item) => item.value === value) ? (value as Environment) : 'test';
+  return ENVIRONMENTS.some((item) => item.value === value)
+    ? (value as Environment)
+    : ALL_ENVIRONMENTS;
 }
 
 /**
@@ -59,7 +58,7 @@ export function PackagesPage(): JSX.Element {
   const { key, project } = useCurrentProject();
   const { projects } = useProjects();
   const [params, setParams] = useSearchParams();
-  // 环境筛选是本页维度：默认测试，?env=all 才看全部；写回 URL 便于分享当前视图。
+  // 环境筛选是本页维度：默认看全部，显式带 ?env=test/pre... 才收窄；写回 URL 便于分享当前视图。
   const environment = readEnvironment(params.get('env') ?? params.get('environment'));
   const platform = readPlatform(params.get('platform'));
   const navigate = useNavigate();
@@ -220,34 +219,34 @@ export function PackagesPage(): JSX.Element {
         </div>
       </div>
 
-      <div className="page-filters">
-        <div className="filter-group">
-          <span className="filter-label">按环境筛选</span>
-          <Segmented<EnvironmentFilter>
-            aria-label="环境"
-            value={environment}
-            options={[
-              { value: ALL_ENVIRONMENTS, label: '全部' },
-              ...ENVIRONMENTS.map((item) => ({ value: item.value, label: item.label })),
-            ]}
-            onChange={setEnvironment}
-          />
-        </div>
-        <div className="filter-group">
-          <span className="filter-label">按机型筛选</span>
-          <Segmented<PlatformFilter>
-            aria-label="平台"
-            value={platform}
-            options={[
-              { value: ALL_PLATFORMS, label: '全部' },
-              ...PLATFORMS.map((item) => ({ value: item.value, label: item.label })),
-            ]}
-            onChange={setPlatform}
-          />
-        </div>
-      </div>
-
       <div className="card">
+        <div className="page-filters card-filters">
+          <div className="filter-group">
+            <span className="filter-label">按环境筛选</span>
+            <Segmented<EnvironmentFilter>
+              aria-label="环境"
+              value={environment}
+              options={[
+                { value: ALL_ENVIRONMENTS, label: '全部' },
+                ...ENVIRONMENTS.map((item) => ({ value: item.value, label: item.label })),
+              ]}
+              onChange={setEnvironment}
+            />
+          </div>
+          <div className="filter-group">
+            <span className="filter-label">按机型筛选</span>
+            <Segmented<PlatformFilter>
+              aria-label="平台"
+              value={platform}
+              options={[
+                { value: ALL_PLATFORMS, label: '全部' },
+                ...PLATFORMS.map((item) => ({ value: item.value, label: item.label })),
+              ]}
+              onChange={setPlatform}
+            />
+          </div>
+        </div>
+
         {state.error ? (
           <ErrorState message={state.error} onRetry={() => setReloadKey((value) => value + 1)} />
         ) : (

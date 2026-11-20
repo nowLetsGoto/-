@@ -6,11 +6,17 @@
  */
 import type { ReactNode } from 'react';
 import { Button } from './Controls';
+import { Skeleton } from './Skeleton';
 
 export function Loading({ text = '加载中…' }: { text?: string }): JSX.Element {
   return (
-    <div className="state" role="status">
-      <div className="spinner" aria-hidden="true" />
+    <div className="state skeleton-state" role="status">
+      <div className="skeleton-panel" aria-hidden="true">
+        <Skeleton className="skeleton-line skeleton-line-sm" />
+        <Skeleton className="skeleton-line skeleton-line-lg" />
+        <Skeleton className="skeleton-line" />
+        <Skeleton className="skeleton-line skeleton-line-short" />
+      </div>
       <p>{text}</p>
     </div>
   );
