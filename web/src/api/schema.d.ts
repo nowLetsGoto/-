@@ -595,6 +595,70 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/rdc/requirements": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 需求池列表（仅团队模式）
+         * @description 数据范围由登录身份推导的 scope 决定，前端不传 tenant。支持按状态与可选项目 id 筛选、 需求编号 / 标题的 ILIKE 关键字匹配，服务端分页（默认 10、上限 200、0 全量）。
+         */
+        get: operations["listRequirements"];
+        put?: never;
+        /**
+         * 新建需求（仅团队模式）
+         * @description 文本字段（含必填 projectId）与 0..9 张图片一次提交；需求编号由服务端按 REQ-YYYYMMDD-NNN 生成、创建后不可变，归属公司由身份推导，创建动作写入审计日志。 图片格式 / 单张体积 / 数量在前端、handler、service 三层复校。
+         */
+        post: operations["createRequirement"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/rdc/requirements/{reqKey}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 需求详情（仅团队模式）
+         * @description 按需求编号查询；越界或不存在的编号一律返回 404，不泄漏存在性。
+         */
+        get: operations["getRequirement"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/rdc/requirement-attachments/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 需求图片读取（仅团队模式，受保护）
+         * @description 按附件 id 读取原图二进制流。登录 + rdc.requirement.read + team 模式 + 租户范围缺一不可； 跨租户或不存在的附件统一 404，不泄漏存在性。相对路径经 SafeResolve 前缀校验防越界。 前端必须用带 Bearer 的 Blob 请求渲染，裸 img src 会 401。
+         */
+        get: operations["getRequirementAttachment"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/healthz": {
         parameters: {
             query?: never;
@@ -1258,6 +1322,101 @@ export interface components {
         };
         PasswordResetResponse: components["schemas"]["ApiResponse"] & {
             data: components["schemas"]["PasswordReset"];
+        };
+        /**
+         * @description 需求状态；本版只承载字段与筛选，流转逻辑留待后续迭代
+         * @enum {string}
+         */
+        RequirementStatus: "pending_review" | "confirmed" | "in_development" | "pending_acceptance" | "delivered" | "archived";
+        /** @description 需求池的一条记录；需求编号创建后不可变，创建人姓名与项目名由关联投影得到 */
+        Requirement: {
+            /** Format: uuid */
+            id: string;
+            /** @description 用户可见的稳定编号，格式 REQ-YYYYMMDD-NNN */
+            reqKey: string;
+            title: string;
+            description: string;
+            status: components["schemas"]["RequirementStatus"];
+            acceptanceCriteria: string;
+            /**
+             * Format: uuid
+             * @description 所属项目 id；新建必填，V1.0 存量需求为空串
+             */
+            projectId: string;
+            /** @description LEFT JOIN team.projects 的项目名投影；空串表示未归属项目 */
+            projectName: string;
+            /** @description 创建人账号 id（裸文本，不建外键） */
+            creatorUserId: string;
+            /** @description people.name 优先，回落 users.username；无关联时为空串 */
+            creatorName: string;
+            /** Format: date-time */
+            createdAt: string;
+        };
+        /** @description 新建需求的文本字段说明（POST 实际用 multipart，见 RequirementCreateMultipart）；未知字段一律 400 */
+        RequirementInput: {
+            /** @description 必填，1-100 字 */
+            title: string;
+            /** @description 必填，多行文本 */
+            description: string;
+            /** @description 留空由服务端兜底为 pending_review */
+            status?: components["schemas"]["RequirementStatus"];
+            /** @description 选填，多行文本 */
+            acceptanceCriteria?: string;
+            /**
+             * Format: uuid
+             * @description 必填，所属项目 id，须存在且属于当前公司
+             */
+            projectId: string;
+        };
+        /** @description 新建需求的一次性 multipart 请求体；文本字段严格白名单，图片部分名为 images */
+        RequirementCreateMultipart: {
+            title: string;
+            description: string;
+            status?: components["schemas"]["RequirementStatus"];
+            acceptanceCriteria?: string;
+            /**
+             * Format: uuid
+             * @description 必填，所属项目 id，须存在且属于当前公司
+             */
+            projectId: string;
+            images?: string[];
+        };
+        /** @description 需求图片的对外投影；存储相对路径不进响应，读取按附件 id 走受保护接口 */
+        RequirementAttachment: {
+            /** Format: uuid */
+            id: string;
+            /** @description CleanFileName 清洗后的展示名，不参与拼路径 */
+            fileName: string;
+            /** @description 白名单内 MIME */
+            contentType: string;
+            /**
+             * Format: int64
+             * @description 字节数，<= 5MB
+             */
+            fileSize: number;
+            /** Format: date-time */
+            createdAt: string;
+        };
+        RequirementDetail: components["schemas"]["Requirement"] & {
+            /** @description 图片列表；无图片时为 []（存量需求兼容） */
+            attachments: components["schemas"]["RequirementAttachment"][];
+        };
+        RequirementResponse: components["schemas"]["ApiResponse"] & {
+            data: components["schemas"]["Requirement"];
+        };
+        RequirementDetailResponse: components["schemas"]["ApiResponse"] & {
+            data: components["schemas"]["RequirementDetail"];
+        };
+        RequirementListResponse: components["schemas"]["ApiResponse"] & {
+            data: {
+                items: components["schemas"]["Requirement"][];
+                /** @description 总条数 */
+                total: number;
+                /** @description 当前页，从 1 开始 */
+                page: number;
+                /** @description 每页条数；0 表示不分页（全量） */
+                pageSize: number;
+            };
         };
     };
     responses: {
@@ -2739,6 +2898,128 @@ export interface operations {
                 };
             };
             404: components["responses"]["NotFound"];
+        };
+    };
+    listRequirements: {
+        parameters: {
+            query?: {
+                /** @description 页码，从 1 开始；缺省或非法按 1 处理 */
+                page?: components["parameters"]["PageParam"];
+                /** @description 每页条数，默认 10、上限 200；显式传 0 表示不分页（返回全量，供下拉选项与聚合使用） */
+                pageSize?: components["parameters"]["PageSizeParam"];
+                /** @description 按需求状态筛选；留空表示不筛 */
+                status?: components["schemas"]["RequirementStatus"];
+                /** @description 匹配需求编号或标题（ILIKE 模糊匹配） */
+                keyword?: string;
+                /** @description 按所属项目 id 筛选；留空表示不筛。存量无归属需求不匹配该条件 */
+                projectId?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 需求分页列表 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RequirementListResponse"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    createRequirement: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "multipart/form-data": components["schemas"]["RequirementCreateMultipart"];
+            };
+        };
+        responses: {
+            /** @description 创建成功 */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RequirementResponse"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            413: components["responses"]["TooLarge"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    getRequirement: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description 需求编号，格式 REQ-YYYYMMDD-NNN */
+                reqKey: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 需求详情（含项目名与图片附件列表） */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RequirementDetailResponse"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    getRequirementAttachment: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description 附件 id（UUID） */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 图片二进制流 */
+            200: {
+                headers: {
+                    "X-Content-Type-Options"?: string;
+                    "Content-Disposition"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "image/png": string;
+                    "image/jpeg": string;
+                    "image/webp": string;
+                    "image/gif": string;
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["InternalError"];
         };
     };
     health: {

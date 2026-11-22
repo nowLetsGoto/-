@@ -17,6 +17,7 @@ import { Layout } from './components/Layout';
 import { LevelGate } from './components/LevelGate';
 import { PermissionGate } from './components/PermissionGate';
 import { NoProjectYet } from './components/ProjectGate';
+import { TeamModeGate } from './components/TeamModeGate';
 import { ErrorState, Loading } from './components/States';
 import { recentProjectKey, useProjects } from './hooks/useProjects';
 import { useMe } from './hooks/useMe';
@@ -81,6 +82,22 @@ const TenantsPage = lazy(() =>
 );
 const TenantFormPage = lazy(() =>
   import('./pages/admin/TenantFormPage').then((m) => ({ default: m.TenantFormPage })),
+);
+// 研发中心：5 条路由对应 5 个页面组件；3 个骨架页共用的 RdcPlaceholderPage 是被它们静态引入的内部组件。
+const RequirementsPage = lazy(() =>
+  import('./pages/rdc/RequirementsPage').then((m) => ({ default: m.RequirementsPage })),
+);
+const RequirementFormPage = lazy(() =>
+  import('./pages/rdc/RequirementFormPage').then((m) => ({ default: m.RequirementFormPage })),
+);
+const DevCenterPage = lazy(() =>
+  import('./pages/rdc/DevCenterPage').then((m) => ({ default: m.DevCenterPage })),
+);
+const ReviewCenterPage = lazy(() =>
+  import('./pages/rdc/ReviewCenterPage').then((m) => ({ default: m.ReviewCenterPage })),
+);
+const DeliveryCenterPage = lazy(() =>
+  import('./pages/rdc/DeliveryCenterPage').then((m) => ({ default: m.DeliveryCenterPage })),
 );
 
 /**
@@ -335,6 +352,59 @@ export function App(): JSX.Element {
               <AdminGate>
                 <TenantFormPage />
               </AdminGate>
+            }
+          />
+
+          {/* 研发中心（仅团队模式）：TeamModeGate 在外先挡模式，PermissionGate 在内再挡权限。
+              新建路由用独立的写点 rdc.requirement.write，勾选菜单不会自动获得。 */}
+          <Route
+            path="/rdc/requirements"
+            element={
+              <TeamModeGate>
+                <PermissionGate permission="rdc.requirement.read">
+                  <RequirementsPage />
+                </PermissionGate>
+              </TeamModeGate>
+            }
+          />
+          <Route
+            path="/rdc/requirements/new"
+            element={
+              <TeamModeGate>
+                <PermissionGate permission="rdc.requirement.write">
+                  <RequirementFormPage />
+                </PermissionGate>
+              </TeamModeGate>
+            }
+          />
+          <Route
+            path="/rdc/dev"
+            element={
+              <TeamModeGate>
+                <PermissionGate permission="rdc.dev.read">
+                  <DevCenterPage />
+                </PermissionGate>
+              </TeamModeGate>
+            }
+          />
+          <Route
+            path="/rdc/review"
+            element={
+              <TeamModeGate>
+                <PermissionGate permission="rdc.review.read">
+                  <ReviewCenterPage />
+                </PermissionGate>
+              </TeamModeGate>
+            }
+          />
+          <Route
+            path="/rdc/delivery"
+            element={
+              <TeamModeGate>
+                <PermissionGate permission="rdc.delivery.read">
+                  <DeliveryCenterPage />
+                </PermissionGate>
+              </TeamModeGate>
             }
           />
         </Route>

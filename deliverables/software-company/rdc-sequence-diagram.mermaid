@@ -1,0 +1,42 @@
+%% Dandelion 研发中心（RDC）增量 · 创建需求完整调用链
+%% 提取自 deliverables/software-company/rdc-design.md §4
+%% 职责：展示前端 → 权限中间件 → handler → service → repository → DB → 审计的链路。
+%% 输入：team 模式用户提交的新建需求表单。
+%% 输出：含 reqKey 的需求记录 + 一条审计日志 + 201 统一响应。
+%% 边界：只画创建链路；列表/详情同构，见设计文档 §4 文字说明。
+sequenceDiagram
+    actor U as 用户(team 模式)
+    participant FE as RequirementsPage / api/rdc.ts
+    participant MW as chi 中间件链
+    participant H as handler/rdc.Create
+    participant S as service/rdc.Create
+    participant R as repository/rdc.Create
+    participant DB as PostgreSQL(team schema)
+    participant A as service/audit.Record
+
+    U->>FE: 填写标题/描述/状态/验收标准，点保存
+    Note over FE: 按钮已由 can(me,'rdc.requirement.write') 控制显示
+    FE->>MW: POST /api/v1/rdc/requirements<br/>{title,description,status,acceptanceCriteria}
+    MW->>MW: RequireAuth 解析令牌 → Identity 注入 ctx
+    MW->>MW: InjectScope 推导 Scope 注入 ctx
+    MW->>MW: RequireTeamMode：非 team → 403，拦截
+    MW->>MW: RequirePermission(rdc.requirement.write)：无 → 403，拦截
+    MW->>H: middleware.Wrap 调用 handler
+    H->>H: DecodeJSON 严格 4 字段（未知字段 400）<br/>取 caller / scope / ClientIP
+    H->>S: Create(ctx, caller, scope, in)
+    S->>S: 校验标题必填≤100、描述必填、状态枚举合法<br/>status 空 → pending_review；day = UTC 20060102
+    S->>R: Create(ctx, norm, caller.UserID, scope.TenantID, day)
+    R->>DB: BEGIN
+    R->>DB: INSERT INTO team.rdc_req_key_sequences(day,next_seq)<br/>VALUES ($1,1) ON CONFLICT(day)<br/>DO UPDATE SET next_seq=next_seq+1 RETURNING next_seq
+    DB-->>R: seq（并发安全，数据库原子递增）
+    R->>R: reqKey = contract.FormatReqKey(day, seq)
+    R->>DB: INSERT INTO team.rdc_requirements<br/>(req_key,title,description,status,acceptance_criteria,creator_user_id,tenant_id)<br/>VALUES (...) RETURNING id,created_at
+    R->>DB: LEFT JOIN users/people 取 creator_name<br/>（同一事务内 SELECT）
+    R->>DB: COMMIT
+    R-->>S: Requirement（含 reqKey / creatorName）
+    S-->>H: Requirement
+    H->>A: Record(ctx, caller, 'rdc.requirement.created',<br/>'rdc_requirement', reqKey, {title,status}, ip)
+    A->>DB: INSERT INTO team.audit_logs<br/>(actor_id,actor_name,action,object_type,object_id,result,detail,ip,tenant_id)
+    Note over A,DB: 审计落 team 分区（actor.Mode=team）；<br/>写失败只记日志，绝不回滚需求创建
+    H-->>FE: 201 {code:0, data:Requirement, message:'ok'}
+    FE->>U: 回到列表并提示生成的 reqKey

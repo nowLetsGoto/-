@@ -32,6 +32,7 @@ import (
 	"dandelion/server/internal/handler/openapi"
 	peoplehandler "dandelion/server/internal/handler/people"
 	projecthandler "dandelion/server/internal/handler/project"
+	rdchandler "dandelion/server/internal/handler/rdc"
 	rolehandler "dandelion/server/internal/handler/role"
 	settingshandler "dandelion/server/internal/handler/settings"
 	teamshandler "dandelion/server/internal/handler/teams"
@@ -41,6 +42,7 @@ import (
 	auditrepo "dandelion/server/internal/repository/audit"
 	peopleRepo "dandelion/server/internal/repository/people"
 	projectrepo "dandelion/server/internal/repository/project"
+	rdcrepo "dandelion/server/internal/repository/rdc"
 	rolerepo "dandelion/server/internal/repository/role"
 	settingsrepo "dandelion/server/internal/repository/settings"
 	teamsRepo "dandelion/server/internal/repository/teams"
@@ -52,6 +54,7 @@ import (
 	loginsvc "dandelion/server/internal/service/login"
 	peoplesvc "dandelion/server/internal/service/people"
 	projectsvc "dandelion/server/internal/service/project"
+	rdcsvc "dandelion/server/internal/service/rdc"
 	rolesvc "dandelion/server/internal/service/role"
 	settingssvc "dandelion/server/internal/service/settings"
 	teamssvc "dandelion/server/internal/service/teams"
@@ -158,6 +161,13 @@ func run() error {
 	auditRepos := auditrepo.NewPartitioned(db)
 	auditService := auditsvc.NewService(auditRepos)
 
+	// 研发中心需求池：仓储固定绑定 team 分区，不为 solo 装配第二份；
+	// 模式边界由路由的 RequireTeamMode 承担，创建审计复用同一个 auditService。
+	// 项目校验器只取 team 分区的仓储：需求归属的是 team.projects，跨公司由 scope 过滤兜住。
+	rdcRepository := rdcrepo.NewRepository(db)
+	rdcService := rdcsvc.NewService(rdcRepository, projectRepos.For(contract.ModeTeam), paths)
+	rdcHandler := rdchandler.NewHandler(rdcService, auditService, paths)
+
 	// 删账号要顺带清掉它在单人分区的项目与文件，因此账号服务依赖清理器与存储路径。
 	// teams 仓储用于校验团队管理员的团队归属，防止跨公司/跨团队授权；
 	// authzService 用于校验「调用者有没有资格分配这个角色」（非超管拿不到 super-admin）。
@@ -199,6 +209,7 @@ func run() error {
 		Roles:    roleHandler,
 		Authz:    authzService,
 		Settings: settingsHandler,
+		RDC:      rdcHandler,
 		Verify:   loginService.Verify,
 		APIKey:   settingsService.APIKeyByRequest,
 		Health:   health,

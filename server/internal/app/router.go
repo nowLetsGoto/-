@@ -26,6 +26,7 @@ import (
 	"dandelion/server/internal/handler/openapi"
 	peoplehandler "dandelion/server/internal/handler/people"
 	projecthandler "dandelion/server/internal/handler/project"
+	rdchandler "dandelion/server/internal/handler/rdc"
 	rolehandler "dandelion/server/internal/handler/role"
 	settingshandler "dandelion/server/internal/handler/settings"
 	teamshandler "dandelion/server/internal/handler/teams"
@@ -50,11 +51,13 @@ type Deps struct {
 	Audit    *audithandler.Handler
 	Roles    *rolehandler.Handler
 	// Authz 提供权限判定，路由层用它给每个接口挂上所需权限点
-	Authz   *authzsvc.Service
-	Teams   *teamshandler.Handler
-	Tenants *tenanthandler.Handler
+	Authz    *authzsvc.Service
+	Teams    *teamshandler.Handler
+	Tenants  *tenanthandler.Handler
 	Settings *settingshandler.Handler
-	Verify   loginmw.Verifier
+	// RDC 是研发中心需求池的入口，只在 team 专区注册（solo 会话被中间件挡在门外）。
+	RDC    *rdchandler.Handler
+	Verify loginmw.Verifier
 	// APIKey 每次请求查一次库反查归属公司（空串=平台兜底 Key），改配置无需重启。
 	APIKey   apikey.KeyResolver
 	Health   *handler.HealthHandler
@@ -65,23 +68,27 @@ type Deps struct {
 // chi 的默认 405 处理器会自动回填 Allow 头；一旦自定义 MethodNotAllowed 就必须自己补，
 // 否则响应缺少 Allow，与契约 §6.1 的「405 + Allow + JSON 外壳」不一致。
 var allowedMethods = map[string]string{
-	contract.RouteLogin:        "POST",
-	contract.RouteMe:           "GET",
-	contract.RouteMePassword:   "PUT",
-	contract.RouteProjects:     "GET, POST",
-	contract.RouteProjectByKey: "GET, PUT",
-	contract.RoutePeople:       "GET, POST",
-	contract.RoutePersonByID:   "GET, PUT",
-	contract.RouteTeams:        "GET, POST",
-	contract.RouteTeamByID:     "GET, PUT",
-	contract.RouteOpenBuilds:   "POST",
-	contract.RouteSettings:     "GET, PUT",
-	contract.RouteWebhookTest:  "POST",
-	contract.RouteBuilds:       "GET, POST",
-	contract.RouteStage:        "POST",
-	contract.RouteBuildByID:    "GET",
-	contract.RouteBuildVersions: "GET",
-	contract.RouteBuildFile:    "GET",
+	contract.RouteLogin:               "POST",
+	contract.RouteMe:                  "GET",
+	contract.RouteMePassword:          "PUT",
+	contract.RouteProjects:            "GET, POST",
+	contract.RouteProjectByKey:        "GET, PUT",
+	contract.RoutePeople:              "GET, POST",
+	contract.RoutePersonByID:          "GET, PUT",
+	contract.RouteTeams:               "GET, POST",
+	contract.RouteTeamByID:            "GET, PUT",
+	contract.RouteOpenBuilds:          "POST",
+	contract.RouteSettings:            "GET, PUT",
+	contract.RouteWebhookTest:         "POST",
+	contract.RouteBuilds:              "GET, POST",
+	contract.RouteStage:               "POST",
+	contract.RouteBuildByID:           "GET",
+	contract.RouteBuildVersions:       "GET",
+	contract.RouteBuildFile:           "GET",
+	contract.RouteRDCRequirements:     "GET, POST",
+	contract.RouteRDCRequirementByKey: "GET",
+	// 需求图片访问是受保护的只读接口，走与需求详情相同的读权限点。
+	contract.RouteRDCRequirementAttachment: "GET",
 }
 
 // allowedMethodsFor 返回该请求应回填的 Allow 值。
@@ -118,6 +125,13 @@ func allowedMethodsFor(req *http.Request) string {
 		return "GET, POST"
 	case path == contract.RouteStage:
 		return "POST"
+	case path == contract.RouteRDCRequirements:
+		return "GET, POST"
+	case strings.HasPrefix(path, strings.TrimSuffix(contract.RouteRDCRequirementAttachment, "{id}")):
+		return "GET"
+	case strings.HasPrefix(path, contract.RouteRDCRequirements+"/"):
+		// /rdc/requirements/{reqKey} 只支持 GET；带斜杠的子路径一律按详情处理。
+		return "GET"
 	case strings.HasPrefix(path, contract.RouteBuilds+"/"):
 		return "GET"
 	default:
@@ -277,6 +291,24 @@ func NewRouter(d Deps) http.Handler {
 				Put("/roles/{id}", middleware.Wrap(d.Roles.Update))
 			roles.With(authzmw.RequirePermission(d.Authz, contract.PermissionRoleDelete)).
 				Delete("/roles/{id}", middleware.Wrap(d.Roles.Delete))
+		})
+
+		// 研发中心需求池（仅 team）：RequireTeamMode 是真正的模式边界，
+		// 读接口守 rdc.requirement.read、写接口守独立的 rdc.requirement.write。
+		// 数据范围由 InjectScope 写入上下文，仓储只查 team 分区并按 scope 过滤。
+		api.Group(func(rdc chi.Router) {
+			rdc.Use(loginmw.RequireAuth(d.Verify))
+			rdc.Use(loginmw.InjectScope(d.Authz))
+			rdc.Use(authzmw.RequireTeamMode)
+			rdc.With(authzmw.RequirePermission(d.Authz, contract.PermissionRDCRequirementRead)).
+				Get("/rdc/requirements", middleware.Wrap(d.RDC.List))
+			rdc.With(authzmw.RequirePermission(d.Authz, contract.PermissionRDCRequirementRead)).
+				Get("/rdc/requirements/{reqKey}", middleware.Wrap(d.RDC.Get))
+			// 图片读取仍守读权限点，不是公开接口；越界与不存在一律 404（service + 仓储兜底）。
+			rdc.With(authzmw.RequirePermission(d.Authz, contract.PermissionRDCRequirementRead)).
+				Get("/rdc/requirement-attachments/{id}", middleware.Wrap(d.RDC.Attachment))
+			rdc.With(authzmw.RequirePermission(d.Authz, contract.PermissionRDCRequirementWrite)).
+				Post("/rdc/requirements", middleware.Wrap(d.RDC.Create))
 		})
 	})
 	r.Get(contract.RouteHealth, middleware.Wrap(d.Health.Health))

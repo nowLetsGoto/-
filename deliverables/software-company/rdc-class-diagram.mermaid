@@ -1,0 +1,99 @@
+%% Dandelion 研发中心（RDC）增量 · 数据结构类图
+%% 提取自 deliverables/software-company/rdc-design.md §3.5
+%% 职责：描述新增 DTO / 仓储 / 服务 / handler 与既有权限结构的关系。
+%% 输入：PRD 字段定义 + 现有 contract / repository / service / handler 分层约定。
+%% 输出：类与关系的可视化定义，供实现期对照。
+%% 边界：只含本增量新增/修改的关键类型，不展开既有全仓模型。
+classDiagram
+    class Requirement {
+        +string ID
+        +string ReqKey
+        +string Title
+        +string Description
+        +string Status
+        +string AcceptanceCriteria
+        +string CreatorUserID
+        +string CreatorName
+        +string CreatedAt
+    }
+    class RequirementInput {
+        +string Title
+        +string Description
+        +string Status
+        +string AcceptanceCriteria
+    }
+    class RequirementQuery {
+        +PageQuery Page
+        +string Status
+        +string Keyword
+    }
+    class RequirementList {
+        +Requirement[] Items
+        +int Page
+        +int PageSize
+        +int Total
+    }
+    class RequirementRepository {
+        -sql.DB db
+        -Partition partition
+        +Create(ctx, in, creatorUserID, tenantID, day) Requirement
+        +List(ctx, query, scope) RequirementList
+        +FindByReqKey(ctx, reqKey, scope) Requirement
+        -allocateSeq(tx, day) int
+    }
+    class RequirementService {
+        -RequirementRepository repo
+        +Create(ctx, caller, scope, in) Requirement
+        +List(ctx, query, scope) RequirementList
+        +Get(ctx, reqKey, scope) Requirement
+        -normalize(in) RequirementInput
+    }
+    class RequirementHandler {
+        -RequirementService svc
+        -AuditService audit
+        +List(w, r) error
+        +Create(w, r) error
+        +Get(w, r) error
+    }
+    class AuditService {
+        +Record(ctx, actor, action, objectType, objectID, detail, ip) void
+    }
+    class Menu {
+        +string Key
+        +string Label
+        +string Group
+        +string ViewPermission
+        +MenuAction[] Actions
+        +bool AutoGrantBuiltin
+    }
+    class Permission {
+        +string Key
+        +string Group
+        +string Label
+    }
+    class RoleReconciler {
+        +ReconcileBuiltinMenus(ctx) error
+        +BackfillViewPermissions(ctx) error
+    }
+    class Identity {
+        +string UserID
+        +string TenantID
+        +SessionMode Mode
+        +bool IsSuperAdmin
+    }
+    class Scope {
+        +bool All
+        +string TenantID
+        +bool TeamScoped
+    }
+
+    RequirementRepository ..> Requirement : maps rows
+    RequirementRepository ..> RequirementList : returns
+    RequirementService --> RequirementRepository : depends
+    RequirementService ..> RequirementInput : validates
+    RequirementService ..> Identity : reads creator
+    RequirementService ..> Scope : tenant isolation
+    RequirementHandler --> RequirementService : calls
+    RequirementHandler --> AuditService : records create
+    Menu "1" o-- "0..*" Permission : ViewPermission+Actions
+    RoleReconciler ..> Menu : uses DefaultMenuKeys

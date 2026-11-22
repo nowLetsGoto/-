@@ -286,10 +286,16 @@ CREATE TABLE IF NOT EXISTS roles (
   -- key 只在本公司内唯一（见下方 idx_roles_tenant_key）；内置角色也归属本公司，
   -- 因此同公司内 developer 与自定义 developer 互斥，跨公司可重名。
   --
-  -- 建表时**不能**写 UNIQUE：roles.key 曾是 people/projects 的外键目标，
-  -- 老库里那两个外键还挂着，删约束会被依赖挡住。旧约束的清理放在 people /
-  -- team.projects 两段里（那里先删外键，再删本约束）。
-  key         TEXT        NOT NULL,
+  -- 建表时临时加单列 UNIQUE：people.role_key 外键在下方 CREATE TABLE people 里就要引用
+  -- roles.key，PostgreSQL 要求被引列有单列唯一约束，而下方 idx_roles_tenant_key 的
+  -- 复合表达式索引 (coalesce(tenant_id,零), key) 不能被外键引用，且那时还没建。空库若没有这个约束，
+  -- 建 people 会直接报 42830（既有 bug）。
+  --
+  -- 这个单列约束只是"过桥"：所有引用 roles.key 的旧外键（people.role_key /
+  -- team.projects.role_key / solo.projects.role_key）在下文中陆续删除，随后
+  -- ALTER TABLE roles DROP CONSTRAINT IF EXISTS roles_key_key 把它清掉，
+  -- 终态只剩租户内复合唯一索引——与存量库一致。
+  key         TEXT        NOT NULL UNIQUE,
   name        TEXT        NOT NULL,
   description TEXT        NOT NULL DEFAULT '',
   is_builtin  BOOLEAN     NOT NULL DEFAULT false,
@@ -550,3 +556,63 @@ ALTER TABLE solo.projects DROP COLUMN IF EXISTS role_key;
 -- DROP INDEX 对约束无效，两种形态都清。
 ALTER TABLE roles DROP CONSTRAINT IF EXISTS roles_key_key;
 DROP INDEX IF EXISTS roles_key_key;
+
+-- ---------------------------------------------------------------------------
+-- 六 · 研发中心（团队专属，不进 FOREACH 循环）
+-- 只在 team 模式提供服务：RequireTeamMode 是边界，不为用不到的 solo 造表。
+-- 与 project_members / team.audit_logs.tenant_id 等同属"团队专属"先例。
+-- ---------------------------------------------------------------------------
+
+-- 需求池主表。req_key 是用户可见的稳定编号，UNIQUE 兜底并发分配；
+-- creator_user_id 沿用裸 TEXT 惯例（不加 users 外键，账号删除后历史需求仍可读）；
+-- tenant_id 提供公司隔离；status 不加 CHECK（枚举唯一来源是 api/openapi.yaml）。
+CREATE TABLE IF NOT EXISTS team.rdc_requirements (
+  id                  UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+  req_key             TEXT        NOT NULL UNIQUE,
+  title               TEXT        NOT NULL,
+  description         TEXT        NOT NULL DEFAULT '',
+  status              TEXT        NOT NULL DEFAULT 'pending_review',
+  acceptance_criteria TEXT        NOT NULL DEFAULT '',
+  creator_user_id     TEXT        NOT NULL DEFAULT '',
+  tenant_id           UUID        REFERENCES tenants(id),
+  created_at          TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- 列表查询形态：租户 + 状态筛选 + 时间倒序；关键字用 ILIKE 另走全扫兜底（数据量小）。
+CREATE INDEX IF NOT EXISTS idx_rdc_requirements_tenant_status_created
+  ON team.rdc_requirements (tenant_id, status, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_rdc_requirements_creator
+  ON team.rdc_requirements (creator_user_id, created_at DESC);
+
+-- 增量 1：需求归属项目。可空以兼容 V1.0 存量（存量行显示"未归属项目"）；
+-- ON DELETE SET NULL 让项目删除后需求自动降级，不产生悬挂外键、也无需改项目删除逻辑。
+-- 新写入一律必填，校验放在 service（不放 DB 约束，避免存量行违反约束）。
+ALTER TABLE team.rdc_requirements
+  ADD COLUMN IF NOT EXISTS project_id UUID REFERENCES team.projects(id) ON DELETE SET NULL;
+
+-- 列表筛选形态：租户 + 项目 + 时间倒序。
+CREATE INDEX IF NOT EXISTS idx_rdc_requirements_tenant_project_created
+  ON team.rdc_requirements (tenant_id, project_id, created_at DESC);
+
+-- 增量 2：需求图片附件（一需求多图）。仅图片类型；relative_path 由 storage 包生成，
+-- 本表只存字符串，读取时经 SafeResolve 前缀校验。FK 级联保证删需求即清附件行。
+CREATE TABLE IF NOT EXISTS team.rdc_requirement_attachment (
+  id             UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+  requirement_id UUID        NOT NULL REFERENCES team.rdc_requirements(id) ON DELETE CASCADE,
+  file_name      TEXT        NOT NULL,           -- CleanFileName 清洗后的展示名，不参与拼路径
+  content_type   TEXT        NOT NULL,           -- 白名单内 MIME
+  file_size      BIGINT      NOT NULL,           -- <= 5MB
+  relative_path  TEXT        NOT NULL,           -- rdc/requirements/{attID}.{ext}
+  created_at     TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_rdc_requirement_attachment_req
+  ON team.rdc_requirement_attachment (requirement_id, created_at);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_rdc_requirement_attachment_path
+  ON team.rdc_requirement_attachment (relative_path);
+
+-- 按日序号计数器：一行一天，序号分配的唯一来源。
+-- UPSERT ... RETURNING 是并发安全的；事务回滚时计数一并回滚（允许复用，不承诺无空洞）。
+CREATE TABLE IF NOT EXISTS team.rdc_req_key_sequences (
+  day      DATE    PRIMARY KEY,
+  next_seq INTEGER NOT NULL DEFAULT 1
+);

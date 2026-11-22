@@ -1,12 +1,14 @@
 /**
  * 展示层格式化与契约枚举的展示镜像。
- * 职责：字节 / 时间格式化，环境与平台的中文标签、文件扩展名预检，登录模式的标签与说明。
+ * 职责：字节 / 时间格式化，环境与平台的中文标签、文件扩展名预检，登录模式的标签与说明，
+ *       需求状态/项目名/图片约束的展示文案。
  * 输入：原始数值、ISO UTC 字符串、契约枚举值、文件名。
  * 输出：可直接上屏的字符串与选项数组。
  * 边界：标签键集合由契约生成的 Environment / Platform 类型约束，改枚举时这里会编译报错；
  *       不生成任何 URL、不发请求。
  */
 import type { Environment, Platform } from '../api/builds';
+import type { RequirementStatus } from '../api/rdc';
 import type { SessionMode } from '../api/session';
 
 export interface Option<T extends string> {
@@ -62,6 +64,52 @@ export function modeLabel(value: string): string {
 
 export function platformLabel(value: string): string {
   return PLATFORMS.find((item) => item.value === value)?.label ?? value;
+}
+
+/**
+ * 需求状态的中文标签，键集合由契约生成的 RequirementStatus 约束：
+ * 契约新增/删除枚举值时这里会编译报错，避免出现"有状态却没有中文名"的裸值。
+ */
+export const REQUIREMENT_STATUS_LABELS: Record<RequirementStatus, string> = {
+  pending_review: '待评审',
+  confirmed: '已确认',
+  in_development: '研发中',
+  pending_acceptance: '待验收',
+  delivered: '已交付',
+  archived: '已归档',
+};
+
+/** 状态筛选项：全部 + 契约里的每个状态，供 Segmented 与表单下拉共用一份顺序。 */
+export const REQUIREMENT_STATUS_OPTIONS: ReadonlyArray<Option<RequirementStatus>> = [
+  { value: 'pending_review', label: '待评审' },
+  { value: 'confirmed', label: '已确认' },
+  { value: 'in_development', label: '研发中' },
+  { value: 'pending_acceptance', label: '待验收' },
+  { value: 'delivered', label: '已交付' },
+  { value: 'archived', label: '已归档' },
+];
+
+/** V1.0 存量需求没有归属项目，列表列与详情统一显示这个文案，不回显空串。 */
+export const UNASSIGNED_PROJECT_LABEL = '未归属项目';
+
+/** 项目名展示的唯一入口：空串（未归属或项目已删除）都降级为统一文案。 */
+export function projectLabel(projectName: string): string {
+  return projectName || UNASSIGNED_PROJECT_LABEL;
+}
+
+/**
+ * 需求图片约束的中文提示，与后端 contract / 前端 rdcUpload.ts 的常量一一对应。
+ * 文案集中在这里，列表、表单与详情抽屉不会出现三种说法。
+ */
+export const RDC_IMAGE_ERRORS = {
+  format: '图片仅支持 png / jpg / jpeg / webp / gif 格式',
+  size: '单张图片不能超过 5MB',
+  count: '每个需求最多上传 9 张图片',
+} as const;
+
+/** 服务端返回的历史状态或空值时兜底回显原值/未知，不渲染出空标签。 */
+export function requirementStatusLabel(value: string): string {
+  return REQUIREMENT_STATUS_LABELS[value as RequirementStatus] ?? (value || '未知');
 }
 
 /**

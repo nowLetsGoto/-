@@ -3,6 +3,7 @@
  * 职责：一次取回项目列表并缓存；从 URL 的 /p/:key 解析当前项目；记住最近访问的项目；
  *       识别「链接里的项目不存在」供骨架层做友好降级。
  * 输入：react-router 的当前路径；输出：projects / current / loading / error / notFound / empty。
+ *       current（useCurrentProject）原样透传列表的 error 与 reload，避免请求失败被误判成「还没有项目」。
  * 边界：不发其他请求、不写业务状态；最近访问只存 key，存的是"上次看的项目"这件事本身；
  *       notFound / empty 只是「列表已就绪但仍然解析不出项目」的事实，不负责展示与跳转
  *       （那是 components/ProjectGate 的事）。
@@ -139,6 +140,17 @@ interface CurrentProject {
   /** 项目列表是否仍在加载。ProjectGate 用它决定"先别渲染 children"，避免用未验证的 key 发请求。 */
   loading: boolean;
   /**
+   * 列表请求失败的错误文案（来自 useProjects.error）。
+   * 请求失败时列表为空、loading 已结束，若不透传就会被当成 notFound + empty，
+   * 误导用户「还没有项目」；ProjectGate 据此优先渲染 ErrorState。
+   */
+  error: string;
+  /**
+   * 重新拉取项目列表。必须与 error 取自同一个 useProjects 实例，
+   * 才能在点重试后让这里的 loading / error / notFound 一起复位，避免"点了没反应"。
+   */
+  reload: () => void;
+  /**
    * 列表已就绪、却按 key 解析不出项目。两种成因：
    * ① 一个项目都没有（首次使用，地址里的 key 必然是失效的）；
    * ② 有项目但都不叫这个 key（被删或改名）。
@@ -152,7 +164,9 @@ interface CurrentProject {
 /** 当前项目的完整信息；侧栏切换器、顶栏面包屑与 ProjectGate 都用它。 */
 export function useCurrentProject(): CurrentProject {
   const key = useProjectKey();
-  const { projects, loading } = useProjects();
+  // error 与 reload 必须取自同一个 useProjects 实例：若另起一个实例拿 reload，
+  // 点重试只会刷新那个实例，这里的 error 永远清不掉（表现为"重试没反应"）。
+  const { projects, loading, error, reload } = useProjects();
 
   const project = projects.find((item) => item.key === key) ?? null;
   // 首屏还在加载时列表为空，此时不能判定"不存在"，否则会先闪一下错误再跳回来。
@@ -173,7 +187,7 @@ export function useCurrentProject(): CurrentProject {
     }
   }, [resolvedKey]);
 
-  return { key, project, loading, notFound, empty };
+  return { key, project, loading, error, reload, notFound, empty };
 }
 
 /**

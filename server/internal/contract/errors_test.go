@@ -1,6 +1,8 @@
 // errors_test.go · 资源缺失错误的文案与判定。
 // 职责：钉住「一处定义、两处生效」——NotFound(resource) 既生成准确文案，
-//       又能被所有既有的 errors.Is(err, ErrNotFound) 判断识别。
+//
+//	又能被所有既有的 errors.Is(err, ErrNotFound) 判断识别。
+//
 // 输入：contract 的错误构造函数；输出：文案断言与 errors.Is 断言。
 // 边界：纯值测试，不碰 handler、不连数据库。
 package contract
@@ -108,6 +110,55 @@ func TestAllMenuKeysMatchesCatalog(t *testing.T) {
 		}
 		if !IsValidMenu(menu.Key) {
 			t.Fatalf("目录里的 %q 应通过合法性校验", menu.Key)
+		}
+	}
+}
+
+// TestRDCMenusAreLegalButNotAutoGranted 钉住研发中心菜单的授权基线。
+// 4 个菜单必须是合法的可授权项（管理员能勾选），但默认不进内置角色的自动授权集合
+// （默认不含 RDC）；缺任一半都会破坏"按需授权"的安全模型。
+func TestRDCMenusAreLegalButNotAutoGranted(t *testing.T) {
+	rdc := []string{"/rdc/requirements", "/rdc/dev", "/rdc/review", "/rdc/delivery"}
+	defaults := make(map[string]struct{})
+	for _, key := range DefaultMenuKeys() {
+		defaults[key] = struct{}{}
+	}
+	for _, key := range rdc {
+		if !IsValidMenu(key) {
+			t.Fatalf("研发中心菜单 %q 应是合法可授权项", key)
+		}
+		if _, ok := defaults[key]; ok {
+			t.Fatalf("研发中心菜单 %q 默认不应授予内置角色", key)
+		}
+	}
+	// AllMenuKeys 语义不变：仍含全部菜单（超管全量 / 新建角色默认全量）。
+	all := make(map[string]struct{})
+	for _, key := range AllMenuKeys() {
+		all[key] = struct{}{}
+	}
+	for _, key := range rdc {
+		if _, ok := all[key]; !ok {
+			t.Fatalf("AllMenuKeys 应包含 %q（语义保持不变）", key)
+		}
+	}
+}
+
+// TestDefaultMenuKeysKeepsLegacyBaseline 保证既有菜单仍默认自动授予，
+// 避免引入 AutoGrantBuiltin 时不小心把老菜单也排除在内置角色之外。
+func TestDefaultMenuKeysKeepsLegacyBaseline(t *testing.T) {
+	if len(DefaultMenuKeys()) != len(Menus)-4 {
+		t.Fatalf("默认菜单应为目录减去 4 个研发中心菜单：期望 %d，实际 %d",
+			len(Menus)-4, len(DefaultMenuKeys()))
+	}
+	for _, menu := range Menus {
+		if menu.Group == "研发中心" {
+			if menu.AutoGrantBuiltin {
+				t.Fatalf("研发中心菜单 %q 不应自动授予内置角色", menu.Key)
+			}
+			continue
+		}
+		if !menu.AutoGrantBuiltin {
+			t.Fatalf("既有菜单 %q 应保持 AutoGrantBuiltin=true", menu.Key)
 		}
 	}
 }

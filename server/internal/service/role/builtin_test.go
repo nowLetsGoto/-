@@ -7,6 +7,7 @@
 package role
 
 import (
+	"strings"
 	"testing"
 
 	"dandelion/server/internal/contract"
@@ -56,6 +57,29 @@ func TestBuiltinRolesAssignOnlySelectablePermissions(t *testing.T) {
 		for _, permission := range definition.Permissions {
 			if !contract.IsValidPermission(permission) {
 				t.Fatalf("内置角色 %q 含不可勾选的管理权限点 %q", definition.Key, permission)
+			}
+		}
+	}
+}
+
+// TestBuiltinRolesContainNoRDCPermissions 钉住 D6：4 个内置角色的默认权限完全不含 RDC 点。
+// 研发中心必须由管理员在角色管理里显式勾选菜单授权，不能随内置角色下发；
+// 双重判据（白名单 + 前缀）保证将来新增 RDC 点时忘记更新清单也会被拦住。
+func TestBuiltinRolesContainNoRDCPermissions(t *testing.T) {
+	rdcPermissions := map[string]struct{}{
+		contract.PermissionRDCRequirementRead:  {},
+		contract.PermissionRDCRequirementWrite: {},
+		contract.PermissionRDCDevRead:          {},
+		contract.PermissionRDCReviewRead:       {},
+		contract.PermissionRDCDeliveryRead:     {},
+	}
+	for _, definition := range builtinRoles {
+		for _, permission := range definition.Permissions {
+			if _, ok := rdcPermissions[permission]; ok {
+				t.Fatalf("内置角色 %q 默认不应含 RDC 权限点 %q", definition.Key, permission)
+			}
+			if strings.HasPrefix(permission, "rdc.") {
+				t.Fatalf("内置角色 %q 出现未登记的 RDC 权限点 %q", definition.Key, permission)
 			}
 		}
 	}

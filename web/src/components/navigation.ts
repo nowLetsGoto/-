@@ -16,6 +16,11 @@ export interface NavItem {
   icon: IconName;
   /** project：跟随项目切换；platform：全平台唯一 */
   scope: 'project' | 'platform';
+  /**
+   * V1.0 研发中心 4 项携带的历史标记，当前没有任何读取方；
+   * 保留为可选字段以免删改菜单项本身，仅用于让类型检查与既有配置一致。
+   */
+  envScoped?: boolean;
   /** 进入该页面需要的权限点；缺省表示不限（只要求登录）。前端仅做隐藏，服务端另有判定。 */
   permission?: string;
   /**
@@ -125,6 +130,46 @@ export const NAV_SECTIONS: ReadonlyArray<NavSection> = [
         scope: 'project',
       },
       { label: '应用', path: '/apps', permission: 'build.read', icon: 'apps', scope: 'project' },
+    ],
+  },
+  {
+    // 研发中心：与「分发」平级的一级分组，只在团队模式下由角色菜单授权显示；
+    // solo 白名单不含这些路径（见 Sidebar），后端 RequireTeamMode 是真正的边界。
+    // path / permission 与 contract.Menus 的 4 项逐条一致。
+    title: '研发中心',
+    items: [
+      {
+        label: '需求中心',
+        path: '/rdc/requirements',
+        permission: 'rdc.requirement.read',
+        icon: 'requirement',
+        scope: 'platform',
+        envScoped: false,
+      },
+      {
+        label: 'AI研发中心',
+        path: '/rdc/dev',
+        permission: 'rdc.dev.read',
+        icon: 'dev',
+        scope: 'platform',
+        envScoped: false,
+      },
+      {
+        label: '人工审核中心',
+        path: '/rdc/review',
+        permission: 'rdc.review.read',
+        icon: 'review',
+        scope: 'platform',
+        envScoped: false,
+      },
+      {
+        label: '需求交付中心',
+        path: '/rdc/delivery',
+        permission: 'rdc.delivery.read',
+        icon: 'delivery',
+        scope: 'platform',
+        envScoped: false,
+      },
     ],
   },
   {

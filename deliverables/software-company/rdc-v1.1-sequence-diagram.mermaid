@@ -1,0 +1,71 @@
+%% Dandelion RDC V1.1 · 时序图：新建需求（带图）含成功与失败补偿路径
+%% 从 deliverables/software-company/rdc-v1.1-design.md §4 提取，便于工具链消费。
+sequenceDiagram
+    actor U as 用户(team 模式)
+    participant FE as RequirementFormPage / api/rdc.ts
+    participant MW as chi 中间件链
+    participant H as handler/rdc.Create
+    participant P as handler/rdc.multipart
+    participant S as service/rdc.Create
+    participant PV as repository/project(校验)
+    participant R as repository/rdc
+    participant DB as PostgreSQL(team schema)
+    participant FS as storage.Paths / 文件系统
+    participant A as service/audit.Record
+
+    U->>FE: 填标题/描述/项目/验收标准，选 ≤9 张图，点保存
+    Note over FE: 新建按钮由 can(me,'rdc.requirement.write') 控制；<br/>rdcUpload.ts 先校验格式/5MB/9 张
+    FE->>MW: POST /api/v1/rdc/requirements (multipart/form-data)
+    MW->>MW: RequireAuth → InjectScope → RequireTeamMode → RequirePermission(write)
+    MW->>H: middleware.Wrap 调用 handler
+
+    H->>P: parseMultipart(r, paths)
+    P->>P: 文本字段进严格白名单，未知字段 → 400
+    loop 每个 images[] 分片
+        P->>FS: StagePath(token,ext) + 流式写 tmp（MaxBytesReader 5MB）
+        P->>P: DetectContentType → RDCImageExts 映射；非白名单/超限/超量 → 记错
+    end
+    alt 解析失败（未知字段 / 非图片 / >5MB / >9 张）
+        P->>FS: 删除已 stage 的 tmp 文件（遍历清理）
+        P-->>H: error(400/413)
+        H-->>FE: {code:400/413,data:null,message:中文提示}
+    else 解析成功
+        P-->>H: MultipartForm{Fields, Images[]}
+        H->>S: Create(ctx, caller, scope, fields, images)
+        S->>S: normalize（projectId 必填、标题/描述/状态/长度）
+        S->>S: 复校 images 数量/体积/扩展名白名单
+        S->>PV: ExistsVisibleByID(projectId, scope)
+        alt 项目不存在 或 不属于本公司
+            PV-->>S: false → 400「所属项目无效」
+            S-->>H: error
+            H->>FS: 清理全部 staged tmp（失败路径）
+            H-->>FE: {code:400/413,data:null,message:...}
+        else 项目合法
+            PV-->>S: true (+projectName 供投影校验)
+            S->>S: 生成 attID/relative_path=paths.RelativePath(rdc,requirements,attID,ext)
+            S->>R: CreateWithAttachments(ctx, norm, caller.UserID, scope.TenantID, projectID, day, rows)
+            R->>DB: BEGIN
+            R->>DB: UPSERT rdc_req_key_sequences … RETURNING seq（AS s 别名避列歧义）
+            R->>DB: INSERT rdc_requirements(req_key,title,description,status,acceptance_criteria,project_id,creator_user_id,tenant_id) RETURNING id
+            R->>DB: INSERT rdc_requirement_attachment ×N (含 relative_path)
+            R->>DB: LEFT JOIN users/people 投影 creator_name；LEFT JOIN projects 投影 project_name
+            R->>DB: COMMIT
+            R-->>S: Requirement(reqKey,id,…)
+            loop 每张 staged image
+                S->>FS: SafeResolveStage(tmp) → MkdirAll(finalDir) → Rename(tmp, FinalPath)
+            end
+            alt 任一搬文件失败
+                S->>R: DeleteByID(reqID) 补偿
+                R->>DB: DELETE rdc_requirements WHERE id=?（级联删附件）
+                S->>FS: 删除已搬 final + 剩余 staged tmp
+                S-->>H: error → 500
+                H-->>FE: {code:500,data:null,message:服务内部错误}
+            else 全部搬成功
+                S-->>H: Requirement
+                H->>A: Record(ctx, caller,'rdc.requirement.created',<br/>'rdc_requirement', reqKey, {title,status,projectId,imageCount}, ip)
+                Note over A,DB: 审计写 team.audit_logs，失败只记日志不回滚
+                H-->>FE: 201 {code:0,data:Requirement,message:'ok'}
+                FE->>U: 回列表并提示生成的 reqKey
+            end
+        end
+    end

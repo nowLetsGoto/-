@@ -33,6 +33,20 @@ x-constants:
     projectKey: 32
     projectName: 60
     projectDescription: 200
+    reqTitle: 100
+    reqDescription: 4000
+    reqAcceptance: 2000
+  rdcMaxImageMB: 5
+  rdcMaxImages: 9
+
+# 需求图片 MIME 白名单：key 是 storage 落盘的规范扩展名，value 是嗅探到的 MIME。
+# 后端 contract.RDCImageExts / 前端 utils/rdcUpload.ts 与此逐项对齐，由契约测试锁死。
+x-rdc-image-exts:
+  png: image/png
+  jpg: image/jpeg
+  jpeg: image/jpeg
+  webp: image/webp
+  gif: image/gif
 
 # Webhook 可推送字段的唯一产品定义处：key 固定，value 是设置页展示的中文名。
 # 后端 contract.WebhookFieldLabels 镜像本表，由契约测试逐项比对；前端标签从接口返回，不再抄一份。
@@ -1358,6 +1372,170 @@ paths:
                 format: binary
         '404':
           $ref: '#/components/responses/NotFound'
+
+  /rdc/requirements:
+    get:
+      operationId: listRequirements
+      summary: 需求池列表（仅团队模式）
+      description: >
+        数据范围由登录身份推导的 scope 决定，前端不传 tenant。支持按状态与可选项目 id 筛选、
+        需求编号 / 标题的 ILIKE 关键字匹配，服务端分页（默认 10、上限 200、0 全量）。
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/PageParam'
+        - $ref: '#/components/parameters/PageSizeParam'
+        - name: status
+          in: query
+          required: false
+          description: 按需求状态筛选；留空表示不筛
+          schema:
+            $ref: '#/components/schemas/RequirementStatus'
+        - name: keyword
+          in: query
+          required: false
+          description: 匹配需求编号或标题（ILIKE 模糊匹配）
+          schema:
+            type: string
+        - name: projectId
+          in: query
+          required: false
+          description: 按所属项目 id 筛选；留空表示不筛。存量无归属需求不匹配该条件
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: 需求分页列表
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RequirementListResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    post:
+      operationId: createRequirement
+      summary: 新建需求（仅团队模式）
+      description: >
+        文本字段（含必填 projectId）与 0..9 张图片一次提交；需求编号由服务端按
+        REQ-YYYYMMDD-NNN 生成、创建后不可变，归属公司由身份推导，创建动作写入审计日志。
+        图片格式 / 单张体积 / 数量在前端、handler、service 三层复校。
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/RequirementCreateMultipart'
+      responses:
+        '201':
+          description: 创建成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RequirementResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '413':
+          $ref: '#/components/responses/TooLarge'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /rdc/requirements/{reqKey}:
+    get:
+      operationId: getRequirement
+      summary: 需求详情（仅团队模式）
+      description: 按需求编号查询；越界或不存在的编号一律返回 404，不泄漏存在性。
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: reqKey
+          in: path
+          required: true
+          description: 需求编号，格式 REQ-YYYYMMDD-NNN
+          schema:
+            type: string
+            pattern: '^REQ-\d{8}-\d{3}$'
+      responses:
+        '200':
+          description: 需求详情（含项目名与图片附件列表）
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RequirementDetailResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /rdc/requirement-attachments/{id}:
+    get:
+      operationId: getRequirementAttachment
+      summary: 需求图片读取（仅团队模式，受保护）
+      description: >
+        按附件 id 读取原图二进制流。登录 + rdc.requirement.read + team 模式 + 租户范围缺一不可；
+        跨租户或不存在的附件统一 404，不泄漏存在性。相对路径经 SafeResolve 前缀校验防越界。
+        前端必须用带 Bearer 的 Blob 请求渲染，裸 img src 会 401。
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: 附件 id（UUID）
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: 图片二进制流
+          headers:
+            X-Content-Type-Options:
+              schema:
+                type: string
+                example: nosniff
+            Content-Disposition:
+              schema:
+                type: string
+                example: inline
+          content:
+            image/png:
+              schema:
+                type: string
+                format: binary
+            image/jpeg:
+              schema:
+                type: string
+                format: binary
+            image/webp:
+              schema:
+                type: string
+                format: binary
+            image/gif:
+              schema:
+                type: string
+                format: binary
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
 
   /healthz:
     get:
@@ -2808,3 +2986,185 @@ components:
           properties:
             data:
               $ref: '#/components/schemas/PasswordReset'
+
+    # ── 研发中心 · 需求池 ───────────────────────────────────────────────────
+    RequirementStatus:
+      type: string
+      description: 需求状态；本版只承载字段与筛选，流转逻辑留待后续迭代
+      enum:
+        - pending_review
+        - confirmed
+        - in_development
+        - pending_acceptance
+        - delivered
+        - archived
+
+    Requirement:
+      type: object
+      description: 需求池的一条记录；需求编号创建后不可变，创建人姓名与项目名由关联投影得到
+      required: [id, reqKey, title, description, status, acceptanceCriteria, projectId, projectName, creatorUserId, creatorName, createdAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        reqKey:
+          type: string
+          description: 用户可见的稳定编号，格式 REQ-YYYYMMDD-NNN
+          pattern: '^REQ-\d{8}-\d{3}$'
+        title:
+          type: string
+          maxLength: 100
+        description:
+          type: string
+          maxLength: 4000
+        status:
+          $ref: '#/components/schemas/RequirementStatus'
+        acceptanceCriteria:
+          type: string
+          maxLength: 2000
+        projectId:
+          type: string
+          format: uuid
+          description: 所属项目 id；新建必填，V1.0 存量需求为空串
+        projectName:
+          type: string
+          description: LEFT JOIN team.projects 的项目名投影；空串表示未归属项目
+        creatorUserId:
+          type: string
+          description: 创建人账号 id（裸文本，不建外键）
+        creatorName:
+          type: string
+          description: people.name 优先，回落 users.username；无关联时为空串
+        createdAt:
+          type: string
+          format: date-time
+
+    RequirementInput:
+      type: object
+      description: 新建需求的文本字段说明（POST 实际用 multipart，见 RequirementCreateMultipart）；未知字段一律 400
+      additionalProperties: false
+      required: [title, description, projectId]
+      properties:
+        title:
+          type: string
+          maxLength: 100
+          description: 必填，1-100 字
+        description:
+          type: string
+          maxLength: 4000
+          description: 必填，多行文本
+        status:
+          $ref: '#/components/schemas/RequirementStatus'
+          description: 留空由服务端兜底为 pending_review
+        acceptanceCriteria:
+          type: string
+          maxLength: 2000
+          description: 选填，多行文本
+        projectId:
+          type: string
+          format: uuid
+          description: 必填，所属项目 id，须存在且属于当前公司
+
+    RequirementCreateMultipart:
+      type: object
+      description: 新建需求的一次性 multipart 请求体；文本字段严格白名单，图片部分名为 images
+      required: [title, description, projectId]
+      properties:
+        title:
+          type: string
+          maxLength: 100
+        description:
+          type: string
+          maxLength: 4000
+        status:
+          $ref: '#/components/schemas/RequirementStatus'
+        acceptanceCriteria:
+          type: string
+          maxLength: 2000
+        projectId:
+          type: string
+          format: uuid
+          description: 必填，所属项目 id，须存在且属于当前公司
+        images:
+          type: array
+          maxItems: 9
+          items:
+            type: string
+            format: binary
+            description: png/jpg/jpeg/webp/gif 原图，单张 <= 5MB
+
+    RequirementAttachment:
+      type: object
+      description: 需求图片的对外投影；存储相对路径不进响应，读取按附件 id 走受保护接口
+      required: [id, fileName, contentType, fileSize, createdAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        fileName:
+          type: string
+          description: CleanFileName 清洗后的展示名，不参与拼路径
+        contentType:
+          type: string
+          description: 白名单内 MIME
+        fileSize:
+          type: integer
+          format: int64
+          description: 字节数，<= 5MB
+        createdAt:
+          type: string
+          format: date-time
+
+    RequirementDetail:
+      allOf:
+        - $ref: '#/components/schemas/Requirement'
+        - type: object
+          required: [attachments]
+          properties:
+            attachments:
+              type: array
+              description: 图片列表；无图片时为 []（存量需求兼容）
+              items:
+                $ref: '#/components/schemas/RequirementAttachment'
+
+    RequirementResponse:
+      allOf:
+        - $ref: '#/components/schemas/ApiResponse'
+        - type: object
+          required: [data]
+          properties:
+            data:
+              $ref: '#/components/schemas/Requirement'
+
+    RequirementDetailResponse:
+      allOf:
+        - $ref: '#/components/schemas/ApiResponse'
+        - type: object
+          required: [data]
+          properties:
+            data:
+              $ref: '#/components/schemas/RequirementDetail'
+
+    RequirementListResponse:
+      allOf:
+        - $ref: '#/components/schemas/ApiResponse'
+        - type: object
+          required: [data]
+          properties:
+            data:
+              type: object
+              required: [items, total, page, pageSize]
+              properties:
+                items:
+                  type: array
+                  items:
+                    $ref: '#/components/schemas/Requirement'
+                total:
+                  type: integer
+                  description: 总条数
+                page:
+                  type: integer
+                  description: 当前页，从 1 开始
+                pageSize:
+                  type: integer
+                  description: 每页条数；0 表示不分页（全量）

@@ -1,0 +1,125 @@
+%% Dandelion RDC V1.1 · 类图
+%% 从 deliverables/software-company/rdc-v1.1-design.md §3.6 提取，便于工具链消费。
+classDiagram
+    class Requirement {
+        +string ID
+        +string ReqKey
+        +string Title
+        +string Description
+        +string Status
+        +string AcceptanceCriteria
+        +string ProjectID
+        +string ProjectName
+        +string CreatorUserID
+        +string CreatorName
+        +string CreatedAt
+    }
+    class RequirementInput {
+        +string Title
+        +string Description
+        +string Status
+        +string AcceptanceCriteria
+        +string ProjectID
+    }
+    class RequirementDetail {
+        +Requirement base
+        +RequirementAttachment[] Attachments
+    }
+    class RequirementAttachment {
+        +string ID
+        +string FileName
+        +string ContentType
+        +int64 FileSize
+        +string RelativePath
+        +string CreatedAt
+    }
+    class AttachmentRow {
+        +string ID
+        +string FileName
+        +string ContentType
+        +string RelativePath
+        +int64 FileSize
+    }
+    class RequirementQuery {
+        +PageQuery Page
+        +string Status
+        +string Keyword
+        +string ProjectID
+    }
+    class StagedImage {
+        +string Token
+        +string AbsPath
+        +string Ext
+        +string ContentType
+        +string CleanName
+        +int64 FileSize
+    }
+    class RequirementRepository {
+        -sql.DB db
+        -string table
+        -string attachmentTable
+        -Paths paths
+        +CreateWithAttachments(ctx, in, creatorID, tenantID, projectID, day, rows) Requirement
+        +List(ctx, query, scope) RequirementList
+        +FindByReqKey(ctx, reqKey, scope) RequirementDetail
+        +ListAttachments(ctx, requirementID) RequirementAttachment[]
+        +FindAttachmentByID(ctx, id, scope) RequirementAttachment
+        +DeleteByID(ctx, id) error
+        -allocateSeq(tx, day) int
+    }
+    class ProjectRepository {
+        +ExistsVisibleByID(ctx, id, scope) bool
+    }
+    class ProjectValidator {
+        <<interface>>
+        +ExistsVisibleByID(ctx, id, scope) bool
+    }
+    class RequirementService {
+        -RequirementRepository repo
+        -ProjectValidator projects
+        -Paths paths
+        +Create(ctx, caller, scope, in, images) Requirement
+        +List(ctx, query, scope) RequirementList
+        +Get(ctx, reqKey, scope) RequirementDetail
+        +ResolveAttachment(ctx, id, scope) FileRef
+        -normalize(in) RequirementInput
+        -stageToFinal(images, rows) error
+        -compensate(reqID, movedFinals) error
+    }
+    class RequirementHandler {
+        -RequirementService svc
+        -AuditService audit
+        -Paths paths
+        +List(w, r) error
+        +Create(w, r) error
+        +Get(w, r) error
+        +Attachment(w, r) error
+        -parseMultipart(r) MultipartForm
+    }
+    class MultipartForm {
+        +RequirementInput Fields
+        +StagedImage[] Images
+    }
+    class Paths {
+        +FinalPath(dir, seg, id, ext) string
+        +RelativePath(dir, seg, id, ext) string
+        +SafeResolve(rel) string
+        +StagePath(token, ext) string
+        +SafeResolveStage(abs) string
+    }
+    class AuditService {
+        +Record(ctx, actor, action, objectType, objectID, detail, ip) void
+    }
+
+    RequirementRepository ..> Requirement : maps rows
+    RequirementRepository ..> RequirementDetail : builds
+    RequirementRepository ..> AttachmentRow : inserts
+    RequirementRepository --> Paths : relative path gen
+    RequirementService --> RequirementRepository : depends
+    RequirementService --> ProjectValidator : validates project/tenant
+    ProjectRepository ..|> ProjectValidator : implements
+    RequirementService ..> StagedImage : stages to final
+    RequirementHandler --> RequirementService : calls
+    RequirementHandler ..> MultipartForm : parses
+    RequirementHandler --> Paths : stage uploads
+    RequirementHandler --> AuditService : records create

@@ -2,6 +2,7 @@
  * 项目上下文守卫：链接里的项目 key 解析不出项目时，用一句人话替代红色报错。
  * 职责：在 /p/:key/* 下拦下「项目不存在」，并按成因给出对应出口：
  *       一个项目都没有 → 引导去新建（首次使用）；有项目但 key 失效 → 回到最近项目或去项目管理。
+ *       列表请求失败时优先显示 ErrorState + 重试，不把「请求失败」误判成「还没有项目」。
  *       其余路径（含平台级 /settings、/directory/*）原样放行，不参与判断。
  * 输入：children、当前路径。
  * 输出：children，或一张空态卡片。
@@ -12,7 +13,7 @@ import type { ReactNode } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { recentProjectKey, useCurrentProject, useProjects } from '../hooks/useProjects';
 import { Button } from './Controls';
-import { Empty, Loading } from './States';
+import { Empty, ErrorState, Loading } from './States';
 
 export function ProjectGate({ children }: { children: ReactNode }): JSX.Element {
   const { pathname } = useLocation();
@@ -27,7 +28,7 @@ export function ProjectGate({ children }: { children: ReactNode }): JSX.Element 
 
 /** 只会在 /p/* 下挂载，因此这里的取数是必要的。 */
 function ProjectScopedGate({ children }: { children: ReactNode }): JSX.Element {
-  const { key, loading, notFound, empty } = useCurrentProject();
+  const { key, loading, error, reload, notFound, empty } = useCurrentProject();
 
   // 列表还没就绪时**不要渲染 children**。
   //
@@ -38,6 +39,11 @@ function ProjectScopedGate({ children }: { children: ReactNode }): JSX.Element {
   // 代价只是多一个 loading 帧，换来"错误提示只在真正需要时出现"。
   if (loading) {
     return <Loading text="正在读取项目…" />;
+  }
+  // 列表请求失败（端口错 / 服务挂）时列表为空，notFound 与 empty 都会为真，
+  // 若落到下面就会把「请求失败」误导成「还没有项目」。先给错误态和同源的重试出口。
+  if (error) {
+    return <ErrorState message={error} onRetry={reload} />;
   }
   if (!notFound) {
     return <>{children}</>;

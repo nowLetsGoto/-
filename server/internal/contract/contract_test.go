@@ -28,19 +28,25 @@ type openAPISpec struct {
 		ParseTimeoutSeconds  int   `yaml:"parseTimeoutSeconds"`
 		ParseReadLimitMB     int   `yaml:"parseReadLimitMB"`
 		AuthTokenTTLSeconds  int   `yaml:"authTokenTTLSeconds"`
+		RDCMaxImageMB        int   `yaml:"rdcMaxImageMB"`
+		RDCMaxImages         int   `yaml:"rdcMaxImages"`
 		Limits               struct {
-			AppName       int `yaml:"appName"`
-			PackageID     int `yaml:"packageId"`
-			Version       int `yaml:"version"`
-			BuildNumber   int `yaml:"buildNumber"`
-			Changelog     int `yaml:"changelog"`
-			Username      int `yaml:"username"`
-			Password      int `yaml:"password"`
-			WebhookURL    int `yaml:"webhookUrl"`
-			WebhookSecret int `yaml:"webhookSecret"`
+			AppName        int `yaml:"appName"`
+			PackageID      int `yaml:"packageId"`
+			Version        int `yaml:"version"`
+			BuildNumber    int `yaml:"buildNumber"`
+			Changelog      int `yaml:"changelog"`
+			Username       int `yaml:"username"`
+			Password       int `yaml:"password"`
+			WebhookURL     int `yaml:"webhookUrl"`
+			WebhookSecret  int `yaml:"webhookSecret"`
+			ReqTitle       int `yaml:"reqTitle"`
+			ReqDescription int `yaml:"reqDescription"`
+			ReqAcceptance  int `yaml:"reqAcceptance"`
 		} `yaml:"limits"`
 	} `yaml:"x-constants"`
 	XWebhookFields map[string]string `yaml:"x-webhook-fields"`
+	XRDCImageExts  map[string]string `yaml:"x-rdc-image-exts"`
 	XEnvironments  map[string]string `yaml:"x-environments"`
 	XPlatforms     map[string]struct {
 		Label       string `yaml:"label"`
@@ -204,6 +210,12 @@ func TestLimitsMatchContract(t *testing.T) {
 		t.Fatalf("Webhook 上限与契约不一致: 契约=%d/%d Go=%d/%d",
 			limits.WebhookURL, limits.WebhookSecret, MaxWebhookURLLen, MaxWebhookSecretLen)
 	}
+	if limits.ReqTitle != MaxReqTitleLen || limits.ReqDescription != MaxReqDescLen ||
+		limits.ReqAcceptance != MaxReqAcceptanceLen {
+		t.Fatalf("需求字段上限与契约不一致: 契约=%d/%d/%d Go=%d/%d/%d",
+			limits.ReqTitle, limits.ReqDescription, limits.ReqAcceptance,
+			MaxReqTitleLen, MaxReqDescLen, MaxReqAcceptanceLen)
+	}
 }
 
 // TestWebhookFieldsMatchContract 锁死可推送字段：yaml 键集合 = Go 标签表，枚举顺序 = WebhookFields。
@@ -261,6 +273,77 @@ func TestBuildHasThreeURLsAndCount(t *testing.T) {
 	for _, field := range []string{"downloadPagePath", "downloadPageUrl", "downloadFileUrl", "downloadCount"} {
 		if _, exists := build[field]; !exists {
 			t.Fatalf("Build 缺少字段 %s", field)
+		}
+	}
+}
+
+// TestRequirementStatusEnumMatchesContract 把需求状态枚举与契约逐项锁死。
+// 顺序也有意义：前端筛选项按同一顺序镜像，漂移会让用户看到的顺序与契约不一致。
+func TestRequirementStatusEnumMatchesContract(t *testing.T) {
+	spec := loadSpec(t)
+	enum := spec.Components.Schemas["RequirementStatus"].Enum
+	if !reflect.DeepEqual(enum, RequirementStatuses) {
+		t.Fatalf("RequirementStatus.enum=%v 与 Go RequirementStatuses=%v 不一致", enum, RequirementStatuses)
+	}
+	for _, status := range RequirementStatuses {
+		if !IsValidRequirementStatus(status) {
+			t.Fatalf("枚举状态 %q 应通过 IsValidRequirementStatus", status)
+		}
+	}
+	for _, invalid := range []string{"", "PENDING_REVIEW", "reviewing", "done"} {
+		if IsValidRequirementStatus(invalid) {
+			t.Fatalf("非法状态 %q 不应通过校验", invalid)
+		}
+	}
+}
+
+// TestFormatReqKeyFollowsWidthConstant 钉住编号格式与宽度常量的一致性。
+// 把 ReqSeqWidth 从 3 改成 6 时，本测试与契约正则一起改，格式不会散落到各层。
+func TestFormatReqKeyFollowsWidthConstant(t *testing.T) {
+	key := FormatReqKey("20250614", 1)
+	if key != "REQ-20250614-001" {
+		t.Fatalf("FormatReqKey 应为 REQ-20250614-001，实际 %q", key)
+	}
+	if !IsValidReqKey(key) {
+		t.Fatalf("FormatReqKey 产出的 %q 应通过 IsValidReqKey", key)
+	}
+	for _, invalid := range []string{"", "REQ-20250614-1", "REQ-20250614-0001", "REQ-2025061-001", "REQ-20250614-00a"} {
+		if IsValidReqKey(invalid) {
+			t.Fatalf("非法需求编号 %q 不应通过校验", invalid)
+		}
+	}
+}
+
+// TestRDCImageConstraintsMatchContract 把图片白名单/上限与契约逐项锁死：
+// 任一处漂移（后端改了上限、契约漏改、扩展名归一规则变了）都会让本测试失败。
+func TestRDCImageConstraintsMatchContract(t *testing.T) {
+	spec := loadSpec(t)
+	if int64(spec.XConstants.RDCMaxImageMB)<<20 != MaxRDCImageBytes {
+		t.Fatalf("单张图片上限不一致: 契约=%dMB Go=%d", spec.XConstants.RDCMaxImageMB, MaxRDCImageBytes)
+	}
+	if spec.XConstants.RDCMaxImages != MaxRDCImages {
+		t.Fatalf("图片数量上限不一致: 契约=%d Go=%d", spec.XConstants.RDCMaxImages, MaxRDCImages)
+	}
+	if len(spec.XRDCImageExts) != len(RDCImageExts) {
+		t.Fatalf("x-rdc-image-exts 共 %d 项，与 Go RDCImageExts %d 项不一致",
+			len(spec.XRDCImageExts), len(RDCImageExts))
+	}
+	for ext, mime := range spec.XRDCImageExts {
+		if RDCImageExts[ext] != mime {
+			t.Fatalf("扩展名 %s 的 MIME 不一致: 契约=%s Go=%s", ext, mime, RDCImageExts[ext])
+		}
+	}
+	if ext, ok := RDCImageExtOf("image/jpeg"); !ok || ext != "jpg" {
+		t.Fatalf("image/jpeg 应归一为 jpg，实际 %q ok=%v", ext, ok)
+	}
+	for _, contentType := range []string{"image/png", "image/jpeg", "image/webp", "image/gif"} {
+		if !IsRDCImageContentType(contentType) {
+			t.Fatalf("白名单 MIME %q 应通过校验", contentType)
+		}
+	}
+	for _, contentType := range []string{"", "application/pdf", "text/plain", "image/svg+xml"} {
+		if IsRDCImageContentType(contentType) {
+			t.Fatalf("非图片 MIME %q 不应通过校验", contentType)
 		}
 	}
 }

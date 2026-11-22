@@ -10,6 +10,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"log"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -89,6 +90,24 @@ func (r *Repository) List(ctx context.Context, page contract.PageQuery, ownerUse
 		return nil, 0, fmt.Errorf("遍历项目列表失败: %w", err)
 	}
 	return items, total, nil
+}
+
+// ExistsVisibleByID 判断 id 对应的项目是否存在且属于当前 scope 可见范围。
+// 供研发中心需求池校验归属项目：项目 id 是用户选的业务字段，必须后端复核租户归属，
+// 不能只信前端下拉。ScopeFilter 负责租户边界（超管 All 放行、无 scope 失败关闭）。
+// 查询异常按「不可见」处理并记日志——失败关闭，绝不把数据库故障误判成校验通过。
+func (r *Repository) ExistsVisibleByID(ctx context.Context, id string, scope contract.Scope) bool {
+	if id == "" {
+		return false
+	}
+	filter := repository.ScopeFilter(0, "p", scope).Add(`p.id::text = ?`, id)
+	query := `SELECT EXISTS(SELECT 1 FROM ` + r.table + ` p` + filter.Where() + `)`
+	var exists bool
+	if err := r.db.QueryRowContext(ctx, query, filter.Args()...).Scan(&exists); err != nil {
+		log.Printf("校验项目归属失败 id=%s err=%v", id, err)
+		return false
+	}
+	return exists
 }
 
 // FindByKey 按 key 查询；ownerUserID 非空时限定在该账号的空间内。

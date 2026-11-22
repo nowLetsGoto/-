@@ -76,6 +76,45 @@ func TestDerivePermissionsActionsNeedMenu(t *testing.T) {
 	}
 }
 
+// TestDerivePermissionsRDCWriteIsIndependent 钉住研发中心 D1：勾菜单只自动给查看点，
+// 独立的写点 rdc.requirement.write 必须显式挂在 /rdc/requirements 的 Actions 下才行。
+// 这四条断言共同堵住"能看就能改"和"没勾菜单却拿到写权限"两种越权。
+func TestDerivePermissionsRDCWriteIsIndependent(t *testing.T) {
+	menus := []struct {
+		menuKey    string
+		viewPermit string
+	}{
+		{"/rdc/requirements", contract.PermissionRDCRequirementRead},
+		{"/rdc/dev", contract.PermissionRDCDevRead},
+		{"/rdc/review", contract.PermissionRDCReviewRead},
+		{"/rdc/delivery", contract.PermissionRDCDeliveryRead},
+	}
+	for _, menu := range menus {
+		got := derivePermissions([]string{menu.menuKey}, nil)
+		if _, ok := contains(got, menu.viewPermit); !ok {
+			t.Fatalf("勾菜单 %q 应自动获得 %q，实际 %v", menu.menuKey, menu.viewPermit, got)
+		}
+	}
+
+	// 只勾菜单、不勾 Action：绝不能拿到写点。
+	granted := derivePermissions([]string{"/rdc/requirements"}, nil)
+	if _, ok := contains(granted, contract.PermissionRDCRequirementWrite); ok {
+		t.Fatalf("只勾需求中心菜单不应自动获得写点，实际 %v", granted)
+	}
+
+	// 勾了菜单并显式请求 Action：写点保留。
+	granted = derivePermissions([]string{"/rdc/requirements"}, []string{contract.PermissionRDCRequirementWrite})
+	if _, ok := contains(granted, contract.PermissionRDCRequirementWrite); !ok {
+		t.Fatalf("勾菜单并请求写点时应保留，实际 %v", granted)
+	}
+
+	// 没勾菜单、只请求写点：按"操作权限必须挂在已勾菜单下"丢弃。
+	granted = derivePermissions([]string{"/overview"}, []string{contract.PermissionRDCRequirementWrite})
+	if _, ok := contains(granted, contract.PermissionRDCRequirementWrite); ok {
+		t.Fatalf("未勾需求中心菜单不应拿到写点，实际 %v", granted)
+	}
+}
+
 // TestDerivePermissionsNoDuplicates 防止重复权限点写入（数据库有主键，重复会插入失败）。
 func TestDerivePermissionsNoDuplicates(t *testing.T) {
 	got := derivePermissions(

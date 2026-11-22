@@ -76,6 +76,10 @@ const (
 	ResourceRole    = "角色"
 	ResourceTenant  = "公司"
 	ResourceFile    = "文件"
+	// ResourceRequirement 是研发中心需求池的资源名，供 NotFound 生成统一的 404 文案。
+	ResourceRequirement = "需求"
+	// ResourceRequirementAttachment 是需求图片的受保护读取资源名。
+	ResourceRequirementAttachment = "需求图片"
 )
 
 // NotFoundError 是「指定资源不存在」的错误，由 handler.WriteError 翻译成 404。
@@ -227,10 +231,17 @@ const (
 	RouteStage                = APIPrefix + "/builds/stage"
 	RouteBuilds               = APIPrefix + "/builds"
 	RouteBuildByID            = APIPrefix + "/builds/{id}"
-	RouteBuildVersions        = APIPrefix + "/builds/{id}/versions"
-	RouteBuildFile            = APIPrefix + "/builds/{id}/file"
-	RouteHealth               = "/healthz"
-	RouteDownloadPage         = "/d/{id}"
+	// RouteBuildVersions 是构建版本的其它版本列表入口（来自 upstream 构建版本能力）。
+	RouteBuildVersions = APIPrefix + "/builds/{id}/versions"
+	RouteBuildFile     = APIPrefix + "/builds/{id}/file"
+	// RouteRDCRequirements 是研发中心需求池的列表 + 新建入口（同一路径不同方法）。
+	RouteRDCRequirements = APIPrefix + "/rdc/requirements"
+	// RouteRDCRequirementByKey 是需求详情入口；需求编号是用户可见的稳定标识。
+	RouteRDCRequirementByKey = APIPrefix + "/rdc/requirements/{reqKey}"
+	// RouteRDCRequirementAttachment 是需求图片的受保护读取入口；按附件 id 定位，不暴露相对路径。
+	RouteRDCRequirementAttachment = APIPrefix + "/rdc/requirement-attachments/{id}"
+	RouteHealth              = "/healthz"
+	RouteDownloadPage        = "/d/{id}"
 )
 
 // 契约级上限，与 x-constants 对齐。
@@ -278,6 +289,7 @@ var APIRoutes = []string{
 	RoutePermissions, RouteMenus, RouteRoles, RouteRoleByID,
 	RouteSettings, RouteWebhookTest, RouteAPIKeyRotate, RouteOpenBuilds,
 	RouteStage, RouteBuilds, RouteBuildByID, RouteBuildVersions, RouteBuildFile, RouteHealth,
+	RouteRDCRequirements, RouteRDCRequirementByKey, RouteRDCRequirementAttachment,
 }
 
 // Webhook 可推送字段的键：与 api/openapi.yaml 的 x-webhook-fields 键集合一致。
@@ -661,6 +673,15 @@ var Permissions = []Permission{
 	// 账号的新建/编辑/删除是平台治理动作，由 account_level 固有赋予（见 managementPermissions），
 	// 不走角色配置——否则任意角色都能给自己或别人开账号、改归属，等同于绕过公司边界。
 	{Key: PermissionAccountRead, Group: "账号管理", Label: "查看账号列表"},
+
+	// 研发中心（仅 team 模式）：4 个查看点分别作为 4 菜单的 ViewPermission，
+	// 写点挂在需求中心菜单的 Actions 下，需单独勾选，避免"能看就能改"。
+	// 超管 allPermissions 遍历本切片自动获得全量；内置角色与团队基线不含这些点。
+	{Key: PermissionRDCRequirementRead, Group: "研发中心", Label: "查看需求中心"},
+	{Key: PermissionRDCRequirementWrite, Group: "研发中心", Label: "新建需求"},
+	{Key: PermissionRDCDevRead, Group: "研发中心", Label: "查看 AI 研发中心"},
+	{Key: PermissionRDCReviewRead, Group: "研发中心", Label: "查看人工审核中心"},
+	{Key: PermissionRDCDeliveryRead, Group: "研发中心", Label: "查看需求交付中心"},
 }
 
 // 管理类权限点的 key。
@@ -687,6 +708,15 @@ const (
 	// 「能改人员/团队」「能看账号」「能改账号」三件事，导致想给某个角色
 	// "只读账号列表"就必须同时给出管人管账号的权力。拆开后各管一件事。
 	PermissionAccountRead = "account.read"
+
+	// 研发中心权限点：4 个查看点 + 1 个写点。
+	// 与 build.read / build.write 的分离惯例一致，写点独立于查看点，
+	// 勾选菜单只自动授予查看点，写点必须在菜单树里单独勾选。
+	PermissionRDCRequirementRead  = "rdc.requirement.read"
+	PermissionRDCRequirementWrite = "rdc.requirement.write"
+	PermissionRDCDevRead          = "rdc.dev.read"
+	PermissionRDCReviewRead       = "rdc.review.read"
+	PermissionRDCDeliveryRead     = "rdc.delivery.read"
 )
 
 // IsValidPermission 判断权限点是否在**可勾选**目录里，写入角色时用它挡住拼错/伪造的值。
@@ -770,6 +800,13 @@ type Menu struct {
 	ViewPermission string `json:"viewPermission"`
 	// Actions 是本菜单下的操作权限（写/删等），在菜单节点内勾选。
 	Actions []MenuAction `json:"actions"`
+	// AutoGrantBuiltin 表示"该菜单是否随内置角色自动授权"。
+	//
+	// 现有 10 项菜单显式为 true（保持既有"内置角色默认全量"行为）；
+	// 研发中心 4 项留零值 false——内置角色与团队默认基线默认不含 RDC，
+	// 必须由管理员在角色管理里显式勾选授权。DefaultMenuKeys 只返回 true 的项。
+	// json:"-" 确保它不进前端菜单目录，不污染既有契约。
+	AutoGrantBuiltin bool `json:"-"`
 }
 
 // Menus 是全部可授权菜单，顺序即前端展示顺序。
@@ -781,31 +818,31 @@ type Menu struct {
 // 保存角色时由它推导最终 permissions（见 service/role.derivePermissions），
 // 前端也只渲染这份树，不再有独立的"权限点矩阵"。
 var Menus = []Menu{
-	{Key: "/overview", Label: "概览", Group: "总览", ViewPermission: "build.read"},
+	{Key: "/overview", Label: "概览", Group: "总览", ViewPermission: "build.read", AutoGrantBuiltin: true},
 	{
-		Key: "/packages", Label: "应用包", Group: "分发", ViewPermission: "build.read",
+		Key: "/packages", Label: "应用包", Group: "分发", ViewPermission: "build.read", AutoGrantBuiltin: true,
 		Actions: []MenuAction{
 			{Key: "build.write", Label: "上传与发布应用包"},
 			{Key: "build.delete", Label: "删除应用包"},
 		},
 	},
-	{Key: "/apps", Label: "应用", Group: "分发", ViewPermission: "build.read"},
+	{Key: "/apps", Label: "应用", Group: "分发", ViewPermission: "build.read", AutoGrantBuiltin: true},
 	{
-		Key: "/directory/people", Label: "人员管理", Group: "基础资料", ViewPermission: "directory.read",
+		Key: "/directory/people", Label: "人员管理", Group: "基础资料", ViewPermission: "directory.read", AutoGrantBuiltin: true,
 		Actions: []MenuAction{
 			{Key: PermissionDirectoryWrite, Label: "新增与编辑人员"},
 			{Key: PermissionDirectoryDelete, Label: "删除人员"},
 		},
 	},
 	{
-		Key: "/directory/teams", Label: "团队管理", Group: "基础资料", ViewPermission: "directory.read",
+		Key: "/directory/teams", Label: "团队管理", Group: "基础资料", ViewPermission: "directory.read", AutoGrantBuiltin: true,
 		Actions: []MenuAction{
 			{Key: PermissionDirectoryWrite, Label: "新增与编辑团队"},
 			{Key: PermissionDirectoryDelete, Label: "删除团队"},
 		},
 	},
 	{
-		Key: "/directory/projects", Label: "项目管理", Group: "基础资料", ViewPermission: "project.read",
+		Key: "/directory/projects", Label: "项目管理", Group: "基础资料", ViewPermission: "project.read", AutoGrantBuiltin: true,
 		Actions: []MenuAction{
 			{Key: "project.write", Label: "新建与编辑项目"},
 			{Key: "project.delete", Label: "删除项目"},
@@ -813,19 +850,28 @@ var Menus = []Menu{
 	},
 	// 账号管理：查看权限独立成 account.read，可由角色配置。
 	// 新增/编辑等写操作不在菜单里体现——它们只属于平台管理员，不受角色配置影响。
-	{Key: "/admin/accounts", Label: "账号管理", Group: "基础资料", ViewPermission: PermissionAccountRead},
+	{Key: "/admin/accounts", Label: "账号管理", Group: "基础资料", ViewPermission: PermissionAccountRead, AutoGrantBuiltin: true},
 	{
-		Key: "/directory/roles", Label: "角色管理", Group: "公司设置", ViewPermission: PermissionRoleRead,
+		Key: "/directory/roles", Label: "角色管理", Group: "公司设置", ViewPermission: PermissionRoleRead, AutoGrantBuiltin: true,
 		Actions: []MenuAction{
 			{Key: PermissionRoleWrite, Label: "新建与编辑角色"},
 			{Key: PermissionRoleDelete, Label: "删除自定义角色"},
 		},
 	},
-	{Key: "/admin/audit-logs", Label: "审计日志", Group: "公司设置", ViewPermission: PermissionAuditRead},
+	{Key: "/admin/audit-logs", Label: "审计日志", Group: "公司设置", ViewPermission: PermissionAuditRead, AutoGrantBuiltin: true},
 	{
-		Key: "/settings", Label: "平台集成", Group: "公司设置", ViewPermission: PermissionSettingsRead,
+		Key: "/settings", Label: "平台集成", Group: "公司设置", ViewPermission: PermissionSettingsRead, AutoGrantBuiltin: true,
 		Actions: []MenuAction{{Key: PermissionSettingsWrite, Label: "修改配置与轮换 Key"}},
 	},
+	// 研发中心（仅 team 模式，按需授权）：AutoGrantBuiltin 留零值 false，
+	// 内置角色与团队默认基线不含这 4 个菜单，管理员须在角色管理里显式勾选。
+	{
+		Key: "/rdc/requirements", Label: "需求中心", Group: "研发中心", ViewPermission: PermissionRDCRequirementRead,
+		Actions: []MenuAction{{Key: PermissionRDCRequirementWrite, Label: "新建需求"}},
+	},
+	{Key: "/rdc/dev", Label: "AI研发中心", Group: "研发中心", ViewPermission: PermissionRDCDevRead},
+	{Key: "/rdc/review", Label: "人工审核中心", Group: "研发中心", ViewPermission: PermissionRDCReviewRead},
+	{Key: "/rdc/delivery", Label: "需求交付中心", Group: "研发中心", ViewPermission: PermissionRDCDeliveryRead},
 	// 刻意不含「平台管理 / 公司管理」（/admin/tenants）：它是超管专属，
 	// 而超管始终全量、不靠角色授权；列进来只会误导（勾了也仍被 RequireSuperAdmin 拦）。
 }
@@ -853,6 +899,20 @@ func AllMenuKeys() []string {
 	keys := make([]string, 0, len(Menus))
 	for _, menu := range Menus {
 		keys = append(keys, menu.Key)
+	}
+	return keys
+}
+
+// DefaultMenuKeys 返回"随内置角色自动授权"的菜单 key 列表。
+//
+// 与 AllMenuKeys 的区别是刻意的：AllMenuKeys 服务于"超管全量 / 新建角色默认全量"，
+// 保持原语义不变；本函数只给 ReconcileBuiltinMenus 用——内置角色默认不含研发中心菜单。
+func DefaultMenuKeys() []string {
+	keys := make([]string, 0, len(Menus))
+	for _, menu := range Menus {
+		if menu.AutoGrantBuiltin {
+			keys = append(keys, menu.Key)
+		}
 	}
 	return keys
 }
@@ -1277,4 +1337,177 @@ func NewStageToken() (string, error) {
 	b[6] = (b[6] & 0x0f) | 0x40
 	b[8] = (b[8] & 0x3f) | 0x80
 	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:16]), nil
+}
+
+// ── 研发中心 · 需求池契约 ──────────────────────────────────────────────────
+//
+// 需求状态：与 api/openapi.yaml 的 RequirementStatus.enum 同序，由契约测试逐项锁死。
+// 本版只承载字段与筛选，状态流转逻辑留待后续迭代；DDL 不加 CHECK，枚举唯一来源在契约。
+const (
+	ReqStatusPendingReview     = "pending_review"     // 待评审（默认）
+	ReqStatusConfirmed         = "confirmed"          // 已确认
+	ReqStatusInDevelopment     = "in_development"     // 研发中
+	ReqStatusPendingAcceptance = "pending_acceptance" // 待验收
+	ReqStatusDelivered         = "delivered"          // 已交付
+	ReqStatusArchived          = "archived"           // 已归档
+)
+
+// RequirementStatuses 是状态枚举的有序列表，供契约测试与前端筛选项镜像比对。
+var RequirementStatuses = []string{
+	ReqStatusPendingReview, ReqStatusConfirmed, ReqStatusInDevelopment,
+	ReqStatusPendingAcceptance, ReqStatusDelivered, ReqStatusArchived,
+}
+
+// IsValidRequirementStatus 判断字符串是否是合法的需求状态；空串不是合法值，
+// 由 service 在写入前显式兜底为 pending_review，避免"空值悄悄变成某个状态"。
+func IsValidRequirementStatus(status string) bool {
+	for _, item := range RequirementStatuses {
+		if item == status {
+			return true
+		}
+	}
+	return false
+}
+
+// 需求编号格式：REQ-YYYYMMDD-NNN。宽度常量化，3 位改 6 位只改 ReqSeqWidth 与契约正则。
+const (
+	ReqKeyPrefix = "REQ-"
+	ReqSeqWidth  = 3
+)
+
+// reqKeyPattern 由宽度常量生成，避免正则里的位数与 FormatReqKey 各写一份而漂移。
+var reqKeyPattern = regexp.MustCompile(fmt.Sprintf(`^%s\d{8}-\d{%d}$`, ReqKeyPrefix, ReqSeqWidth))
+
+// FormatReqKey 把 UTC 日期（20060102）与当天序号拼成用户可见的稳定编号。
+// 格式唯一来源：宽度跟随 ReqSeqWidth，不足位左侧补零。
+func FormatReqKey(day string, seq int) string {
+	return fmt.Sprintf("%s%s-%0*d", ReqKeyPrefix, day, ReqSeqWidth, seq)
+}
+
+// IsValidReqKey 校验需求编号格式，用于挡住拼错/伪造的 URL 参数。
+func IsValidReqKey(key string) bool { return reqKeyPattern.MatchString(key) }
+
+// 需求字段的长度上限，与 openapi.yaml 的 maxLength 由契约测试逐项锁死。
+const (
+	MaxReqTitleLen      = 100
+	MaxReqDescLen       = 4000
+	MaxReqAcceptanceLen = 2000
+)
+
+// ── 需求图片约束（V1.1，handler 校验 / service 复校 / 前端镜像的唯一来源） ──
+const (
+	// RDCImageDir / RDCImageRequirementSeg 是 storage 路径的两级固定分段：
+	// relative_path = rdc/requirements/{attID}.{ext}，与包上传的 {env}/{platform} 物理隔离。
+	RDCImageDir            = "rdc"
+	RDCImageRequirementSeg = "requirements"
+	// MaxRDCImageBytes 是单张图片上限（5MB）；MaxRDCImages 是单需求图片数量上限。
+	MaxRDCImageBytes = 5 << 20
+	MaxRDCImages     = 9
+)
+
+// RDCImageExts 是「规范扩展名 → MIME」白名单。
+// 扩展名只能由本表派生，绝不取用户文件名；jpeg 与 jpg 归一为 jpg 落盘。
+var RDCImageExts = map[string]string{
+	"png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg",
+	"webp": "image/webp", "gif": "image/gif",
+}
+
+// RDCImageExtOf 由嗅探到的 MIME 反查规范扩展名；白名单外一律拒绝。
+// jpeg 先归一为 jpg，避免 map 迭代顺序让同一 MIME 产出两种扩展名。
+func RDCImageExtOf(contentType string) (string, bool) {
+	if contentType == "image/jpeg" {
+		return "jpg", true
+	}
+	for ext, mime := range RDCImageExts {
+		if mime == contentType {
+			return ext, true
+		}
+	}
+	return "", false
+}
+
+// IsRDCImageContentType 判断 MIME 是否在白名单内（service 复校附件行时使用）。
+func IsRDCImageContentType(contentType string) bool {
+	_, ok := RDCImageExtOf(contentType)
+	return ok
+}
+
+// Requirement 是需求池的一条记录。creatorName 是 users → people 的 JOIN 投影，
+// projectName 是 LEFT JOIN team.projects 的投影；两者都不冗余存列。
+// tenantId 只参与服务端隔离，不进 DTO；存量需求的 projectId/projectName 均为空串。
+type Requirement struct {
+	ID                 string `json:"id"`
+	ReqKey             string `json:"reqKey"`
+	Title              string `json:"title"`
+	Description        string `json:"description"`
+	Status             string `json:"status"`
+	AcceptanceCriteria string `json:"acceptanceCriteria"`
+	ProjectID          string `json:"projectId"`
+	ProjectName        string `json:"projectName"`
+	CreatorUserID      string `json:"creatorUserId"`
+	CreatorName        string `json:"creatorName"`
+	CreatedAt          string `json:"createdAt"`
+}
+
+// RequirementAttachment 是需求图片的对外投影；relativePath 只服务内部文件读取，
+// 用 json:"-" 挡在响应之外，避免把存储布局暴露给客户端。
+type RequirementAttachment struct {
+	ID           string `json:"id"`
+	FileName     string `json:"fileName"`
+	ContentType  string `json:"contentType"`
+	FileSize     int64  `json:"fileSize"`
+	CreatedAt    string `json:"createdAt"`
+	RelativePath string `json:"-"`
+}
+
+// RequirementDetail 是详情专用投影：列表不带 attachments，避免 N+1 与大响应体。
+// Attachments 保证非 nil（空切片），序列化成 [] 而不是 null。
+type RequirementDetail struct {
+	Requirement
+	Attachments []RequirementAttachment `json:"attachments"`
+}
+
+// AttachmentRow 是 service 生成 id 与 relative_path 后交给 repository 在事务内落库的行。
+// repository 只写 SQL，不生成路径、不做校验。
+type AttachmentRow struct {
+	ID           string
+	FileName     string
+	ContentType  string
+	RelativePath string
+	FileSize     int64
+}
+
+// StagedImage 是一张已流式写入 storage/tmp 的待搬图片。
+// handler 解析 multipart 时产出，service 复校后搬到 uploads；失败路径由持有者遍历清理。
+type StagedImage struct {
+	Token       string
+	AbsPath     string
+	Ext         string
+	ContentType string
+	CleanName   string
+	FileSize    int64
+}
+
+// RequirementInput 是新建需求的文本字段；projectId 必填，归属公司/创建人/编号由服务端推导。
+// multipart 的图片部分另走 images[]，不属于本结构体。
+type RequirementInput struct {
+	Title              string `json:"title"`
+	Description        string `json:"description"`
+	Status             string `json:"status"`
+	AcceptanceCriteria string `json:"acceptanceCriteria"`
+	ProjectID          string `json:"projectId"`
+}
+
+// RequirementQuery 是列表筛选条件，Page 已归一化，其余字段为空表示不筛。
+type RequirementQuery struct {
+	Page      PageQuery
+	Status    string
+	Keyword   string
+	ProjectID string
+}
+
+// RequirementList 是需求列表响应体：items 与分页元信息平铺，空结果为 [] 而非 nil。
+type RequirementList struct {
+	Items []Requirement `json:"items"`
+	Page
 }

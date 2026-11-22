@@ -339,13 +339,14 @@ func (r *Repository) CreateBuiltinIfMissing(ctx context.Context, tenantID string
 			return false, fmt.Errorf("写入内置角色权限失败: %w", err)
 		}
 	}
-	// 内置角色是"新公司开张时送的默认模板"：菜单也默认全量可见。
+	// 内置角色是"新公司开张时送的默认模板"：默认菜单由 DefaultMenuKeys 决定。
 	// 只在新建时写——已存在的角色可能已被管理员收窄过菜单，不能被重启冲掉。
-	// 这里用 contract.Menus 作为唯一来源，不另写一份菜单清单。
-	for _, menu := range contract.Menus {
+	// 研发中心菜单 AutoGrantBuiltin=false，不写进来（与 ReconcileBuiltinMenus 同口径）；
+	// 否则建公司当天的内置角色会先带上 RDC 菜单，要等下次重启才被清掉。
+	for _, menuKey := range contract.DefaultMenuKeys() {
 		if _, err := tx.ExecContext(ctx,
 			`INSERT INTO role_menus (role_id, menu_key) VALUES ($1, $2) ON CONFLICT DO NOTHING`,
-			roleID, menu.Key); err != nil {
+			roleID, menuKey); err != nil {
 			return false, fmt.Errorf("写入内置角色菜单失败: %w", err)
 		}
 	}
@@ -452,7 +453,9 @@ func (r *Repository) ReconcilePermissions(ctx context.Context) error {
 // 只动内置角色：自定义角色的菜单是管理员刻意配置的，不能被系统自动改写。
 // 幂等：每次启动都能跑，已对齐时两条语句都影响 0 行。
 func (r *Repository) ReconcileBuiltinMenus(ctx context.Context) error {
-	keys := contract.AllMenuKeys() // 唯一来源：目录增减时这里自动跟随
+	// 用 DefaultMenuKeys 而不是 AllMenuKeys：研发中心 4 菜单的 AutoGrantBuiltin=false，
+	// 内置角色默认不含 RDC，必须由管理员显式勾选（见 contract.Menu 的说明）。
+	keys := contract.DefaultMenuKeys()
 
 	// pgx 把 []string 直接编码成 text[]，用 ANY 一次比对全部合法 key。
 	const valid = `menu_key = ANY($1::text[])`
