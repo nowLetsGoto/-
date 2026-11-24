@@ -646,7 +646,7 @@ type Permission struct {
 // 不依赖这里的勾选。
 var Permissions = []Permission{
 	{Key: "build.read", Group: "应用包", Label: "查看应用包与下载"},
-	{Key: "build.write", Group: "应用包", Label: "上传与发布应用包"},
+	{Key: "build.write", Group: "应用包", Label: "上传、发布与编辑应用包"},
 	{Key: "build.delete", Group: "应用包", Label: "删除应用包"},
 	{Key: "project.read", Group: "项目", Label: "查看项目"},
 	{Key: "project.write", Group: "项目", Label: "新建与编辑项目"},
@@ -788,7 +788,7 @@ var Menus = []Menu{
 	{
 		Key: "/packages", Label: "应用包", Group: "分发", ViewPermission: "build.read",
 		Actions: []MenuAction{
-			{Key: "build.write", Label: "上传与发布应用包"},
+			{Key: "build.write", Label: "上传、发布与编辑应用包"},
 			{Key: "build.delete", Label: "删除应用包"},
 		},
 	},
@@ -1204,6 +1204,15 @@ type CommitInput struct {
 	PackageID   string `json:"packageId"`
 	Version     string `json:"version"`
 	BuildNumber string `json:"buildNumber"`
+	Changelog   string `json:"changelog"`
+}
+
+// BuildUpdateInput 只修改展示元数据，不接受项目、平台、包名或文件路径。
+type BuildUpdateInput struct {
+	AppName     string `json:"appName"`
+	Version     string `json:"version"`
+	BuildNumber string `json:"buildNumber"`
+	Environment string `json:"environment"`
 	Changelog   string `json:"changelog"`
 }
 

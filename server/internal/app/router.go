@@ -79,7 +79,7 @@ var allowedMethods = map[string]string{
 	contract.RouteWebhookTest:     "POST",
 	contract.RouteBuilds:          "GET, POST",
 	contract.RouteStage:           "POST",
-	contract.RouteBuildByID:       "GET",
+	contract.RouteBuildByID:       "GET, PUT, DELETE",
 	contract.RouteBuildVersions:   "GET",
 	contract.RouteBuildFile:       "GET",
 	contract.RouteSharedBuild:     "GET",
@@ -121,6 +121,9 @@ func allowedMethodsFor(req *http.Request) string {
 	case path == contract.RouteStage:
 		return "POST"
 	case strings.HasPrefix(path, contract.RouteBuilds+"/"):
+		if strings.Count(strings.TrimPrefix(path, contract.RouteBuilds+"/"), "/") == 0 {
+			return "GET, PUT, DELETE"
+		}
 		return "GET"
 	default:
 		return "GET"
@@ -148,6 +151,9 @@ func NewRouter(d Deps) http.Handler {
 			// 挂在 RequireAuth 之后：没有可信身份时不做任何范围推导。
 			private.Use(loginmw.InjectScope(d.Authz))
 			private.Get("/builds/{id}", middleware.Wrap(d.Builds.Get))
+			// 编辑与删除按包的真实项目检查权限，不信任 query 中的 project。
+			private.Put("/builds/{id}", middleware.Wrap(d.Builds.Update))
+			private.Delete("/builds/{id}", middleware.Wrap(d.Builds.Delete))
 			private.Get("/builds/{id}/versions", middleware.Wrap(d.Builds.Versions))
 			private.Get("/builds/{id}/file", middleware.Wrap(d.Builds.DownloadFile))
 			// 发布/暂存：提交时项目在请求体里，由 handler 内部判定 build.write

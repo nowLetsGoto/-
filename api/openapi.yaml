@@ -1281,6 +1281,60 @@ paths:
           $ref: '#/components/responses/InternalError'
 
   /builds/{id}:
+    put:
+      security:
+        - bearerAuth: []
+      operationId: updateBuild
+      summary: 编辑应用包展示信息（按真实项目校验 build.write）
+      description: 仅修改名称、版本、构建号、环境与更新说明；安装文件、平台、包名及分享凭证保持不变。
+      parameters:
+        - $ref: '#/components/parameters/BuildId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateBuildRequest'
+      responses:
+        '200':
+          description: 编辑成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BuildResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    delete:
+      security:
+        - bearerAuth: []
+      operationId: deleteBuild
+      summary: 删除应用包（按真实项目校验 build.delete）
+      description: 删除包记录及关联分享授权后清理安装文件；下载页与已有分享链接随之失效，其他版本不受影响。
+      parameters:
+        - $ref: '#/components/parameters/BuildId'
+      responses:
+        '200':
+          description: 删除成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
     get:
       security:
         - bearerAuth: []
@@ -2484,6 +2538,28 @@ components:
         buildNumber:
           type: string
           maxLength: 50
+        changelog:
+          type: string
+          maxLength: 2000
+
+    UpdateBuildRequest:
+      type: object
+      additionalProperties: false
+      required: [appName, version, environment]
+      properties:
+        appName:
+          type: string
+          minLength: 1
+          maxLength: 100
+        version:
+          type: string
+          minLength: 1
+          maxLength: 50
+        buildNumber:
+          type: string
+          maxLength: 50
+        environment:
+          $ref: '#/components/schemas/Environment'
         changelog:
           type: string
           maxLength: 2000

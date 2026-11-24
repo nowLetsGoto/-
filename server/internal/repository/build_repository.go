@@ -122,7 +122,7 @@ func (r *BuildRepository) List(ctx context.Context, projectID string, q contract
 		AddIf(q.Platform != "", `platform = ?`, q.Platform).
 		AddIf(r.ownerScoped && ownerUserID != "", `owner_user_id = ?`, ownerUserID)
 
-	query := `SELECT ` + r.columns() + ` FROM ` + r.table + filter.Where() + ` ORDER BY created_at DESC`
+	query := `SELECT ` + r.columns() + ` FROM ` + r.table + filter.Where() + ` ORDER BY created_at DESC, id DESC`
 
 	rows, err := r.db.QueryContext(ctx, query, filter.Args()...)
 	if err != nil {

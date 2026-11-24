@@ -547,9 +547,17 @@ export interface paths {
         };
         /** 登录用户的下载页预览详情（按真实项目校验权限） */
         get: operations["getBuild"];
-        put?: never;
+        /**
+         * 编辑应用包展示信息（按真实项目校验 build.write）
+         * @description 仅修改名称、版本、构建号、环境与更新说明；安装文件、平台、包名及分享凭证保持不变。
+         */
+        put: operations["updateBuild"];
         post?: never;
-        delete?: never;
+        /**
+         * 删除应用包（按真实项目校验 build.delete）
+         * @description 删除包记录及关联分享授权后清理安装文件；下载页与已有分享链接随之失效，其他版本不受影响。
+         */
+        delete: operations["deleteBuild"];
         options?: never;
         head?: never;
         patch?: never;
@@ -1109,6 +1117,13 @@ export interface components {
             packageId?: string;
             version?: string;
             buildNumber?: string;
+            changelog?: string;
+        };
+        UpdateBuildRequest: {
+            appName: string;
+            version: string;
+            buildNumber?: string;
+            environment: components["schemas"]["Environment"];
             changelog?: string;
         };
         /** @description 完整包 DTO；三个 URL 字段由服务端派生；对外地址携带单版本分享凭证，授权失效时为空 */
@@ -2761,6 +2776,65 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["BuildResponse"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    updateBuild: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description 包稳定唯一标识 */
+                id: components["parameters"]["BuildId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateBuildRequest"];
+            };
+        };
+        responses: {
+            /** @description 编辑成功 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BuildResponse"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    deleteBuild: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description 包稳定唯一标识 */
+                id: components["parameters"]["BuildId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 删除成功 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiResponse"];
                 };
             };
             401: components["responses"]["Unauthorized"];

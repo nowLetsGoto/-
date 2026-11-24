@@ -14,8 +14,9 @@ interface ConfirmDialogProps {
   /** 影响面说明：写清楚"会发生什么"，不要只说"确定吗" */
   description: ReactNode;
   confirmText?: string;
-  /** 高危操作用红色主按钮 */
+  /** 高危操作用危险色主按钮；warningTone 可在特定业务中使用琥珀色。 */
   danger?: boolean;
+  warningTone?: boolean;
   loading?: boolean;
   onConfirm: () => void;
   onCancel: () => void;
@@ -27,6 +28,7 @@ export function ConfirmDialog({
   description,
   confirmText = '确认',
   danger = false,
+  warningTone = false,
   loading = false,
   onConfirm,
   onCancel,
@@ -37,7 +39,11 @@ export function ConfirmDialog({
       title={title}
       okText={confirmText}
       cancelText="取消"
-      okButtonProps={{ danger, loading }}
+      rootClassName={warningTone ? 'confirm-warning' : undefined}
+      okButtonProps={{ danger: danger && !warningTone, loading }}
+      cancelButtonProps={{ disabled: loading }}
+      closable={!loading}
+      keyboard={!loading}
       onOk={onConfirm}
       onCancel={onCancel}
       destroyOnHidden

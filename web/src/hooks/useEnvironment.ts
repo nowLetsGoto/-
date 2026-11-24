@@ -16,9 +16,9 @@ function isEnvironment(value: string | null): value is Environment {
   return ENVIRONMENTS.some((item) => item.value === value);
 }
 
-export function useEnvironment(
-  defaultEnvironment: Environment = DEFAULT_ENVIRONMENT,
-): [Environment, (next: Environment, pathname?: string) => void] {
+export function useEnvironment<T extends Environment | 'all' = Environment>(
+  defaultEnvironment: T = DEFAULT_ENVIRONMENT as T,
+): [Environment | T, (next: Environment | T, pathname?: string) => void] {
   const [params, setParams] = useSearchParams();
   const navigate = useNavigate();
   // 旧版把环境写成 ?environment=；这里一并认，避免已转发的链接失效。
@@ -26,10 +26,11 @@ export function useEnvironment(
 
   // 公开下载页切环境时可同时切到对应的包；一次导航保证 URL 的包与环境不出现中间态。
   const setEnvironment = useCallback(
-    (next: Environment, pathname?: string): void => {
+    (next: Environment | T, pathname?: string): void => {
       const updated = new URLSearchParams(params);
       updated.delete('environment');
       updated.set('env', next);
+      updated.delete('page');
       if (pathname) {
         navigate({ pathname, search: updated.toString() }, { replace: true });
       } else {
