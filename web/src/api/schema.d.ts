@@ -563,8 +563,8 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * 同项目同应用的其它版本（公开下载页用）
-         * @description 按目标包定位分区与项目，只返回同项目、同 appName、同 packageId 的其它包， 字段经白名单收敛，不含相对路径、上传者或原始文件名。
+         * 同项目同应用的其它版本与平台包（公开下载页用）
+         * @description 按目标包定位分区与项目，返回同项目、同 appName、同 packageId、同平台、同上传者的其它包， 跨环境按上传时间倒序返回完整版本列表，供访客切换环境和选择历史版本。 includePlatforms=true 时同时返回其它平台的包；跨平台以同项目、同 appName、同上传者关联， 允许 Android 包名与 iOS Bundle ID 不同，同平台仍按 packageId 收敛。 字段经白名单收敛，不含相对路径、上传者或原始文件名。
          */
         get: operations["getBuildVersions"];
         put?: never;
@@ -1118,12 +1118,19 @@ export interface components {
             /** @description 上传者账号 id；system 表示外部 API 或历史数据 */
             ownerUserId?: string;
         };
-        /** @description 公开下载页「其它版本」列表项；只暴露跳转与辨识所需字段 */
+        /** @description 公开下载页的环境与版本选择项；只暴露跳转、辨识及版本说明所需字段 */
         PublicBuildVersion: {
             /** Format: uuid */
             id: string;
             version: string;
             buildNumber: string;
+            /**
+             * Format: int64
+             * @description 安装包大小（字节）
+             */
+            fileSize: number;
+            /** @description 上传者提供的更新说明，未填写时为空串 */
+            changelog: string;
             environment: components["schemas"]["Environment"];
             platform: components["schemas"]["Platform"];
             /** Format: date-time */
@@ -2685,7 +2692,10 @@ export interface operations {
     };
     getBuildVersions: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description 是否包含同应用其它平台的安装包，用于下载页切换安装平台 */
+                includePlatforms?: boolean;
+            };
             header?: never;
             path: {
                 /** @description 包稳定唯一标识 */
@@ -2704,6 +2714,7 @@ export interface operations {
                     "application/json": components["schemas"]["PublicBuildVersionsResponse"];
                 };
             };
+            400: components["responses"]["BadRequest"];
             404: components["responses"]["NotFound"];
             500: components["responses"]["InternalError"];
         };

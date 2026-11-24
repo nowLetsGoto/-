@@ -12,6 +12,7 @@ import type { Settings, WebhookConfig, WebhookField, WebhookTestResult } from '.
 import { getSettings, rotateApiKey, testWebhook, updateWebhook } from '../../api/settings';
 import { errorMessage } from '../../api/client';
 import { useCurrentProject } from '../../hooks/useProjects';
+import { useCopyText } from '../../hooks/useCopyText';
 import { Button, Checkbox, Input, Segmented } from '../../components/Controls';
 import { ConfirmDialog } from '../../components/ConfirmDialog';
 import { ErrorState, Loading } from '../../components/States';
@@ -19,6 +20,7 @@ import { ErrorState, Loading } from '../../components/States';
 type Tab = 'webhook' | 'api';
 
 export function SettingsPage(): JSX.Element {
+  const copyText = useCopyText();
   // 示例里的 project 必须取**真实解析出来的项目**：useCurrentProject().key 可能来自 URL 或
   // localStorage 里残留的失效值（此时 key 有值但 project 为 null），那样照抄示例就会 400。
   const { project } = useCurrentProject();
@@ -106,12 +108,7 @@ export function SettingsPage(): JSX.Element {
   };
 
   const copy = async (text: string, message: string): Promise<void> => {
-    try {
-      await navigator.clipboard.writeText(text);
-      setNotice(message);
-    } catch {
-      setNotice('复制失败，请手动选中复制');
-    }
+    setNotice((await copyText(text)) ? message : '浏览器未允许自动复制，请手动选中复制');
   };
 
   if (loading) {

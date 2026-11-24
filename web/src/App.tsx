@@ -13,6 +13,7 @@ import { ErrorBoundary } from 'react-error-boundary';
 import { Navigate, Outlet, Route, Routes, useLocation } from 'react-router-dom';
 import { readSession } from './api/session';
 import { AdminGate } from './components/AdminGate';
+import { DownloadPageSkeleton } from './components/DownloadSkeleton';
 import { Layout } from './components/Layout';
 import { LevelGate } from './components/LevelGate';
 import { PermissionGate } from './components/PermissionGate';
@@ -86,16 +87,18 @@ const TenantFormPage = lazy(() =>
 /**
  * 页面异步边界。
  * 职责：给懒加载页面套上统一的加载占位与 chunk 失败兜底。
- * 输入：children（懒加载页面）、可选加载文案。
+ * 输入：children（懒加载页面）、可选加载文案与专用骨架。
  * 输出：ErrorBoundary + Suspense 包裹的子树。
  * 边界：只处理 chunk 级异步态；页面自身的请求三态仍由叶子页面负责。
  */
 function PageBoundary({
   children,
   text = '正在加载页面…',
+  fallback,
 }: {
   children: ReactNode;
   text?: string;
+  fallback?: ReactNode;
 }): JSX.Element {
   const location = useLocation();
   return (
@@ -110,7 +113,7 @@ function PageBoundary({
         />
       )}
     >
-      <Suspense fallback={<Loading text={text} />}>{children}</Suspense>
+      <Suspense fallback={fallback ?? <Loading text={text} />}>{children}</Suspense>
     </ErrorBoundary>
   );
 }
@@ -189,7 +192,7 @@ export function App(): JSX.Element {
         path="/d/:id"
         element={
           <div className="public-shell public-download-shell">
-            <PageBoundary text="正在打开下载页…">
+            <PageBoundary fallback={<DownloadPageSkeleton />}>
               <DownloadPage />
             </PageBoundary>
           </div>

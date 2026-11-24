@@ -55,7 +55,7 @@ x-webhook-fields:
 # 展示标签的唯一产品维度定义处；前端 utils/format.ts 以 Record<契约类型, string> 镜像。
 x-environments:
   test: 测试
-  hotfix: 紧急修复
+  hotfix: 热更
   pre: 预发
   prd: 生产
 
@@ -1301,12 +1301,21 @@ paths:
   /builds/{id}/versions:
     get:
       operationId: getBuildVersions
-      summary: 同项目同应用的其它版本（公开下载页用）
+      summary: 同项目同应用的其它版本与平台包（公开下载页用）
       description: >
-        按目标包定位分区与项目，只返回同项目、同 appName、同 packageId 的其它包，
+        按目标包定位分区与项目，返回同项目、同 appName、同 packageId、同平台、同上传者的其它包，
+        跨环境按上传时间倒序返回完整版本列表，供访客切换环境和选择历史版本。
+        includePlatforms=true 时同时返回其它平台的包；跨平台以同项目、同 appName、同上传者关联，
+        允许 Android 包名与 iOS Bundle ID 不同，同平台仍按 packageId 收敛。
         字段经白名单收敛，不含相对路径、上传者或原始文件名。
       parameters:
         - $ref: '#/components/parameters/BuildId'
+        - name: includePlatforms
+          in: query
+          description: 是否包含同应用其它平台的安装包，用于下载页切换安装平台
+          schema:
+            type: boolean
+            default: false
       responses:
         '200':
           description: 成功
@@ -1316,6 +1325,8 @@ paths:
                 $ref: '#/components/schemas/PublicBuildVersionsResponse'
         '404':
           $ref: '#/components/responses/NotFound'
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '500':
           $ref: '#/components/responses/InternalError'
 
@@ -2463,11 +2474,13 @@ components:
 
     PublicBuildVersion:
       type: object
-      description: 公开下载页「其它版本」列表项；只暴露跳转与辨识所需字段
+      description: 公开下载页的环境与版本选择项；只暴露跳转、辨识及版本说明所需字段
       required:
         - id
         - version
         - buildNumber
+        - fileSize
+        - changelog
         - environment
         - platform
         - createdAt
@@ -2481,6 +2494,13 @@ components:
           type: string
         buildNumber:
           type: string
+        fileSize:
+          type: integer
+          format: int64
+          description: 安装包大小（字节）
+        changelog:
+          type: string
+          description: 上传者提供的更新说明，未填写时为空串
         environment:
           $ref: '#/components/schemas/Environment'
         platform:

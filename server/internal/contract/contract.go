@@ -1139,12 +1139,14 @@ type Build struct {
 	OwnerUserID string `json:"ownerUserId"`
 }
 
-// PublicBuildVersion 是公开下载页「其它版本」列表的最小投影：
-// 只暴露跳转与辨识所需字段，绝不把相对路径、上传者、原始文件名带到公网。
+// PublicBuildVersion 是公开下载页环境与版本选择的白名单投影：
+// 暴露版本辨识、包大小和更新说明，不包含相对路径、上传者或原始文件名。
 type PublicBuildVersion struct {
 	ID               string `json:"id"`
 	Version          string `json:"version"`
 	BuildNumber      string `json:"buildNumber"`
+	FileSize         int64  `json:"fileSize"`
+	Changelog        string `json:"changelog"`
 	Environment      string `json:"environment"`
 	Platform         string `json:"platform"`
 	CreatedAt        string `json:"createdAt"`

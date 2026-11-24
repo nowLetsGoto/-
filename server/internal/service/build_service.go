@@ -393,16 +393,14 @@ func (s *BuildService) Get(ctx context.Context, id string) (contract.Build, erro
 	return build, nil
 }
 
-// Versions 返回同项目、同应用的其它版本，给公开下载页的「其它版本」板块用。
+// Versions 返回同项目、同应用的完整其它版本，可选包含其它平台供公开页切换安装平台。
 // 公开链路没有登录态，沿用 findAnyPartition 的思路跨分区找目标包；找到后只返回白名单字段。
-func (s *BuildService) Versions(ctx context.Context, id string) ([]contract.PublicBuildVersion, error) {
+func (s *BuildService) Versions(ctx context.Context, id string, includePlatforms bool) ([]contract.PublicBuildVersion, error) {
 	if !contract.IsValidUUID(id) {
 		return nil, contract.NotFound(contract.ResourceBuild)
 	}
-	// 前端只展示 10 条；多取一条用于判断是否还有更多，避免额外 count 查询。
-	const limit = 11
 	for _, repo := range s.repos.All() {
-		builds, projectKey, err := repo.ListSiblingVersions(ctx, id, limit)
+		builds, projectKey, err := repo.ListSiblingVersions(ctx, id, includePlatforms)
 		if errors.Is(err, contract.ErrNotFound) {
 			continue
 		}
@@ -416,6 +414,8 @@ func (s *BuildService) Versions(ctx context.Context, id string) ([]contract.Publ
 				ID:               build.ID,
 				Version:          build.Version,
 				BuildNumber:      build.BuildNumber,
+				FileSize:         build.FileSize,
+				Changelog:        build.Changelog,
 				Environment:      build.Environment,
 				Platform:         build.Platform,
 				CreatedAt:        build.CreatedAt,

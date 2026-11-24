@@ -132,7 +132,15 @@ func (h *BuildHandler) Get(w http.ResponseWriter, r *http.Request) error {
 func (h *BuildHandler) Versions(w http.ResponseWriter, r *http.Request) error {
 	id := chi.URLParam(r, "id")
 	AttachLogFields(r, "id="+id)
-	versions, err := h.svc.Versions(r.Context(), id)
+	includePlatforms := false
+	if value := r.URL.Query().Get("includePlatforms"); value != "" {
+		parsed, err := strconv.ParseBool(value)
+		if err != nil {
+			return BadRequest("includePlatforms 必须是布尔值")
+		}
+		includePlatforms = parsed
+	}
+	versions, err := h.svc.Versions(r.Context(), id, includePlatforms)
 	if err != nil {
 		return err
 	}

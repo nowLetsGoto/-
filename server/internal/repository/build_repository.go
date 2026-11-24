@@ -144,10 +144,11 @@ func (r *BuildRepository) FindByID(ctx context.Context, id string) (contract.Bui
 	return build, nil
 }
 
-// ListSiblingVersions 返回与目标包同项目、同应用（app_name + package_id）的其它包，按时间倒序。
+// ListSiblingVersions 返回同项目、同应用、同上传者的其它包，按时间倒序。
+// 默认按平台和 package_id 收敛；includePlatforms 允许不同平台使用不同包名。
 // 只给公开下载页用：调用方先按 id 定位分区，SQL 再把范围钉在同一个项目 / 应用 / owner 内，
 // 不依赖调用方传 projectID（Build DTO 本身不带这一列）。
-func (r *BuildRepository) ListSiblingVersions(ctx context.Context, id string, limit int) ([]contract.Build, string, error) {
+func (r *BuildRepository) ListSiblingVersions(ctx context.Context, id string, includePlatforms bool) ([]contract.Build, string, error) {
 	var projectKey string
 	check := `SELECT (SELECT key FROM ` + r.project + ` WHERE id = b.project_id)
 		FROM ` + r.table + ` b WHERE b.id = $1`
@@ -162,10 +163,14 @@ func (r *BuildRepository) ListSiblingVersions(ctx context.Context, id string, li
 		WHERE id <> $1
 		  AND project_id = (SELECT project_id FROM ` + r.table + ` WHERE id = $1)
 		  AND app_name = (SELECT app_name FROM ` + r.table + ` WHERE id = $1)
-		  AND package_id = (SELECT package_id FROM ` + r.table + ` WHERE id = $1)
+		  AND (
+		    (platform = (SELECT platform FROM ` + r.table + ` WHERE id = $1)
+		      AND package_id = (SELECT package_id FROM ` + r.table + ` WHERE id = $1))
+		    OR ($2 AND platform <> (SELECT platform FROM ` + r.table + ` WHERE id = $1))
+		  )
 		  AND owner_user_id = (SELECT owner_user_id FROM ` + r.table + ` WHERE id = $1)
-		ORDER BY created_at DESC LIMIT $2`
-	rows, err := r.db.QueryContext(ctx, query, id, limit)
+		ORDER BY created_at DESC, id DESC`
+	rows, err := r.db.QueryContext(ctx, query, id, includePlatforms)
 	if err != nil {
 		return nil, "", fmt.Errorf("查询同应用版本失败: %w", err)
 	}

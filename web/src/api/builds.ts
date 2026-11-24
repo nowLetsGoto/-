@@ -58,9 +58,9 @@ export function getBuild(id: string): Promise<Build> {
   return get<Build>(ROUTES.buildById(id));
 }
 
-/** 公开下载页的「其它版本」：接口失败时页面直接隐藏板块，不阻断主下载流程。 */
+/** 公开下载页同应用的完整其它版本与平台包，由 hook 按平台、页面按环境选择。 */
 export function listBuildVersions(id: string): Promise<PublicBuildVersion[]> {
-  return get<PublicBuildVersion[]>(ROUTES.buildVersions(id));
+  return get<PublicBuildVersion[]>(`${ROUTES.buildVersions(id)}?includePlatforms=true`);
 }
 
 /**

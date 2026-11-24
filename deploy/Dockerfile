@@ -13,7 +13,7 @@ COPY web ./web
 COPY api ./api
 RUN cd web && npm run build
 
-FROM golang:1.22-bookworm AS backend
+FROM golang:1.24-bookworm AS backend
 WORKDIR /src
 COPY server/go.mod server/go.sum ./server/
 RUN cd server && go mod download

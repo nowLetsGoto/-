@@ -47,7 +47,7 @@ Makefile                 gen:api / dev / build / test / up / down
 
 ## 3. 快速开始（本地）
 
-前置：Go 1.22+、Node 20+、PostgreSQL 16+（用 Docker 起，或用本机已装实例，见下）。
+前置：Go 1.24+、Node 20+、PostgreSQL 16+（用 Docker 起，或用本机已装实例，见下）。
 
 ```bash
 docker compose -f deploy/docker-compose.yml up -d db   # 必须先起数据库

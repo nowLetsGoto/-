@@ -20,6 +20,12 @@ export default tseslint.config(
   js.configs.recommended,
   ...tseslint.configs.recommended,
 
+  // 浏览器兼容逻辑的 Node 回归测试。
+  {
+    files: ['tests/**/*.mjs'],
+    languageOptions: { globals: globals.node },
+  },
+
   // 浏览器全局与 React 生态规则。
   {
     files: ['src/**/*.{ts,tsx}'],
