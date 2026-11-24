@@ -136,7 +136,7 @@ func run() error {
 	settingsService := settingssvc.NewService(settingsRepo)
 	webhookService := webhooksvc.NewService(settingsRepo)
 
-	svc := service.NewBuildService(cfg, paths, buildRepos, projectRepos, webhookService)
+	svc := service.NewBuildService(cfg, paths, buildRepos, projectRepos, webhookService, repository.NewBuildSharePartitioned(db), authzService)
 	if err := svc.PurgeTmp(); err != nil {
 		return err
 	}

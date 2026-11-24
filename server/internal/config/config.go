@@ -51,7 +51,7 @@ type Config struct {
 	// AdminUsername / AdminPassword 是唯一管理员账号，登录时定长比较，不落库。
 	AdminUsername string
 	AdminPassword string
-	// AuthSecret 是登录令牌的 HMAC 密钥：只在内存中使用，不进日志、不进响应。
+	// AuthSecret 用于登录令牌签名及独立分享子密钥派生；不进日志、不进响应。
 	AuthSecret string
 }
 

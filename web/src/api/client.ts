@@ -4,7 +4,7 @@
  * 输入：API 相对路径与 fetch 配置；输出：已解包的 data。
  * 边界：不业务判断、不缓存（只有 GET 的在途去重，落地即失效）、不拼 window.location.origin；
  *       FormData 不手动设 Content-Type（浏览器自带 boundary）；
- *       401 统一在这里处理（清会话 + 回登录页），页面无需各自兜底。
+ *       登录请求的 401 在这里处理（清会话 + 回登录页），分享错误留在分享页，页面无需各自兜底。
  */
 import { clearSession, readSession } from './session';
 
@@ -30,24 +30,32 @@ interface Envelope<T> {
   message: string;
 }
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
+async function request<T>(path: string, init?: RequestInit, shareToken?: string): Promise<T> {
   // 已登录就带上 Bearer；new Headers 兼容 init.headers 的三种写法（对象 / 元组数组 / Headers）。
   const headers = new Headers(init?.headers);
-  const session = readSession();
+  const shared = shareToken !== undefined;
+  const session = shared ? null : readSession();
+  if (shared) {
+    headers.set('X-Share-Token', shareToken);
+  }
   if (session) {
     headers.set('Authorization', `Bearer ${session.token}`);
   }
 
   let response: Response;
   try {
-    response = await fetch(`${baseURL}${path}`, { ...init, headers });
+    response = await fetch(`${baseURL}${path}`, {
+      ...init,
+      headers,
+      ...(shared ? { credentials: 'omit', cache: 'no-store' } : {}),
+    });
   } catch {
     throw new ApiError('网络异常，请检查服务是否可用', 0);
   }
 
   // 401 只有一个含义：令牌缺失或已失效（凭据错误走 400）。
   // 因此可以无条件清空会话并回到登录页；已在登录页时不再跳，避免打断登录失败提示。
-  if (response.status === 401) {
+  if (!shared && response.status === 401) {
     clearSession();
     if (window.location.pathname !== LOGIN_PAGE) {
       window.location.assign(LOGIN_PAGE);
@@ -77,14 +85,26 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 const inflightGets = new Map<string, Promise<unknown>>();
 
 export function get<T>(path: string): Promise<T> {
-  const existing = inflightGets.get(path);
+  return getWithCredential<T>(path);
+}
+
+/** 分享请求使用独立凭证，不携带账号令牌，失效时保留当前登录会话。 */
+export function getShared<T>(path: string, shareToken: string): Promise<T> {
+  return getWithCredential<T>(path, shareToken);
+}
+
+function getWithCredential<T>(path: string, shareToken?: string): Promise<T> {
+  const credential =
+    shareToken !== undefined ? `share:${shareToken}` : `session:${readSession()?.token ?? ''}`;
+  const key = `${path}\0${credential}`;
+  const existing = inflightGets.get(key);
   if (existing) {
     return existing as Promise<T>;
   }
-  const pending = request<T>(path, { method: 'GET' }).finally(() => {
-    inflightGets.delete(path);
+  const pending = request<T>(path, { method: 'GET' }, shareToken).finally(() => {
+    inflightGets.delete(key);
   });
-  inflightGets.set(path, pending);
+  inflightGets.set(key, pending);
   return pending;
 }
 

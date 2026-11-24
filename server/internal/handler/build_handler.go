@@ -119,17 +119,19 @@ func (h *BuildHandler) List(w http.ResponseWriter, r *http.Request) error {
 
 // Get 返回单个包详情，供独立下载页按 id 自行取数。
 func (h *BuildHandler) Get(w http.ResponseWriter, r *http.Request) error {
+	shareHeaders(w)
 	id := chi.URLParam(r, "id")
 	AttachLogFields(r, "id="+id)
-	build, err := h.svc.Get(r.Context(), id)
+	build, err := h.svc.Get(r.Context(), id, authctx.From(r.Context()))
 	if err != nil {
 		return err
 	}
 	return OK(w, build)
 }
 
-// Versions 返回同项目、同应用的其它版本，供公开下载页展示版本列表。
+// Versions 返回登录用户可访问项目内的其它版本。
 func (h *BuildHandler) Versions(w http.ResponseWriter, r *http.Request) error {
+	shareHeaders(w)
 	id := chi.URLParam(r, "id")
 	AttachLogFields(r, "id="+id)
 	includePlatforms := false
@@ -140,7 +142,7 @@ func (h *BuildHandler) Versions(w http.ResponseWriter, r *http.Request) error {
 		}
 		includePlatforms = parsed
 	}
-	versions, err := h.svc.Versions(r.Context(), id, includePlatforms)
+	versions, err := h.svc.Versions(r.Context(), id, includePlatforms, authctx.From(r.Context()))
 	if err != nil {
 		return err
 	}
@@ -150,12 +152,56 @@ func (h *BuildHandler) Versions(w http.ResponseWriter, r *http.Request) error {
 // DownloadFile 流式下载原始包。计数时点严格在 io.Copy 成功且 written == Content-Length 之后；
 // 客户端中断 / copy 出错 / 字节不足一律不计数，且计数旁路失败绝不阻断已完成的下载。
 func (h *BuildHandler) DownloadFile(w http.ResponseWriter, r *http.Request) error {
+	shareHeaders(w)
 	id := chi.URLParam(r, "id")
 	AttachLogFields(r, "id="+id)
-	ref, err := h.svc.ResolveFile(r.Context(), id)
+	ref, err := h.svc.ResolveFile(r.Context(), id, authctx.From(r.Context()))
 	if err != nil {
 		return err
 	}
+	return h.streamFile(w, r, id, authctx.From(r.Context()).Mode, ref)
+}
+
+// SharedGet 不消费登录态，只接受独立分享凭证；错误也禁止缓存。
+func (h *BuildHandler) SharedGet(w http.ResponseWriter, r *http.Request) error {
+	shareHeaders(w)
+	build, err := h.svc.GetShared(r.Context(), chi.URLParam(r, "id"), shareToken(r))
+	if err != nil {
+		return err
+	}
+	return OK(w, build)
+}
+
+func (h *BuildHandler) SharedDownloadFile(w http.ResponseWriter, r *http.Request) error {
+	shareHeaders(w)
+	id := chi.URLParam(r, "id")
+	ref, mode, err := h.svc.ResolveSharedFile(r.Context(), id, shareToken(r))
+	if err != nil {
+		return err
+	}
+	return h.streamFile(w, r, id, mode, ref)
+}
+
+// 详情使用请求头，原生文件下载使用 query；同时出现不一致凭证时失败关闭。
+func shareToken(r *http.Request) string {
+	header := r.Header.Get("X-Share-Token")
+	query := r.URL.Query().Get("shareToken")
+	if header != "" && query != "" && header != query {
+		return ""
+	}
+	if header != "" {
+		return header
+	}
+	return query
+}
+
+func shareHeaders(w http.ResponseWriter) {
+	w.Header().Set("Cache-Control", "private, no-store")
+	w.Header().Set("Referrer-Policy", "no-referrer")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+}
+
+func (h *BuildHandler) streamFile(w http.ResponseWriter, r *http.Request, id string, mode contract.SessionMode, ref contract.FileRef) error {
 	file, err := os.Open(ref.AbsPath)
 	if err != nil {
 		return NotFound("包文件不存在或已被移除")
@@ -171,13 +217,13 @@ func (h *BuildHandler) DownloadFile(w http.ResponseWriter, r *http.Request) erro
 	// 中文下载名双重编码：filename 兼容旧浏览器，filename* 遵循 RFC 5987。
 	w.Header().Set("Content-Disposition", contentDisposition(ref.FileName))
 	w.Header().Set("Content-Length", strconv.FormatInt(size, 10))
-	w.Header().Set("Cache-Control", "no-cache")
+	shareHeaders(w)
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.WriteHeader(http.StatusOK)
 
 	written, copyErr := io.Copy(w, file)
 	if copyErr == nil && written == size {
-		h.svc.IncrDownloadCount(id)
+		h.svc.IncrDownloadCount(id, mode)
 	} else {
 		log.Printf("下载未完成，不计数 id=%s written=%d size=%d err=%v", id, written, size, copyErr)
 	}

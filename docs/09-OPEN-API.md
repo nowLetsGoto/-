@@ -73,14 +73,14 @@ curl -X POST https://dandelion.example.com/api/v1/open/builds \
     "metaSource": "parsed",
     "downloadCount": 0,
     "downloadPagePath": "/d/b8cf8d2e-78ad-45c7-83f1-e7a235d60374",
-    "downloadPageUrl": "https://dandelion.example.com/d/b8cf8d2e-78ad-45c7-83f1-e7a235d60374",
-    "downloadFileUrl": "https://dandelion.example.com/api/v1/builds/b8cf8d2e-78ad-45c7-83f1-e7a235d60374/file",
+    "downloadPageUrl": "https://dandelion.example.com/d/b8cf8d2e-78ad-45c7-83f1-e7a235d60374?shareToken=<share-token>",
+    "downloadFileUrl": "https://dandelion.example.com/api/v1/public/builds/b8cf8d2e-78ad-45c7-83f1-e7a235d60374/file?shareToken=<share-token>",
     "createdAt": "2026-11-16T06:12:31Z"
   }
 }
 ```
 
-`downloadPageUrl` 可以直接发给测试同学：手机扫码打开独立下载页，无需登录。
+`downloadPageUrl` 可以直接发给测试同学：手机扫码打开独立下载页，无需登录。必须完整保留 shareToken 查询参数；它只允许查看和下载本次发布的一个版本，公司 API Key 不能放进分享链接。
 
 ## 5. 错误
 

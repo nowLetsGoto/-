@@ -6,11 +6,12 @@
  *       commitBuild 只发 JSON（恰好 8 字段），绝不携带文件与 metaSource；isShareableUrl 只做可达性判断，不生成地址。
  */
 import type { components } from './schema';
-import { get, postForm, postJSON } from './client';
+import { get, getShared, postForm, postJSON } from './client';
 
 type Schemas = components['schemas'];
 
 export type Build = Schemas['Build'];
+export type DownloadBuild = Schemas['SharedBuild'];
 export type StageResult = Schemas['StageResult'];
 export type CommitBuildRequest = Schemas['CommitBuildRequest'];
 export type ListBuildsResult = Schemas['ListBuildsResult'];
@@ -21,6 +22,7 @@ export type PublicBuildVersion = Schemas['PublicBuildVersion'];
 
 /** 契约路径的前端唯一镜像；页面不得自行拼 /api/v1 路径。 */
 const ROUTES = {
+  sharedBuild: (id: string): string => `/api/v1/public/builds/${encodeURIComponent(id)}`,
   stage: '/api/v1/builds/stage',
   builds: '/api/v1/builds',
   buildById: (id: string): string => `/api/v1/builds/${encodeURIComponent(id)}`,
@@ -58,7 +60,12 @@ export function getBuild(id: string): Promise<Build> {
   return get<Build>(ROUTES.buildById(id));
 }
 
-/** 公开下载页同应用的完整其它版本与平台包，由 hook 按平台、页面按环境选择。 */
+/** 独立分享只读取授权版本，不请求其它版本。 */
+export function getSharedBuild(id: string, token: string): Promise<DownloadBuild> {
+  return getShared<DownloadBuild>(ROUTES.sharedBuild(id), token);
+}
+
+/** 登录预览的其它版本与平台包，由 hook 按平台、页面按环境选择。 */
 export function listBuildVersions(id: string): Promise<PublicBuildVersion[]> {
   return get<PublicBuildVersion[]>(`${ROUTES.buildVersions(id)}?includePlatforms=true`);
 }

@@ -130,14 +130,14 @@ func WriteError(w http.ResponseWriter, r *http.Request, err error) {
 			appErr = &AppError{Status: 403, Code: 403, Message: contract.ErrForbidden.Error()}
 		default:
 			log.Printf("[500] method=%s path=%s query=%s %s err=%v",
-				r.Method, r.URL.Path, r.URL.RawQuery, logFields(r), err)
+				r.Method, r.URL.Path, safeLogQuery(r), logFields(r), err)
 			appErr = &AppError{Status: 500, Code: 500, Message: "服务内部错误，请稍后重试"}
 		}
 	}
 	if appErr.Status >= 500 {
 		// 日志保留可定位信息（含 id / 环境 / 平台 / 文件名），响应绝不携带堆栈。
 		log.Printf("[%d] method=%s path=%s query=%s %s err=%v",
-			appErr.Status, r.Method, r.URL.Path, r.URL.RawQuery, logFields(r), appErr.Message)
+			appErr.Status, r.Method, r.URL.Path, safeLogQuery(r), logFields(r), appErr.Message)
 	}
 	// 失败请求可能在 tmp 留下刚写入的暂存文件，集中在这里清理。
 	cleanupStageFiles(r)
@@ -168,4 +168,15 @@ func DecodeJSON(w http.ResponseWriter, r *http.Request, target any, allowed stri
 		return BadRequest("请求体不是合法的 JSON")
 	}
 	return nil
+}
+
+// safeLogQuery 不把 URL 中的分享凭证写入应用日志（含重复参数和编码形式）。
+func safeLogQuery(r *http.Request) string {
+	query := r.URL.Query()
+	for key := range query {
+		if strings.EqualFold(key, "shareToken") {
+			query.Set(key, "[REDACTED]")
+		}
+	}
+	return query.Encode()
 }

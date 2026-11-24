@@ -35,6 +35,7 @@ type BuildRepository struct {
 	db      *sql.DB
 	table   string // 全限定表名，如 team.builds；只能来自 Partition.Table
 	project string // 同分区的项目表，用于把项目 key 解析成 id
+	share   string // 同分区分享表，与新包在同一事务里创建
 	// ownerScoped 为真表示该表按创建者隔离（单人分区）：列表必须带 owner_user_id 条件。
 	// 与 project 仓储的 ownerScoped 同名同义——两处隔离用同一个词，读代码时不必重新推断。
 	// 这一层校验是兜底：正常路径由 service 先 resolveProject（带 owner）再按项目查，
@@ -52,6 +53,7 @@ func newBuildRepository(db *sql.DB, schema Partition, ownerScoped bool) *BuildRe
 		db:          db,
 		table:       schema.Table("builds"),
 		project:     schema.Table("projects"),
+		share:       schema.Table("build_shares"),
 		ownerScoped: ownerScoped,
 	}
 }
@@ -73,6 +75,11 @@ func (r *BuildRepository) NextID(ctx context.Context) (string, error) {
 // Insert 写入一行完整元数据，并回填数据库生成的 created_at 与 download_count。
 // projectID 由 service 先按项目 key 解析好再传入，仓储层不关心 key。
 func (r *BuildRepository) Insert(ctx context.Context, projectID string, b *contract.Build) error {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("开启发布事务失败: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
 	query := `INSERT INTO ` + r.table + ` (
 		id, project_id, environment, platform, app_name, package_id, version, build_number,
 		changelog, original_file_name, file_size, file_ext, relative_path,
@@ -82,13 +89,19 @@ func (r *BuildRepository) Insert(ctx context.Context, projectID string, b *contr
 
 	var createdAt time.Time
 	var count int64
-	err := r.db.QueryRowContext(ctx, query,
+	err = tx.QueryRowContext(ctx, query,
 		b.ID, projectID, b.Environment, b.Platform, b.AppName, b.PackageID, b.Version, b.BuildNumber,
 		b.Changelog, b.OriginalFileName, b.FileSize, b.FileExt, b.RelativePath,
 		b.MetaSource, 0, ownerUserID(b.OwnerUserID),
 	).Scan(&createdAt, &count)
 	if err != nil {
 		return fmt.Errorf("写入包元数据失败: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO `+r.share+` (build_id) VALUES ($1)`, b.ID); err != nil {
+		return fmt.Errorf("创建包分享授权失败: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("提交发布事务失败: %w", err)
 	}
 	b.CreatedAt = createdAt.UTC().Format(time.RFC3339Nano)
 	b.DownloadCount = count
@@ -146,7 +159,7 @@ func (r *BuildRepository) FindByID(ctx context.Context, id string) (contract.Bui
 
 // ListSiblingVersions 返回同项目、同应用、同上传者的其它包，按时间倒序。
 // 默认按平台和 package_id 收敛；includePlatforms 允许不同平台使用不同包名。
-// 只给公开下载页用：调用方先按 id 定位分区，SQL 再把范围钉在同一个项目 / 应用 / owner 内，
+// 只给登录预览使用：调用方先按真实项目校验范围和读取权限，SQL 再限定项目 / 应用 / owner，
 // 不依赖调用方传 projectID（Build DTO 本身不带这一列）。
 func (r *BuildRepository) ListSiblingVersions(ctx context.Context, id string, includePlatforms bool) ([]contract.Build, string, error) {
 	var projectKey string

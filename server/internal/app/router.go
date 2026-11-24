@@ -50,9 +50,9 @@ type Deps struct {
 	Audit    *audithandler.Handler
 	Roles    *rolehandler.Handler
 	// Authz 提供权限判定，路由层用它给每个接口挂上所需权限点
-	Authz   *authzsvc.Service
-	Teams   *teamshandler.Handler
-	Tenants *tenanthandler.Handler
+	Authz    *authzsvc.Service
+	Teams    *teamshandler.Handler
+	Tenants  *tenanthandler.Handler
 	Settings *settingshandler.Handler
 	Verify   loginmw.Verifier
 	// APIKey 每次请求查一次库反查归属公司（空串=平台兜底 Key），改配置无需重启。
@@ -65,23 +65,25 @@ type Deps struct {
 // chi 的默认 405 处理器会自动回填 Allow 头；一旦自定义 MethodNotAllowed 就必须自己补，
 // 否则响应缺少 Allow，与契约 §6.1 的「405 + Allow + JSON 外壳」不一致。
 var allowedMethods = map[string]string{
-	contract.RouteLogin:        "POST",
-	contract.RouteMe:           "GET",
-	contract.RouteMePassword:   "PUT",
-	contract.RouteProjects:     "GET, POST",
-	contract.RouteProjectByKey: "GET, PUT",
-	contract.RoutePeople:       "GET, POST",
-	contract.RoutePersonByID:   "GET, PUT",
-	contract.RouteTeams:        "GET, POST",
-	contract.RouteTeamByID:     "GET, PUT",
-	contract.RouteOpenBuilds:   "POST",
-	contract.RouteSettings:     "GET, PUT",
-	contract.RouteWebhookTest:  "POST",
-	contract.RouteBuilds:       "GET, POST",
-	contract.RouteStage:        "POST",
-	contract.RouteBuildByID:    "GET",
-	contract.RouteBuildVersions: "GET",
-	contract.RouteBuildFile:    "GET",
+	contract.RouteLogin:           "POST",
+	contract.RouteMe:              "GET",
+	contract.RouteMePassword:      "PUT",
+	contract.RouteProjects:        "GET, POST",
+	contract.RouteProjectByKey:    "GET, PUT",
+	contract.RoutePeople:          "GET, POST",
+	contract.RoutePersonByID:      "GET, PUT",
+	contract.RouteTeams:           "GET, POST",
+	contract.RouteTeamByID:        "GET, PUT",
+	contract.RouteOpenBuilds:      "POST",
+	contract.RouteSettings:        "GET, PUT",
+	contract.RouteWebhookTest:     "POST",
+	contract.RouteBuilds:          "GET, POST",
+	contract.RouteStage:           "POST",
+	contract.RouteBuildByID:       "GET",
+	contract.RouteBuildVersions:   "GET",
+	contract.RouteBuildFile:       "GET",
+	contract.RouteSharedBuild:     "GET",
+	contract.RouteSharedBuildFile: "GET",
 }
 
 // allowedMethodsFor 返回该请求应回填的 Allow 值。
@@ -132,10 +134,9 @@ func NewRouter(d Deps) http.Handler {
 	r.Route(contract.APIPrefix, func(api chi.Router) {
 		api.Post("/auth/login", middleware.Wrap(d.Login.Login))
 
-		// 下载链路必须公开：扫码的人没有账号，点开链接就要能看详情、能下载。
-		api.Get("/builds/{id}", middleware.Wrap(d.Builds.Get))
-		api.Get("/builds/{id}/versions", middleware.Wrap(d.Builds.Versions))
-		api.Get("/builds/{id}/file", middleware.Wrap(d.Builds.DownloadFile))
+		// 分享无需登录，但详情和文件都必须逐次校验绑定单个版本的分享凭证。
+		api.Get("/public/builds/{id}", middleware.Wrap(d.Builds.SharedGet))
+		api.Get("/public/builds/{id}/file", middleware.Wrap(d.Builds.SharedDownloadFile))
 
 		// 外部系统上传：X-API-Key 鉴权，与管理端登录态互不影响。
 		api.With(apikey.Require(d.APIKey)).Post("/open/builds", middleware.Wrap(d.Open.Upload))
@@ -146,6 +147,9 @@ func NewRouter(d Deps) http.Handler {
 			// 身份解析完立刻推导 scope 存进 ctx，后面的 handler 只读不算。
 			// 挂在 RequireAuth 之后：没有可信身份时不做任何范围推导。
 			private.Use(loginmw.InjectScope(d.Authz))
+			private.Get("/builds/{id}", middleware.Wrap(d.Builds.Get))
+			private.Get("/builds/{id}/versions", middleware.Wrap(d.Builds.Versions))
+			private.Get("/builds/{id}/file", middleware.Wrap(d.Builds.DownloadFile))
 			// 发布/暂存：提交时项目在请求体里，由 handler 内部判定 build.write
 			private.Post("/builds/stage", middleware.Wrap(d.Builds.Stage))
 			private.Post("/builds", middleware.Wrap(d.Builds.Commit))
@@ -321,6 +325,7 @@ func spaHandler(static fs.FS) http.HandlerFunc {
 				return
 			}
 		}
+		w.Header().Set("Referrer-Policy", "no-referrer")
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.Header().Set("Cache-Control", "no-cache")
 		w.WriteHeader(http.StatusOK)

@@ -1,14 +1,14 @@
 /**
  * 公开应用分发页（移动端优先）。
- * 职责：展示应用身份、环境与版本、安装包及二维码；桌面内嵌版本记录，移动端用底部选择弹层。
- * 输入：路由包 id、useEnvironment 管理的 URL 环境、公开包详情和版本列表；输出：响应式下载页。
- * 边界：页面不请求接口、不拼下载 URL；路由保留指定版本，切环境选最新包；空环境绝不沿用旧包下载。
+ * 职责：分享模式只展示授权版本、安装包及二维码；登录预览额外提供环境和版本切换。
+ * 输入：路由包 id、可选分享凭证、URL 环境及 hook 返回的详情；输出：响应式下载页。
+ * 边界：页面不请求接口、不拼下载 URL；分享按包的真实环境展示，登录预览的空环境不沿用旧包下载。
  */
 import { useEffect, useRef, useState } from 'react';
 import type { MouseEvent } from 'react';
-import { useParams } from 'react-router-dom';
+import { useParams, useSearchParams } from 'react-router-dom';
 import { Collapse, QRCode } from '@seakoi/console-kit';
-import type { Build, Environment, Platform, PublicBuildVersion } from '../../api/builds';
+import type { DownloadBuild, Environment, Platform, PublicBuildVersion } from '../../api/builds';
 import { isShareableUrl } from '../../api/builds';
 import { Button, Radio, Segmented } from '../../components/Controls';
 import { DetailDrawer } from '../../components/DetailDrawer';
@@ -212,20 +212,29 @@ function DownloadLink({
   disabled,
   onClick,
 }: {
-  build: Build;
+  build: DownloadBuild;
   disabled: boolean;
   onClick: (event: MouseEvent<HTMLAnchorElement>) => void;
 }): JSX.Element {
   return (
     <a
       className={`download-install${disabled ? ' is-disabled' : ''}`}
-      href={build.downloadFileUrl}
-      onClick={onClick}
-      aria-disabled={disabled}
+      href={build.downloadFileUrl || undefined}
+      onClick={(event) => {
+        if (!build.downloadFileUrl) event.preventDefault();
+        else onClick(event);
+      }}
+      aria-disabled={disabled || !build.downloadFileUrl}
     >
       <img src={downloadIcon} alt="" />
       <span>
-        {disabled ? '正在准备下载…' : build.platform === 'ios' ? '下载 IPA 文件' : '下载安装'}
+        {!build.downloadFileUrl
+          ? '分享暂不可用'
+          : disabled
+            ? '正在准备下载…'
+            : build.platform === 'ios'
+              ? '下载 IPA 文件'
+              : '下载安装'}
       </span>
       <small>{formatBytes(build.fileSize)}</small>
     </a>
@@ -240,7 +249,7 @@ function DeviceDownloadAction({
   onSwitch,
   onDownload,
 }: {
-  build: Build;
+  build: DownloadBuild;
   devicePlatform: Platform | null;
   target: PublicBuildVersion | undefined;
   disabled: boolean;
@@ -276,6 +285,9 @@ export function DownloadPage(): JSX.Element {
   const mobile = useMediaQuery('(max-width: 760px)');
   const devicePlatform = useDevicePlatform();
   const { id = '' } = useParams<{ id: string }>();
+  const [params] = useSearchParams();
+  const shareToken = params.get('shareToken');
+  const shared = shareToken !== null;
   const {
     build,
     versions,
@@ -286,8 +298,9 @@ export function DownloadPage(): JSX.Element {
     error,
     versionsError,
     reload,
-  } = usePublicDownload(id);
-  const [environment, setEnvironment] = useEnvironment(build?.environment);
+  } = usePublicDownload(id, shareToken);
+  const [previewEnvironment, setEnvironment] = useEnvironment(build?.environment);
+  const environment = shared && build ? build.environment : previewEnvironment;
   const [sheet, setSheet] = useState<'versions' | 'help' | 'qr' | null>(null);
   const [pendingVersion, setPendingVersion] = useState('');
   const [versionsExpanded, setVersionsExpanded] = useState(false);
@@ -308,10 +321,10 @@ export function DownloadPage(): JSX.Element {
   );
   // 兼容直接打开带环境参数的链接：URL 有对应包时定位过去，不误显示为空环境。
   useEffect(() => {
-    if (loading || !build || build.environment === environment) return;
+    if (shared || loading || !build || build.environment === environment) return;
     const target = versions.find((item) => item.environment === environment);
     if (target) setEnvironment(environment, target.downloadPagePath);
-  }, [build, environment, loading, versions, setEnvironment]);
+  }, [build, environment, loading, versions, setEnvironment, shared]);
   // 拖动桌面窗口跨过断点时，关闭旧的移动端版本弹层。
   useEffect(() => {
     if (!mobile && sheet === 'versions') setSheet(null);
@@ -321,7 +334,7 @@ export function DownloadPage(): JSX.Element {
     return (
       <section className="download-state">
         <Empty
-          title="安装包不存在"
+          title={shared ? '分享不可用' : '安装包不存在'}
           description="链接可能已失效，或安装包已被移除。请向分享链接的人获取最新地址。"
         />
       </section>
@@ -367,7 +380,7 @@ export function DownloadPage(): JSX.Element {
   });
 
   const changePlatform = (next: Platform): void => {
-    if (next === currentPlatform || loading) return;
+    if (shared || next === currentPlatform || loading) return;
     const target = findPlatformVersion(platformVersions, next, environment, selectedBuild?.version);
     if (!target) return;
     setReleaseHeight(releaseContent.current?.getBoundingClientRect().height);
@@ -386,6 +399,7 @@ export function DownloadPage(): JSX.Element {
   };
 
   const changeEnvironment = (next: Environment): void => {
+    if (shared) return;
     setReleaseHeight(releaseContent.current?.getBoundingClientRect().height);
     const target = versions.find((item) => item.environment === next);
     setEnvironment(next, target?.downloadPagePath);
@@ -396,6 +410,7 @@ export function DownloadPage(): JSX.Element {
     setDownloadDisabled(false);
   };
   const chooseVersion = (versionId: string): void => {
+    if (shared) return;
     const target = available.find((item) => item.id === versionId);
     if (!target) return;
     setReleaseHeight(releaseContent.current?.getBoundingClientRect().height);
@@ -410,7 +425,7 @@ export function DownloadPage(): JSX.Element {
     setSheet('versions');
   };
   const copyLink = async (): Promise<void> => {
-    if (!selectedBuild) return;
+    if (!selectedBuild?.downloadPageUrl) return;
     setNotice(null);
     if (await copyText(selectedBuild.downloadPageUrl)) {
       setCopied(true);
@@ -433,7 +448,7 @@ export function DownloadPage(): JSX.Element {
 
   return (
     <article
-      className={`download-page${devicePlatform && devicePlatform !== currentPlatform ? ' has-device-mismatch' : ''}`}
+      className={`download-page${!shared && devicePlatform && devicePlatform !== currentPlatform ? ' has-device-mismatch' : ''}`}
     >
       <header className="download-topbar">
         <div>
@@ -448,7 +463,7 @@ export function DownloadPage(): JSX.Element {
           type="button"
           className="download-mobile-share"
           aria-label={copied ? '链接已复制' : '分享当前版本'}
-          disabled={!selectedBuild}
+          disabled={!selectedBuild?.downloadPageUrl}
           onClick={() => void copyLink()}
         >
           <img src={shareIcon} alt="" />
@@ -473,12 +488,14 @@ export function DownloadPage(): JSX.Element {
                 <span>·</span>内部应用
               </p>
             </div>
-            <p className="download-tagline">选择合适的环境与版本，开始安装。</p>
+            <p className="download-tagline">
+              {shared ? '无需登录，即可查看和下载此分享版本。' : '选择合适的环境与版本，开始安装。'}
+            </p>
           </div>
           <Button
             className="download-share"
             type="button"
-            disabled={!selectedBuild}
+            disabled={!selectedBuild?.downloadPageUrl}
             onClick={() => void copyLink()}
           >
             <img src={shareIcon} alt="" />
@@ -498,36 +515,38 @@ export function DownloadPage(): JSX.Element {
               aria-label="环境与安装包"
               aria-busy={switching}
             >
-              <div className="download-selection-bar">
-                <div className="download-environments">
-                  <div className="download-section-heading">
-                    <h2>选择环境</h2>
-                    <span>不同环境的安装包独立发布</span>
-                  </div>
-                  <Segmented<Environment>
-                    block
-                    className="download-env-tabs"
-                    options={[...ENVIRONMENTS]}
-                    value={environment}
-                    onChange={changeEnvironment}
-                    disabled={loading}
-                    aria-label="选择安装环境"
-                  />
-                </div>
-                {!mobile ? (
-                  <div className="download-platform-picker">
-                    <h2>安装平台</h2>
-                    <Segmented<Platform>
-                      className="download-platform-tabs"
-                      options={platformOptions}
-                      value={currentPlatform}
-                      onChange={changePlatform}
+              {!shared ? (
+                <div className="download-selection-bar">
+                  <div className="download-environments">
+                    <div className="download-section-heading">
+                      <h2>选择环境</h2>
+                      <span>不同环境的安装包独立发布</span>
+                    </div>
+                    <Segmented<Environment>
+                      block
+                      className="download-env-tabs"
+                      options={[...ENVIRONMENTS]}
+                      value={environment}
+                      onChange={changeEnvironment}
                       disabled={loading}
-                      aria-label="选择安装平台"
+                      aria-label="选择安装环境"
                     />
                   </div>
-                ) : null}
-              </div>
+                  {!mobile ? (
+                    <div className="download-platform-picker">
+                      <h2>安装平台</h2>
+                      <Segmented<Platform>
+                        className="download-platform-tabs"
+                        options={platformOptions}
+                        value={currentPlatform}
+                        onChange={changePlatform}
+                        disabled={loading}
+                        aria-label="选择安装平台"
+                      />
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
               <div
                 ref={releaseContent}
                 className="download-release-content"
@@ -546,7 +565,13 @@ export function DownloadPage(): JSX.Element {
                           <div className="download-release-top">
                             <EnvironmentBadge environment={selectedBuild.environment} />
                             <span className="download-release-status">
-                              {versionsError ? '当前版本' : historical ? '历史版本' : '最新发布'}
+                              {shared
+                                ? '分享版本'
+                                : versionsError
+                                  ? '当前版本'
+                                  : historical
+                                    ? '历史版本'
+                                    : '最新发布'}
                             </span>
                           </div>
                           <div className="download-version-line">
@@ -554,7 +579,7 @@ export function DownloadPage(): JSX.Element {
                               <small>v</small>
                               {selectedBuild.version}
                             </h2>
-                            {mobile ? (
+                            {mobile && !shared ? (
                               <Button
                                 className="download-text-button download-version-trigger"
                                 type="button"
@@ -568,11 +593,13 @@ export function DownloadPage(): JSX.Element {
                           </div>
                           <p className="download-release-caption">
                             {formatDate(selectedBuild.createdAt)} 发布 ·{' '}
-                            {versionsError
-                              ? '当前所选版本'
-                              : historical
-                                ? '当前选择为历史版本'
-                                : '当前环境最新版本'}
+                            {shared
+                              ? '当前分享版本'
+                              : versionsError
+                                ? '当前所选版本'
+                                : historical
+                                  ? '当前选择为历史版本'
+                                  : '当前环境最新版本'}
                           </p>
                           <dl className="download-package-metrics">
                             <div>
@@ -681,7 +708,7 @@ export function DownloadPage(): JSX.Element {
                     ) : null}
                   </div>
                 )}
-                {!mobile && (switching || selectedBuild) ? (
+                {!shared && !mobile && (switching || selectedBuild) ? (
                   <DownloadVersions
                     versions={available}
                     selectedId={selectedBuild?.id ?? ''}
@@ -771,7 +798,7 @@ export function DownloadPage(): JSX.Element {
                   <p className="download-qr-caption">使用手机浏览器扫码打开</p>
                   <DeviceDownloadAction
                     build={selectedBuild}
-                    devicePlatform={devicePlatform}
+                    devicePlatform={shared ? null : devicePlatform}
                     target={recommendedTarget}
                     disabled={downloadDisabled}
                     onSwitch={changePlatform}
@@ -836,7 +863,7 @@ export function DownloadPage(): JSX.Element {
         ) : selectedBuild ? (
           <DeviceDownloadAction
             build={selectedBuild}
-            devicePlatform={devicePlatform}
+            devicePlatform={shared ? null : devicePlatform}
             target={recommendedTarget}
             disabled={downloadDisabled}
             onSwitch={changePlatform}
@@ -854,7 +881,7 @@ export function DownloadPage(): JSX.Element {
         </p>
       </footer>
       <DetailDrawer
-        open={mobile && sheet === 'versions'}
+        open={!shared && mobile && sheet === 'versions'}
         title={
           <>
             <h2>选择版本</h2>
@@ -926,7 +953,7 @@ export function DownloadPage(): JSX.Element {
           <Button
             className="button button-primary download-confirm"
             type="button"
-            disabled={!selectedBuild}
+            disabled={!selectedBuild?.downloadPageUrl}
             onClick={() => void copyLink()}
           >
             {copied ? '链接已复制' : '复制当前版本链接'}
@@ -977,7 +1004,11 @@ export function DownloadPage(): JSX.Element {
             请核对文件大小。如果下载中断，请删除未完成的文件后重新下载。仍无法打开时，可用系统自带浏览器重试。
           </p>
           <h3>如何确认安装的版本？</h3>
-          <p>先核对页面上的环境、版本号与构建号。切换版本后，下载入口与分享链接会同步更新。</p>
+          <p>
+            {shared
+              ? '本链接仅授权页面展示的这一版本。需要其他版本时，请向发布者获取对应的分享链接。'
+              : '先核对页面上的环境、版本号与构建号。切换版本后，下载入口与分享链接会同步更新。'}
+          </p>
           <h3>下载次数如何计算？</h3>
           <p>只有安装包完整下载成功才会计入次数，点击按钮本身不会增加计数。</p>
         </div>

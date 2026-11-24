@@ -4,6 +4,8 @@
 
 状态：当前设计方案，尚未实施。替代 `13-DOWNLOAD-ACCESS-MVP.md` 中要求接收者登录的方案。
 
+> 第 1—8 节保留原始设计，“尚未实施”和“本轮仅更新设计文档”表示方案提出时的状态。当前实施进度与差异见第 9 节，以代码及 OpenAPI 为准。
+
 ## 1. 已确认的目标
 
 推送中的「请查看」、页面分享链接与二维码指向同一个版本分享页。接收者无需登录，持有有效分享链接即可查看授权版本并下载。
@@ -119,3 +121,39 @@ MVP 可直接使用服务端返回的、携带同一低权限分享 Token 的文
 9. 170 MB 包继续原生流式下载，传输失败不计数；日志和第三方错误上报不记录完整分享凭证。
 
 实施时同步 OpenAPI、Go DTO / APIRoutes、分区 DDL、repository / service / handler、前端 API 与 hook，并执行契约生成、后端授权测试及构建。本轮仅更新设计文档，尚未修改业务接口或实施上述校验。
+
+## 9. 当前实施情况（补充）
+
+本次已实现下载页的单版本免登录分享；Webhook 推送对接后续再做。原稿中的权限边界和后续设计约束继续保留，当前实现范围如下：
+
+| 项目 | 当前实现与原方案的差异 |
+| --- | --- |
+| 分享入口 | `/d/<buildId>?shareToken=...` 免登录访问指定版本；裸 `/d/<buildId>` 为登录预览，按包的真实项目检查范围与 `build.read`。 |
+| 链接分发 | 发布时按现有上传权限创建授权；有对应项目 `build.read` 的登录用户可取得已有有效授权的相同链接。读取不会创建或重新启用失效授权。 |
+| 密钥派生 | 原稿提出 HKDF；当前使用 `HMAC-SHA256(AUTH_SECRET, "dandelion/download-share/v1")` 派生分享子密钥，签名覆盖 `s1\|mode\|shareId\|buildId\|revision`。 |
+| 授权字段 | 实际存储 `id / build_id / revision / expires_at / revoked_at`；项目由绑定包关联取得，未存储原稿中的 `projectId / issuerKind / issuerId`。 |
+| 有效期与撤销 | 默认长期有效；服务端已校验到期、撤销及 revision，但本期未提供设置有效期、撤销、轮换或重新开启的管理 API／UI。 |
+| 页面范围 | 分享页隐藏环境、平台和历史版本切换，只请求授权版本；登录预览保留有权限的版本切换。 |
+| 静态截图 | 现有截图随前端发布，不作为受控附件；如后续加入内部受控资料，仍须满足第 8 节的资源鉴权要求。 |
+
+当前下载分享流程：
+
+```mermaid
+flowchart TD
+    publish["登录发布或 CI 上传"] --> uploadAuth["校验现有上传权限与项目范围"]
+    uploadAuth --> persist["事务写入包和单版本分享授权"]
+    persist --> link["返回分享链接与二维码地址"]
+    link --> open["接收者免登录打开"]
+    open --> detail["详情请求携带分享 Token"]
+    detail --> validate{"签名、分区、包 ID 与授权状态有效？"}
+    validate -->|否| unavailable["显示分享不可用"]
+    validate -->|是| page["显示这一个版本"]
+    page --> download["点击下载并再次校验分享授权"]
+    download --> fileCheck{"授权仍有效？"}
+    fileCheck -->|否| unavailable
+    fileCheck -->|是| stream["浏览器流式下载，完整成功后计数"]
+```
+
+升级时需部署完整前后端产物并重启 Go 进程，由应用数据库账号执行幂等 DDL；存量包会补齐分享授权，重复启动不覆盖已有授权状态。旧的无凭证链接不再允许匿名访问，需重新复制带 `shareToken` 的完整分享地址。`PUBLIC_BASE_URL` 应配置为接收者可访问的地址。
+
+轮换 `AUTH_SECRET` 会使已发登录令牌和分享签名失效，需重新获取分享地址。上述实现说明不表示原稿中的 Webhook 对接或分享管理入口已完成。

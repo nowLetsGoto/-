@@ -545,7 +545,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** 单个包详情（下载页取数） */
+        /** 登录用户的下载页预览详情（按真实项目校验权限） */
         get: operations["getBuild"];
         put?: never;
         post?: never;
@@ -563,8 +563,8 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * 同项目同应用的其它版本与平台包（公开下载页用）
-         * @description 按目标包定位分区与项目，返回同项目、同 appName、同 packageId、同平台、同上传者的其它包， 跨环境按上传时间倒序返回完整版本列表，供访客切换环境和选择历史版本。 includePlatforms=true 时同时返回其它平台的包；跨平台以同项目、同 appName、同上传者关联， 允许 Android 包名与 iOS Bundle ID 不同，同平台仍按 packageId 收敛。 字段经白名单收敛，不含相对路径、上传者或原始文件名。
+         * 登录用户可访问的同应用版本与平台包
+         * @description 按目标包定位分区与项目，返回同项目、同 appName、同 packageId、同平台、同上传者的其它包， 跨环境按上传时间倒序返回完整版本列表，供有项目读取权限的登录用户切换环境和选择历史版本。 includePlatforms=true 时同时返回其它平台的包；跨平台以同项目、同 appName、同上传者关联， 允许 Android 包名与 iOS Bundle ID 不同，同平台仍按 packageId 收敛。 字段经白名单收敛，不含相对路径、上传者或原始文件名。
          */
         get: operations["getBuildVersions"];
         put?: never;
@@ -587,6 +587,46 @@ export interface paths {
          * @description io.Copy 成功完成且写出字节等于 Content-Length 之后才原子 +1 下载次数； 404、路径非法、文件缺失、客户端中断、copy 出错、字节不足一律不计数。
          */
         get: operations["downloadBuildFile"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/public/builds/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 免登录查看分享绑定的单个版本
+         * @description 每次验证分享凭证，不使用或继承访问者登录态。不返回历史版本、内部路径、上传者或原始文件名。 缺失、篡改、跨包、过期和撤销的凭证统一返回 404，响应禁止缓存。
+         */
+        get: operations["getSharedBuild"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/public/builds/{id}/file": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 免登录下载分享绑定的单个安装包
+         * @description 每次验证分享签名、分区、包 ID、有效期和撤销状态；缺失或无效凭证统一返回 404。 浏览器直接下载使用 shareToken 查询参数，禁止用登录令牌或 API Key 替代。 io.Copy 成功完成且写出字节等于 Content-Length 之后才原子 +1 下载次数； 404、路径非法、文件缺失、客户端中断、copy 出错、字节不足一律不计数。
+         */
+        get: operations["downloadSharedBuildFile"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1071,7 +1111,7 @@ export interface components {
             buildNumber?: string;
             changelog?: string;
         };
-        /** @description 完整包 DTO；三个 URL 字段由服务端 buildURLs(id) 派生，不入库 */
+        /** @description 完整包 DTO；三个 URL 字段由服务端派生；对外地址携带单版本分享凭证，授权失效时为空 */
         Build: {
             /** Format: uuid */
             id: string;
@@ -1100,6 +1140,42 @@ export interface components {
             downloadCount: number;
             /** @description 相对路径 /d/{id}；唯一用途是前端 react-router 内部跳转，严禁用于二维码 / 复制 / 下载 */
             downloadPagePath: string;
+            /** @description 有效分享的绝对地址，二维码与复制的唯一来源；分享失效时为空串 */
+            downloadPageUrl: string;
+            /** @description 有效分享的绝对文件地址，下载按钮的唯一来源；分享失效时为空串 */
+            downloadFileUrl: string;
+            /**
+             * Format: date-time
+             * @description ISO 8601 UTC
+             */
+            createdAt: string;
+            /** @description 上传者账号 id；system 表示外部 API 或历史数据 */
+            ownerUserId?: string;
+        };
+        /** @description 免登录分享的单版本详情白名单；不含内部路径、上传者及原始文件名 */
+        SharedBuild: {
+            /** Format: uuid */
+            id: string;
+            environment: components["schemas"]["Environment"];
+            platform: components["schemas"]["Platform"];
+            appName: string;
+            /** @description 所属项目图标的 data URL；空串表示未上传，下载页回退首字母 */
+            projectIconUrl: string;
+            packageId: string;
+            version: string;
+            buildNumber: string;
+            changelog: string;
+            /** Format: int64 */
+            fileSize: number;
+            /** @enum {string} */
+            fileExt: "apk" | "ipa";
+            /**
+             * Format: int64
+             * @description 下载成功后才原子自增；起点 0、只增不减
+             */
+            downloadCount: number;
+            /** @description 相对路径 /d/{id}；唯一用途是前端 react-router 内部跳转，严禁用于二维码 / 复制 / 下载 */
+            downloadPagePath: string;
             /**
              * Format: uri
              * @description 绝对地址，二维码内容与复制按钮的唯一来源
@@ -1115,10 +1191,11 @@ export interface components {
              * @description ISO 8601 UTC
              */
             createdAt: string;
-            /** @description 上传者账号 id；system 表示外部 API 或历史数据 */
-            ownerUserId?: string;
         };
-        /** @description 公开下载页的环境与版本选择项；只暴露跳转、辨识及版本说明所需字段 */
+        SharedBuildResponse: components["schemas"]["ApiResponse"] & {
+            data: components["schemas"]["SharedBuild"];
+        };
+        /** @description 登录预览的环境与版本选择项；只暴露跳转、辨识及版本说明所需字段 */
         PublicBuildVersion: {
             /** Format: uuid */
             id: string;
@@ -2686,6 +2763,8 @@ export interface operations {
                     "application/json": components["schemas"]["BuildResponse"];
                 };
             };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
             500: components["responses"]["InternalError"];
         };
@@ -2715,6 +2794,8 @@ export interface operations {
                 };
             };
             400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
             500: components["responses"]["InternalError"];
         };
@@ -2739,7 +2820,67 @@ export interface operations {
                     /** @description 同时提供 filename 与 RFC 5987 filename*=UTF-8''... 双重编码 */
                     "Content-Disposition"?: string;
                     "Content-Length"?: number;
-                    /** @example no-cache */
+                    /** @example private, no-store */
+                    "Cache-Control"?: string;
+                    /** @example nosniff */
+                    "X-Content-Type-Options"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/octet-stream": string;
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    getSharedBuild: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description 包稳定唯一标识 */
+                id: components["parameters"]["BuildId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 分享版本白名单详情 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SharedBuildResponse"];
+                };
+            };
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    downloadSharedBuildFile: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description 包稳定唯一标识 */
+                id: components["parameters"]["BuildId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 二进制包流 */
+            200: {
+                headers: {
+                    /** @description Android 为 application/vnd.android.package-archive，iOS 为 application/octet-stream */
+                    "Content-Type"?: string;
+                    /** @description 同时提供 filename 与 RFC 5987 filename*=UTF-8''... 双重编码 */
+                    "Content-Disposition"?: string;
+                    "Content-Length"?: number;
+                    /** @example private, no-store */
                     "Cache-Control"?: string;
                     /** @example nosniff */
                     "X-Content-Type-Options"?: string;

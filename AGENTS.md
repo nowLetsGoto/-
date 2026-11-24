@@ -100,7 +100,7 @@ main.tsx（挂载） → App
 - `users` / `roles` / `role_permissions` / `people` / `teams` / `team_members` / `system_settings` 是跨模式的全局事实（登录发生在选模式之前），留在 `public`，不参与分区。
 - `project_members` / `team_projects` 只属于团队分区，外键显式 `REFERENCES team.projects(id) ON DELETE CASCADE`；单人空间没有「成员」与「项目角色」。
 - 唯一性按分区各表各定：`team.projects (key)` 全平台唯一；`solo.projects (owner_user_id, key)` 只在本人空间内唯一——两个人各自拥有一个 `web` 互不冲突。
-- 代码层的唯一投影是 `repository.Partitioned[T]`：装配层为两个分区各建一份同构仓储，上层用 `.For(mode)` 取用，业务代码里**不出现 `if team / else solo`**。公开链路没有登录态，用 `.All()` 跨分区查找。
+- 代码层的唯一投影是 `repository.Partitioned[T]`：装配层为两个分区各建一份同构仓储，上层用 `.For(mode)` 取用，业务代码里**不出现 `if team / else solo`**。分享链路没有登录态，但必须先校验独立分享凭证，再按其明确模式用 `.For(mode)` 定位授权和包；禁止跨分区猜测。
 - 分区失败安全：`PartitionFor` 只有明确的 `ModeSolo` 才进 solo，其余（含零值）一律 team——宁可给团队数据，也不让人误入单人空间。
 - 单人隔离由三层共同承担，缺一不可：
   1. **表边界**：solo 与 team 是不同 schema，跨模式在物理上就访问不到；
@@ -116,7 +116,7 @@ main.tsx（挂载） → App
 - 项目是一级归属，不是筛选装饰。项目 key 在所属分区内唯一、创建后不可改，并作为 URL 段。
 - 项目内页面统一使用 `/p/:key/*` 前缀；环境放查询参数；切项目只换前缀、不丢板块。
 - 包列表必须先按项目收敛；`builds.project_id` 必填且有外键与复合索引。
-- 下载页 `/d/:id` 与原始文件下载是公开接口：扫码的人没有账号。
+- 下载页 `/d/:id?shareToken=...` 与 `/public/builds/:id` 的详情、文件接口无需账号登录，但每次必须验证绑定单个版本的分享授权。裸 `/d/:id` 是登录预览；原 `/builds/:id`、versions、file 接口须登录并按包的真实项目检查范围与 `build.read`。
 - 上传是"一次上传"体验：`stage` 在选文件时自动完成，解析失败只写 `warnings`，不阻塞；`commit` 只收 JSON，不收文件、不收 `metaSource`。
 - `metaSource` 由服务端派生；提交接口中的表单字段即使来自解析结果，也以用户最终确认为准。
 - `downloadPagePath` 仅用于前端 router 内部跳转；二维码与复制地址只能用绝对的 `downloadPageUrl`；下载按钮用 `downloadFileUrl`。

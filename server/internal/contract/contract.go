@@ -76,6 +76,7 @@ const (
 	ResourceRole    = "角色"
 	ResourceTenant  = "公司"
 	ResourceFile    = "文件"
+	ResourceShare   = "分享链接"
 )
 
 // NotFoundError 是「指定资源不存在」的错误，由 handler.WriteError 翻译成 404。
@@ -229,6 +230,8 @@ const (
 	RouteBuildByID            = APIPrefix + "/builds/{id}"
 	RouteBuildVersions        = APIPrefix + "/builds/{id}/versions"
 	RouteBuildFile            = APIPrefix + "/builds/{id}/file"
+	RouteSharedBuild          = APIPrefix + "/public/builds/{id}"
+	RouteSharedBuildFile      = APIPrefix + "/public/builds/{id}/file"
 	RouteHealth               = "/healthz"
 	RouteDownloadPage         = "/d/{id}"
 )
@@ -277,7 +280,7 @@ var APIRoutes = []string{
 	RoutePeople, RoutePersonByID, RouteTeams, RouteTeamByID,
 	RoutePermissions, RouteMenus, RouteRoles, RouteRoleByID,
 	RouteSettings, RouteWebhookTest, RouteAPIKeyRotate, RouteOpenBuilds,
-	RouteStage, RouteBuilds, RouteBuildByID, RouteBuildVersions, RouteBuildFile, RouteHealth,
+	RouteStage, RouteBuilds, RouteBuildByID, RouteBuildVersions, RouteBuildFile, RouteSharedBuild, RouteSharedBuildFile, RouteHealth,
 }
 
 // Webhook 可推送字段的键：与 api/openapi.yaml 的 x-webhook-fields 键集合一致。
@@ -1139,7 +1142,27 @@ type Build struct {
 	OwnerUserID string `json:"ownerUserId"`
 }
 
-// PublicBuildVersion 是公开下载页环境与版本选择的白名单投影：
+// SharedBuild 是免登录分发的白名单；不含磁盘路径、上传者及解析来源。
+type SharedBuild struct {
+	ID               string `json:"id"`
+	Environment      string `json:"environment"`
+	Platform         string `json:"platform"`
+	AppName          string `json:"appName"`
+	ProjectIconURL   string `json:"projectIconUrl"`
+	PackageID        string `json:"packageId"`
+	Version          string `json:"version"`
+	BuildNumber      string `json:"buildNumber"`
+	Changelog        string `json:"changelog"`
+	FileSize         int64  `json:"fileSize"`
+	FileExt          string `json:"fileExt"`
+	DownloadCount    int64  `json:"downloadCount"`
+	DownloadPagePath string `json:"downloadPagePath"`
+	DownloadPageURL  string `json:"downloadPageUrl"`
+	DownloadFileURL  string `json:"downloadFileUrl"`
+	CreatedAt        string `json:"createdAt"`
+}
+
+// PublicBuildVersion 是登录预览环境与版本选择的白名单投影：
 // 暴露版本辨识、包大小和更新说明，不包含相对路径、上传者或原始文件名。
 type PublicBuildVersion struct {
 	ID               string `json:"id"`
@@ -1151,7 +1174,7 @@ type PublicBuildVersion struct {
 	Platform         string `json:"platform"`
 	CreatedAt        string `json:"createdAt"`
 	DownloadPagePath string `json:"downloadPagePath"`
-	// ProjectKey 用于「查看更多」跳回应用包列表；公开页只有 build id，无法自行推出项目。
+	// ProjectKey 用于「查看更多」跳回应用包列表；预览页只有 build id，无法自行推出项目。
 	ProjectKey string `json:"projectKey"`
 }
 

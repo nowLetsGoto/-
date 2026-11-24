@@ -1,18 +1,19 @@
 /**
  * 公开下载页的数据加载与版本投影。
  * 职责：按包 id 读取详情和同应用版本，合并当前包并按发布时间排序，独立呈现版本列表错误。
- * 输入：路由包 id；输出：包详情、完整版本列表、加载/错误/缺失状态与重试函数。
- * 边界：只通过 builds API 取数；版本列表按当前平台收敛，跨平台包单独供切换；不生成地址、不选环境。
+ * 输入：路由包 id 与可选分享凭证；输出：包详情、完整版本列表、加载/错误/缺失状态与重试函数。
+ * 边界：只通过 builds API 取数；分享模式不加载其它版本；登录预览按当前平台收敛，跨平台包单独供切换；不生成地址、不选环境。
  */
 import { useEffect, useMemo, useState } from 'react';
-import type { Build, PublicBuildVersion } from '../api/builds';
-import { getBuild, listBuildVersions } from '../api/builds';
+import type { DownloadBuild, PublicBuildVersion } from '../api/builds';
+import { getBuild, getSharedBuild, listBuildVersions } from '../api/builds';
+import { readSession } from '../api/session';
 import { ApiError, errorMessage } from '../api/client';
 
 interface DownloadState {
-  id: string;
+  key: string;
   revision: number;
-  build: Build | null;
+  build: DownloadBuild | null;
   versions: PublicBuildVersion[];
   versionsError: string;
   error: string;
@@ -20,7 +21,7 @@ interface DownloadState {
 }
 
 const INITIAL: DownloadState = {
-  id: '',
+  key: '',
   revision: -1,
   build: null,
   versions: [],
@@ -37,7 +38,9 @@ function publishedAt(version: PublicBuildVersion): string {
   );
 }
 
-export function usePublicDownload(id: string) {
+export function usePublicDownload(id: string, shareToken: string | null) {
+  const shared = shareToken !== null;
+  const key = `${id}\0${shared ? `share:${shareToken}` : `session:${readSession()?.token ?? ''}`}`;
   const [state, setState] = useState<DownloadState>(INITIAL);
   const [revision, setRevision] = useState(0);
 
@@ -57,11 +60,11 @@ export function usePublicDownload(id: string) {
         Math.max(0, minimumLoading - (performance.now() - startedAt)),
       );
     };
-    const versionsRequest = listBuildVersions(id).then(
+    const versionsRequest = (shared ? Promise.resolve([]) : listBuildVersions(id)).then(
       (versions) => ({ versions, versionsError: '' }),
       (err: unknown) => ({ versions: [], versionsError: errorMessage(err) }),
     );
-    Promise.all([getBuild(id), versionsRequest])
+    Promise.all([shared ? getSharedBuild(id, shareToken) : getBuild(id), versionsRequest])
       .then(([build, result]) => {
         if (cancelled) return;
         const current: PublicBuildVersion = {
@@ -81,7 +84,7 @@ export function usePublicDownload(id: string) {
           (a, b) => publishedAt(b).localeCompare(publishedAt(a)) || b.id.localeCompare(a.id),
         );
         commit({
-          id,
+          key,
           revision,
           build,
           versions,
@@ -94,7 +97,7 @@ export function usePublicDownload(id: string) {
         if (cancelled) return;
         commit({
           ...INITIAL,
-          id,
+          key,
           revision,
           missing: err instanceof ApiError && err.code === 404,
           error: errorMessage(err),
@@ -104,9 +107,9 @@ export function usePublicDownload(id: string) {
       cancelled = true;
       clearTimeout(commitTimer);
     };
-  }, [id, revision]);
+  }, [id, key, revision, shared, shareToken]);
 
-  const current = state.id === id && state.revision === revision;
+  const current = state.key === key && state.revision === revision;
   const activePlatform =
     state.versions.find((item) => item.id === id)?.platform ?? state.build?.platform;
   const versions = useMemo(
@@ -114,9 +117,9 @@ export function usePublicDownload(id: string) {
     [state.versions, activePlatform],
   );
   return {
-    build: state.build,
-    versions,
-    platformVersions: state.versions,
+    build: current ? state.build : null,
+    versions: current ? versions : [],
+    platformVersions: current ? state.versions : [],
     activePlatform,
     loading: !!id && !current,
     missing: !id || (current && state.missing),

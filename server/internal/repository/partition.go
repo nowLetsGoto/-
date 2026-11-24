@@ -2,7 +2,8 @@
 // 职责：定义分区名、把会话模式翻译成分区、按分区持有同构仓储。
 // 输入：contract.SessionMode 或显式分区；输出：分区名 / 选中的仓储实例。
 // 边界：**只做路由，不做权限判定**——越权由路由中间件与业务层负责，
-//       这里的价值是让"单人数据落在 solo、团队数据落在 team"成为编译期就固定的结构。
+//
+//	这里的价值是让"单人数据落在 solo、团队数据落在 team"成为编译期就固定的结构。
 package repository
 
 import "dandelion/server/internal/contract"
@@ -61,7 +62,7 @@ func (p Partitioned[T]) For(mode contract.SessionMode) T {
 	return p.team
 }
 
-// All 按团队、单人的顺序返回两份实现，供跨分区的公开链路（如按 id 下载）使用。
+// All 按团队、单人的顺序返回两份实现，供可信的跨分区维护使用；分享访问必须验签后用 For。
 func (p Partitioned[T]) All() []T {
 	return []T{p.team, p.solo}
 }

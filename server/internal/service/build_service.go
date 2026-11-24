@@ -15,6 +15,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -61,6 +62,9 @@ type BuildService struct {
 	repos    repository.Partitioned[*repository.BuildRepository]
 	projects repository.Partitioned[*projectrepo.Repository]
 	notifier BuildNotifier
+	shares   repository.Partitioned[shareLookup]
+	signer   shareSigner
+	authz    buildPermissionChecker
 }
 
 func NewBuildService(
@@ -69,8 +73,12 @@ func NewBuildService(
 	repos repository.Partitioned[*repository.BuildRepository],
 	projects repository.Partitioned[*projectrepo.Repository],
 	notifier BuildNotifier,
+	shares repository.Partitioned[*repository.BuildShareRepository],
+	authz buildPermissionChecker,
 ) *BuildService {
-	return &BuildService{cfg: cfg, paths: paths, repos: repos, projects: projects, notifier: notifier}
+	return &BuildService{cfg: cfg, paths: paths, repos: repos, projects: projects, notifier: notifier,
+		shares: repository.NewPartitioned[shareLookup](shares.For(contract.ModeTeam), shares.For(contract.ModeSolo)),
+		signer: newShareSigner(cfg.AuthSecret), authz: authz}
 }
 
 // resolveProject 把 key 解析成分区内的项目；key 为空或不存在都按参数错误处理（400）。
@@ -323,7 +331,11 @@ func (s *BuildService) Create(ctx context.Context, in contract.CommitInput, iden
 		return contract.Build{}, err
 	}
 
-	s.fillURLs(&build)
+	items := []contract.Build{build}
+	if err := s.fillShareURLs(ctx, items, mode); err != nil {
+		return contract.Build{}, err
+	}
+	build = items[0]
 	// ★ 唯一「上传完成」时点：文件已落盘 + DB 已提交 + 绝对地址已生成且可访问。
 	if s.notifier != nil {
 		// 旁路通知：实现方异步投递，这里不等待、不重试，发布结果不受影响。
@@ -333,21 +345,20 @@ func (s *BuildService) Create(ctx context.Context, in contract.CommitInput, iden
 	return build, nil
 }
 
-// buildURLs 是全仓唯一的 URL 生成处：只用 PUBLIC_BASE_URL 与 id，
-// 绝不读请求 Host / X-Forwarded-*（反代下会被内部地址污染、也可能被伪造）。
-func (s *BuildService) buildURLs(id string) (pagePath string, pageURL string, fileURL string) {
+// buildURLs 是唯一 URL 生成处，仅使用 PUBLIC_BASE_URL；内部预览路径不含凭证。
+func (s *BuildService) buildURLs(id, token string) (pagePath, pageURL, fileURL string) {
 	pagePath = strings.Replace(contract.RouteDownloadPage, "{id}", id, 1)
-	fileRel := strings.Replace(contract.RouteBuildFile, "{id}", id, 1)
+	if token == "" {
+		return pagePath, "", ""
+	}
+	query := "?" + url.Values{"shareToken": {token}}.Encode()
 	base := strings.TrimRight(s.cfg.PublicBaseURL, "/")
-	return pagePath, base + pagePath, base + fileRel
+	fileRel := strings.Replace(contract.RouteSharedBuildFile, "{id}", id, 1)
+	return pagePath, base + pagePath + query, base + fileRel + query
 }
 
-// fillURLs 供 Create / List / Get 三条返回路径统一调用，保证三个地址字段永远同源。
-func (s *BuildService) fillURLs(b *contract.Build) {
-	pagePath, pageURL, fileURL := s.buildURLs(b.ID)
-	b.DownloadPagePath = pagePath
-	b.DownloadPageURL = pageURL
-	b.DownloadFileURL = fileURL
+func (s *BuildService) fillURLs(b *contract.Build, token string) {
+	b.DownloadPagePath, b.DownloadPageURL, b.DownloadFileURL = s.buildURLs(b.ID, token)
 }
 
 // List 返回该项目的按时间倒序列表，空结果为空数组；统一填充三个 URL 字段。
@@ -362,8 +373,8 @@ func (s *BuildService) List(ctx context.Context, q contract.ListQuery, identity 
 	if err != nil {
 		return contract.ListResult{}, err
 	}
-	for i := range items {
-		s.fillURLs(&items[i])
+	if err := s.fillShareURLs(ctx, items, identity.Mode); err != nil {
+		return contract.ListResult{}, err
 	}
 	platform := q.Platform
 	if platform == "" {
@@ -381,59 +392,9 @@ func (s *BuildService) List(ctx context.Context, q contract.ListQuery, identity 
 	}, nil
 }
 
-// Get 返回单个包。id 不是 UUID 时直接按 404 处理：
-// 否则非法字符串会被绑定到 PG 的 uuid 列，报 invalid input syntax 而变成 500。
-// 该接口与下载页一样是公开链路，没有登录态可用，因此两个分区都要找一遍。
-func (s *BuildService) Get(ctx context.Context, id string) (contract.Build, error) {
-	build, err := s.findAnyPartition(ctx, id)
-	if err != nil {
-		return contract.Build{}, err
-	}
-	s.fillURLs(&build)
-	return build, nil
-}
-
-// Versions 返回同项目、同应用的完整其它版本，可选包含其它平台供公开页切换安装平台。
-// 公开链路没有登录态，沿用 findAnyPartition 的思路跨分区找目标包；找到后只返回白名单字段。
-func (s *BuildService) Versions(ctx context.Context, id string, includePlatforms bool) ([]contract.PublicBuildVersion, error) {
-	if !contract.IsValidUUID(id) {
-		return nil, contract.NotFound(contract.ResourceBuild)
-	}
-	for _, repo := range s.repos.All() {
-		builds, projectKey, err := repo.ListSiblingVersions(ctx, id, includePlatforms)
-		if errors.Is(err, contract.ErrNotFound) {
-			continue
-		}
-		if err != nil {
-			return nil, err
-		}
-		items := make([]contract.PublicBuildVersion, 0, len(builds))
-		for _, build := range builds {
-			pagePath, _, _ := s.buildURLs(build.ID)
-			items = append(items, contract.PublicBuildVersion{
-				ID:               build.ID,
-				Version:          build.Version,
-				BuildNumber:      build.BuildNumber,
-				FileSize:         build.FileSize,
-				Changelog:        build.Changelog,
-				Environment:      build.Environment,
-				Platform:         build.Platform,
-				CreatedAt:        build.CreatedAt,
-				DownloadPagePath: pagePath,
-				ProjectKey:       projectKey,
-			})
-		}
-		return items, nil
-	}
-	return nil, contract.NotFound(contract.ResourceBuild)
-}
-
-// ResolveFile 先校验 id 形式，再查库拿相对路径，经 safeResolve 前缀校验防路径穿越，最后确认文件存在。
-func (s *BuildService) ResolveFile(ctx context.Context, id string) (contract.FileRef, error) {
-	build, err := s.findAnyPartition(ctx, id)
-	if err != nil {
-		return contract.FileRef{}, err
-	}
+// resolveBuildFile 只接收已经授权的包，统一做路径与文件存在性检查。
+func (s *BuildService) resolveBuildFile(build contract.Build) (contract.FileRef, error) {
+	id := build.ID
 	abs, err := s.paths.SafeResolve(build.RelativePath)
 	if err != nil {
 		log.Printf("下载路径校验失败 id=%s rel=%s err=%v", id, build.RelativePath, err)
@@ -460,39 +421,14 @@ func (s *BuildService) ResolveFile(ctx context.Context, id string) (contract.Fil
 	}, nil
 }
 
-// findAnyPartition 按 id 在两个分区里找包：包 id 全局唯一，先命中即返回。
-// 只给公开链路用——登录态下的读写都必须走 repos.For(mode)，不存在"猜分区"的余地。
-func (s *BuildService) findAnyPartition(ctx context.Context, id string) (contract.Build, error) {
-	if !contract.IsValidUUID(id) {
-		return contract.Build{}, contract.NotFound(contract.ResourceBuild)
+// IncrDownloadCount 只在已授权且完整流式传输后调用，分区沿用本次授权结果。
+func (s *BuildService) IncrDownloadCount(id string, mode contract.SessionMode) {
+	if !mode.IsValid() {
+		return
 	}
-	for _, repo := range s.repos.All() {
-		build, err := repo.FindByID(ctx, id)
-		if err == nil {
-			return build, nil
-		}
-		if !errors.Is(err, contract.ErrNotFound) {
-			return contract.Build{}, err
-		}
-	}
-	return contract.Build{}, contract.NotFound(contract.ResourceBuild)
-}
-
-// IncrDownloadCount 是旁路：只在流成功完成后由 DownloadFile 调用，2 秒短超时、
-// 失败只记日志，绝不阻断已完成的下载；不做强去重，也不在下载事务内持锁。
-// 包只存在其中一个分区，所以另一个分区必然「找不到」——那不是失败，继续试下一个。
-func (s *BuildService) IncrDownloadCount(id string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	for _, repo := range s.repos.All() {
-		_, err := repo.IncrDownloadCount(ctx, id)
-		if err == nil {
-			return
-		}
-		// 未命中只说明包不在这张表里，与「真的更新失败」要区分开，否则日志里全是噪音。
-		if errors.Is(err, contract.ErrNotFound) {
-			continue
-		}
+	if _, err := s.repos.For(mode).IncrDownloadCount(ctx, id); err != nil {
 		log.Printf("下载计数旁路失败（不影响本次下载）id=%s err=%v", id, err)
 	}
 }
