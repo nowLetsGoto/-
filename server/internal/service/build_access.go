@@ -68,15 +68,20 @@ func (s *BuildService) Versions(ctx context.Context, id string, includePlatforms
 	}
 	items := make([]contract.PublicBuildVersion, 0, len(builds))
 	for _, b := range builds {
-		pagePath, _, _ := s.buildURLs(b.ID, "")
-		items = append(items, contract.PublicBuildVersion{
-			ID: b.ID, Version: b.Version, BuildNumber: b.BuildNumber, FileSize: b.FileSize,
-			Changelog: b.Changelog, Environment: b.Environment, Platform: b.Platform,
-			CreatedAt: b.CreatedAt, ProjectKey: key,
-			DownloadPagePath: pagePath,
-		})
+		s.fillURLs(&b, "")
+		items = append(items, buildVersion(b, key))
 	}
 	return items, nil
+}
+
+// buildVersion 共用白名单映射；公开分享不传项目 key，地址由 buildURLs 生成。
+func buildVersion(b contract.Build, projectKey string) contract.PublicBuildVersion {
+	return contract.PublicBuildVersion{
+		ID: b.ID, Version: b.Version, BuildNumber: b.BuildNumber, FileSize: b.FileSize,
+		Changelog: b.Changelog, Environment: b.Environment, Platform: b.Platform,
+		CreatedAt: b.CreatedAt, ProjectKey: projectKey,
+		DownloadPagePath: b.DownloadPagePath, DownloadPageURL: b.DownloadPageURL,
+	}
 }
 
 func (s *BuildService) ResolveFile(ctx context.Context, id string, identity contract.Identity) (contract.FileRef, error) {

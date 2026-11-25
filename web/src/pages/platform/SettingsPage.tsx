@@ -1,18 +1,22 @@
 /**
- * 平台集成页（超级管理员 → 平台集成，原「系统设置」）。
+ * 平台集成页：按公司范围与 settings.read/write 权限读取、维护通知和上传凭证。
  * 职责：配置 Webhook（开关 / 地址 / 签名密钥 / 推送字段）并测试投递；展示外部上传接口、轮换 API Key。
  * 输入：GET /api/v1/settings、当前项目 key（仅用于外部接口示例的占位值）；
  *       输出：PUT 保存、POST 测试、POST 轮换 Key、复制 API Key 与调用示例。
  * 边界：不做字段合法性判断（服务端校验）、不缓存设置副本；
  *       切换 Tab 不重复取数，只有保存后以服务端返回的值为准；
- *       设置页是平台级的，这里不因"当前项目"改变任何行为，只是把 key 抄进示例。
+ *       配置归属由登录身份决定，超管维护平台兜底；当前项目只用于调用示例。
  */
 import { useEffect, useState } from 'react';
 import type { Settings, WebhookConfig, WebhookField, WebhookTestResult } from '../../api/settings';
+import type { WebhookProvider } from '../../api/settings';
 import { getSettings, rotateApiKey, testWebhook, updateWebhook } from '../../api/settings';
 import { errorMessage } from '../../api/client';
 import { useCurrentProject } from '../../hooks/useProjects';
 import { useCopyText } from '../../hooks/useCopyText';
+import { useMe } from '../../hooks/useMe';
+import { can } from '../../utils/permission';
+import { WEBHOOK_PROVIDERS } from '../../utils/format';
 import { Button, Checkbox, Input, Segmented } from '../../components/Controls';
 import { ConfirmDialog } from '../../components/ConfirmDialog';
 import { ErrorState, Loading } from '../../components/States';
@@ -21,6 +25,8 @@ type Tab = 'webhook' | 'api';
 
 export function SettingsPage(): JSX.Element {
   const copyText = useCopyText();
+  const { me } = useMe();
+  const canWrite = can(me, 'settings.write');
   // 示例里的 project 必须取**真实解析出来的项目**：useCurrentProject().key 可能来自 URL 或
   // localStorage 里残留的失效值（此时 key 有值但 project 为 null），那样照抄示例就会 400。
   const { project } = useCurrentProject();
@@ -64,6 +70,7 @@ export function SettingsPage(): JSX.Element {
   const patchForm = (patch: Partial<WebhookConfig>): void => {
     setForm((previous) => (previous ? { ...previous, ...patch } : previous));
     setNotice('');
+    setTestResult(null);
   };
 
   const toggleField = (field: WebhookField): void => {
@@ -77,13 +84,14 @@ export function SettingsPage(): JSX.Element {
   };
 
   const save = async (): Promise<void> => {
-    if (!form || saving) {
+    if (!form || saving || !canWrite) {
       return;
     }
     setSaving(true);
     setNotice('');
     try {
       applySettings(await updateWebhook(form));
+      setTestResult(null);
       setNotice('已保存');
     } catch (err) {
       setNotice(errorMessage(err));
@@ -93,7 +101,7 @@ export function SettingsPage(): JSX.Element {
   };
 
   const runTest = async (): Promise<void> => {
-    if (testing) {
+    if (testing || !canWrite) {
       return;
     }
     setTesting(true);
@@ -145,6 +153,17 @@ export function SettingsPage(): JSX.Element {
         <div>
           <h1>平台集成</h1>
           <p className="sub">Webhook 推送与外部上传接口</p>
+          {me ? (
+            <p className="settings-hint">
+              配置归属：
+              {me.isSuperAdmin || me.accountLevel === 'super_admin'
+                ? '平台兜底配置'
+                : me.tenantName || me.tenantId}
+              {me.isSuperAdmin || me.accountLevel === 'super_admin'
+                ? '。CI 上传请使用公司管理员生成的 API Key。'
+                : '。本页 API Key 自动归属于该公司，无需额外绑定。'}
+            </p>
+          ) : null}
         </div>
       </div>
 
@@ -168,6 +187,7 @@ export function SettingsPage(): JSX.Element {
           testing={testing}
           notice={notice}
           testResult={testResult}
+          canWrite={canWrite}
           onPatch={patchForm}
           onToggleField={toggleField}
           onSave={() => void save()}
@@ -177,6 +197,7 @@ export function SettingsPage(): JSX.Element {
         <ApiPanel
           configured={data.apiKeyConfigured}
           projectKey={project?.key ?? 'default'}
+          canWrite={canWrite}
           onCopy={(text, message) => void copy(text, message)}
         />
       )}
@@ -191,6 +212,7 @@ interface WebhookPanelProps {
   testing: boolean;
   notice: string;
   testResult: WebhookTestResult | null;
+  canWrite: boolean;
   onPatch: (patch: Partial<WebhookConfig>) => void;
   onToggleField: (field: WebhookField) => void;
   onSave: () => void;
@@ -199,7 +221,9 @@ interface WebhookPanelProps {
 
 /** Webhook 配置面板：只负责渲染与回调，状态由页面持有。 */
 function WebhookPanel(props: WebhookPanelProps): JSX.Element {
-  const { form, data, saving, testing, notice, testResult } = props;
+  const { form, data, saving, testing, notice, testResult, canWrite } = props;
+  const feishu = form.provider === 'feishu';
+  const dirty = JSON.stringify(form) !== JSON.stringify(data.webhook);
 
   return (
     <div className="card settings-card">
@@ -208,40 +232,81 @@ function WebhookPanel(props: WebhookPanelProps): JSX.Element {
           <div className="settings-label">启用 Webhook</div>
           <p className="settings-hint">发布成功后，把下面勾选的包信息推送到接收地址。</p>
         </div>
-        <Button
-          type="button"
-          role="switch"
-          aria-checked={form.enabled}
-          aria-label="启用 Webhook"
-          className={form.enabled ? 'switch switch-on' : 'switch'}
-          onClick={() => props.onPatch({ enabled: !form.enabled })}
-        >
-          <span className="switch-knob" aria-hidden="true" />
-        </Button>
+        {canWrite ? (
+          <Button
+            type="button"
+            role="switch"
+            aria-checked={form.enabled}
+            aria-label="启用 Webhook"
+            className={form.enabled ? 'switch switch-on' : 'switch'}
+            onClick={() => props.onPatch({ enabled: !form.enabled })}
+          >
+            <span className="switch-knob" aria-hidden="true" />
+          </Button>
+        ) : null}
+      </div>
+
+      <div className="settings-field">
+        <span>通知类型</span>
+        <Segmented<WebhookProvider>
+          aria-label="通知类型"
+          options={[...WEBHOOK_PROVIDERS]}
+          value={form.provider ?? 'generic'}
+          disabled={!canWrite || saving || testing}
+          onChange={(provider) =>
+            props.onPatch({
+              provider,
+              fields:
+                provider === 'feishu' && !form.fields.includes('downloadPageUrl')
+                  ? [...form.fields, 'downloadPageUrl']
+                  : form.fields,
+            })
+          }
+        />
+        <p className="settings-hint">
+          {feishu
+            ? '发布成功后发送飞书卡片，点击“打开下载页”即可查看、下载本次版本，无需登录。'
+            : '向接收服务发送通用 JSON，由接收服务自行处理。'}
+        </p>
       </div>
 
       <label className="settings-field">
-        <span>接收地址</span>
+        <span>{feishu ? '飞书机器人 Webhook 地址' : '接收地址'}</span>
         <Input
           className="text-input"
           type="url"
           inputMode="url"
-          placeholder="https://example.com/hooks/dandelion"
+          placeholder={
+            feishu
+              ? 'https://open.feishu.cn/open-apis/bot/v2/hook/…'
+              : 'https://example.com/hooks/dandelion'
+          }
           value={form.url}
+          disabled={!canWrite || saving || testing}
           onChange={(event) => props.onPatch({ url: event.target.value })}
         />
       </label>
 
       <label className="settings-field">
-        <span>签名密钥（可选）</span>
+        <span>{feishu ? '飞书机器人签名密钥（启用签名校验时填写）' : '签名密钥（可选）'}</span>
         <Input
           className="text-input"
-          type="text"
-          placeholder="填写后请求头会带 X-Dandelion-Signature"
+          type="password"
+          autoComplete="new-password"
+          placeholder={
+            feishu
+              ? '粘贴飞书机器人“签名校验”中提供的密钥'
+              : '填写后请求头会带 X-Dandelion-Signature'
+          }
           value={form.secret}
+          disabled={!canWrite || saving || testing}
           onChange={(event) => props.onPatch({ secret: event.target.value })}
         />
-        <em className="settings-hint">接收端用同一密钥做 HMAC-SHA256，即可确认消息来自本平台。</em>
+        <em className="settings-hint">
+          {feishu
+            ? '此处填写飞书签名密钥，与 CI 上传的 API Key 不同；如配置了机器人关键词，可填写“应用更新提醒”。'
+            : '接收端用同一密钥做 HMAC-SHA256，即可确认消息来自本平台。'}
+        </em>
       </label>
 
       <div className="settings-field">
@@ -254,6 +319,9 @@ function WebhookPanel(props: WebhookPanelProps): JSX.Element {
                 form.fields.includes(option.key) ? 'field-check field-check-on' : 'field-check'
               }
               checked={form.fields.includes(option.key)}
+              disabled={
+                !canWrite || saving || testing || (feishu && option.key === 'downloadPageUrl')
+              }
               onChange={() => props.onToggleField(option.key)}
             >
               {option.label}
@@ -261,29 +329,42 @@ function WebhookPanel(props: WebhookPanelProps): JSX.Element {
           ))}
         </div>
         <em className="settings-hint">
-          只推送勾选的字段；勾上「下载页地址」接收端就能直接转发扫码链接。
+          {feishu
+            ? '下载页地址为必选项，完整分享凭证会自动放入卡片按钮；其它信息按勾选显示。'
+            : '只推送勾选的字段；勾上“下载页地址”接收端就能直接转发扫码链接。'}
         </em>
       </div>
 
       <div className="settings-actions">
-        <Button
-          className="button button-primary"
-          type="button"
-          onClick={props.onSave}
-          disabled={saving}
-        >
-          {saving ? '保存中…' : '保存'}
-        </Button>
-        <Button
-          className="button"
-          type="button"
-          onClick={props.onTest}
-          disabled={testing || !form.enabled}
-        >
-          {testing ? '发送中…' : '发送测试消息'}
-        </Button>
+        {canWrite ? (
+          <>
+            <Button
+              className="button button-primary"
+              type="button"
+              onClick={props.onSave}
+              disabled={saving || testing}
+            >
+              {saving ? '保存中…' : '保存'}
+            </Button>
+            <Button
+              className="button"
+              type="button"
+              onClick={props.onTest}
+              disabled={testing || saving || !form.enabled || dirty}
+            >
+              {testing ? '发送中…' : '发送测试消息'}
+            </Button>
+          </>
+        ) : null}
         {notice ? <span className="settings-notice">{notice}</span> : null}
       </div>
+
+      <p className="settings-hint">
+        {dirty
+          ? '配置已修改，请先保存，再发送测试消息。'
+          : '测试消息只验证已保存的通知配置；上传真实安装包可验证下载按钮。'}
+        {feishu ? ' 使用手机打开下载页时，手机需要能访问分发地址。' : ''}
+      </p>
 
       {testResult ? (
         <p className={testResult.delivered ? 'notice notice-ok' : 'notice'}>
@@ -300,10 +381,12 @@ function ApiPanel({
   configured,
   projectKey,
   onCopy,
+  canWrite,
 }: {
   configured: boolean;
   projectKey: string;
   onCopy: (text: string, message: string) => void;
+  canWrite: boolean;
 }): JSX.Element {
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [rotating, setRotating] = useState(false);
@@ -313,6 +396,7 @@ function ApiPanel({
   const [plainKey, setPlainKey] = useState('');
 
   const handleRotate = async (): Promise<void> => {
+    if (!canWrite) return;
     setRotating(true);
     setRotateError('');
     try {
@@ -387,13 +471,15 @@ function ApiPanel({
           >
             复制
           </Button>
-          <Button
-            className="button button-ghost"
-            type="button"
-            onClick={() => setConfirmOpen(true)}
-          >
-            轮换
-          </Button>
+          {canWrite ? (
+            <Button
+              className="button button-ghost"
+              type="button"
+              onClick={() => setConfirmOpen(true)}
+            >
+              轮换
+            </Button>
+          ) : null}
         </div>
         <p className="settings-hint">
           服务端只保存 Key 的 SHA-256 摘要，明文仅在轮换成功时显示这一次，之后无法再取回。

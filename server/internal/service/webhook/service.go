@@ -16,6 +16,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"time"
 
 	"dandelion/server/internal/contract"
@@ -45,12 +46,21 @@ type payload struct {
 
 // Service 读取配置并完成投递，由 main.go 注入。
 type Service struct {
-	repo   *settingsrepo.Repository
+	repo   configurationStore
 	client *http.Client
 }
 
+type configurationStore interface {
+	LoadForDelivery(context.Context, string) (settingsrepo.Config, error)
+	EnsureRow(context.Context, string) (settingsrepo.Config, error)
+}
+
 func NewService(repo *settingsrepo.Repository) *Service {
-	return &Service{repo: repo, client: &http.Client{Timeout: deliverTimeout}}
+	return &Service{repo: repo, client: &http.Client{
+		Timeout: deliverTimeout,
+		// Webhook 是凭证地址，禁止重定向把消息、签名或分享凭证发送给其它目标。
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+	}}
 }
 
 // NotifyBuild 在发布成功后异步投递。
@@ -71,11 +81,15 @@ func (s *Service) NotifyBuild(_ context.Context, tenantID string, build contract
 		if !cfg.Enabled || cfg.URL == "" {
 			return
 		}
-		if _, err := s.post(ctx, cfg, build); err != nil {
+		status, err := s.post(ctx, cfg, build, false)
+		if err != nil {
 			// 失败只记日志：Webhook 挂了不能让发布失败，也不阻塞后续发布。
-			log.Printf("webhook 投递失败 url=%s build=%s tenant=%s fallback=%v err=%v",
-				cfg.URL, build.ID, tenantID, cfg.FromFallback, err)
+			log.Printf("webhook 投递失败 provider=%s build=%s tenant=%s fallback=%v status=%d err=%v",
+				cfg.Provider, build.ID, tenantID, cfg.FromFallback, status, err)
+			return
 		}
+		log.Printf("webhook 投递成功 provider=%s build=%s tenant=%s fallback=%v status=%d",
+			cfg.Provider, build.ID, tenantID, cfg.FromFallback, status)
 	}()
 }
 
@@ -100,47 +114,57 @@ func (s *Service) Test(ctx context.Context, scope contract.Scope) (contract.Webh
 		return contract.WebhookTestResult{}, &contract.ValidationError{Message: "请先启用 Webhook 并填写地址"}
 	}
 
-	status, err := s.post(ctx, cfg, sampleBuild())
+	status, err := s.post(ctx, cfg, sampleBuild(), true)
 	if err != nil {
-		return contract.WebhookTestResult{Delivered: false, StatusCode: 0, Message: "投递失败：" + err.Error()}, nil
-	}
-	if status < 200 || status >= 300 {
 		return contract.WebhookTestResult{
-			Delivered:  false,
-			StatusCode: status,
-			Message:    fmt.Sprintf("目标返回 HTTP %d，请检查接收端", status),
+			Delivered: false, StatusCode: status, Message: "投递失败：" + err.Error(),
 		}, nil
 	}
-	return contract.WebhookTestResult{Delivered: true, StatusCode: status, Message: "投递成功"}, nil
+	return contract.WebhookTestResult{Delivered: true, StatusCode: status, Message: "测试消息投递成功；请上传真实安装包验证下载按钮"}, nil
 }
 
 // post 组装并发送一次请求；返回目标状态码（未收到响应时为 0）。
-func (s *Service) post(ctx context.Context, cfg settingsrepo.Config, build contract.Build) (int, error) {
+func (s *Service) post(ctx context.Context, cfg settingsrepo.Config, build contract.Build, testing bool) (int, error) {
 	// tenantId 取「配置所属公司」而不是包的公司：回落到兜底行时，
 	// 接收端看到的是平台兜底配置发出的通知，标成具体公司反而误导。
-	body, err := json.Marshal(payload{
+	var message any = payload{
 		Event:    eventBuildCreated,
 		SentAt:   time.Now().UTC().Format(time.RFC3339),
 		TenantID: cfg.TenantID,
 		Build:    pickFields(build, cfg.Fields),
-	})
+	}
+	if cfg.Provider == contract.WebhookProviderFeishu {
+		card, err := feishuMessage(cfg, build, testing, time.Now())
+		if err != nil {
+			return 0, err
+		}
+		message = card
+	}
+	body, err := json.Marshal(message)
 	if err != nil {
 		return 0, fmt.Errorf("组装请求体失败: %w", err)
+	}
+	if cfg.Provider == contract.WebhookProviderFeishu && len(body) > 20<<10 {
+		return 0, fmt.Errorf("飞书卡片超过 20 KB，请减少推送字段")
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, cfg.URL, bytes.NewReader(body))
 	if err != nil {
-		return 0, fmt.Errorf("构造请求失败: %w", err)
+		return 0, fmt.Errorf("Webhook 地址无效")
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("User-Agent", userAgent)
 	req.Header.Set(eventHeader, eventBuildCreated)
-	if cfg.Secret != "" {
+	if cfg.Secret != "" && cfg.Provider != contract.WebhookProviderFeishu {
 		req.Header.Set(signatureHeader, "sha256="+sign(cfg.Secret, body))
 	}
 
 	resp, err := s.client.Do(req)
 	if err != nil {
+		// net/http 的错误通常带完整请求 URL，飞书地址中含机器人凭证，必须去掉。
+		if requestErr, ok := err.(*url.Error); ok {
+			err = requestErr.Err
+		}
 		return 0, err
 	}
 	// 响应体只用于排空连接，最多读 4KB，避免目标返回巨量内容拖住调用方。
@@ -148,6 +172,14 @@ func (s *Service) post(ctx context.Context, cfg settingsrepo.Config, build contr
 		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4<<10))
 		_ = resp.Body.Close()
 	}()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return resp.StatusCode, fmt.Errorf("目标返回 HTTP %d，请检查机器人地址或接收端", resp.StatusCode)
+	}
+	if cfg.Provider == contract.WebhookProviderFeishu {
+		if err := checkFeishuResponse(resp.Body); err != nil {
+			return resp.StatusCode, err
+		}
+	}
 	return resp.StatusCode, nil
 }
 
@@ -197,7 +229,7 @@ func pickFields(build contract.Build, fields []string) map[string]any {
 	return selected
 }
 
-// sampleBuild 是「测试投递」用的示例数据：字段齐全，地址指向占位域名，避免误导。
+// sampleBuild 是「测试投递」用的数据，不伪造可下载包或分享凭证。
 func sampleBuild() contract.Build {
 	const id = "11111111-1111-4111-8111-111111111111"
 	pagePath := "/d/" + id
@@ -215,8 +247,6 @@ func sampleBuild() contract.Build {
 		FileExt:          "apk",
 		MetaSource:       contract.MetaParsed,
 		DownloadPagePath: pagePath,
-		DownloadPageURL:  "https://dandelion.example.com" + pagePath,
-		DownloadFileURL:  "https://dandelion.example.com/api/v1/builds/" + id + "/file",
 		CreatedAt:        time.Now().UTC().Format(time.RFC3339),
 	}
 }

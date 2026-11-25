@@ -23,10 +23,11 @@ import (
 
 // Webhook 是 Webhook 部分的配置。
 type Webhook struct {
-	Enabled bool
-	URL     string
-	Secret  string
-	Fields  []string
+	Provider string
+	Enabled  bool
+	URL      string
+	Secret   string
+	Fields   []string
 }
 
 // Config 是整行配置；APIKey 只读，不随 SaveWebhook 更新。
@@ -48,11 +49,11 @@ func NewRepository(db *sql.DB) *Repository {
 	return &Repository{db: db}
 }
 
-const selectColumns = `webhook_enabled, webhook_url, webhook_secret, webhook_fields, api_key, coalesce(tenant_id::text, '')`
+const selectColumns = `webhook_provider, webhook_enabled, webhook_url, webhook_secret, webhook_fields, api_key, coalesce(tenant_id::text, '')`
 
 // tenantPredicate 生成「定位某一行」的 WHERE 片段：
 // tenantID 非空按公司定位，空则定位平台兜底行。
-// 用 IS NULL 而不是 = ''：tenant_id 是 UUID 列，只有 NULL 能表达「平台级」。
+// 用 IS NULL 而不是 = ”：tenant_id 是 UUID 列，只有 NULL 能表达「平台级」。
 func tenantPredicate(tenantID string) (string, []any) {
 	if tenantID == "" {
 		return `tenant_id IS NULL`, nil
@@ -69,7 +70,7 @@ func (r *Repository) Load(ctx context.Context, tenantID string) (Config, error) 
 	var raw string
 	row := r.db.QueryRowContext(ctx,
 		`SELECT `+selectColumns+` FROM system_settings WHERE `+where, args...)
-	if err := row.Scan(&cfg.Enabled, &cfg.URL, &cfg.Secret, &raw, &cfg.APIKey, &cfg.TenantID); err != nil {
+	if err := row.Scan(&cfg.Provider, &cfg.Enabled, &cfg.URL, &cfg.Secret, &raw, &cfg.APIKey, &cfg.TenantID); err != nil {
 		if errors.Is(err, sql.ErrNoRows) || errors.Is(err, pgx.ErrNoRows) {
 			return Config{}, ErrNotFound
 		}
@@ -117,7 +118,6 @@ func (r *Repository) EnsureRow(ctx context.Context, tenantID string) (Config, er
 		return Config{}, err
 	}
 
-	where, args := tenantPredicate(tenantID)
 	// 用 INSERT ... SELECT WHERE NOT EXISTS 而不是 ON CONFLICT：
 	// 冲突目标是部分唯一索引，ON CONFLICT 需要写索引谓词，可读性差且易写错。
 	//
@@ -130,7 +130,7 @@ func (r *Repository) EnsureRow(ctx context.Context, tenantID string) (Config, er
 	_, insertErr := r.db.ExecContext(ctx,
 		`INSERT INTO system_settings (tenant_id, api_key)
 		 SELECT NULLIF($1, '')::uuid, ''
-		 WHERE NOT EXISTS (SELECT 1 FROM system_settings WHERE `+where+`)`, args...)
+		 WHERE NOT EXISTS (SELECT 1 FROM system_settings WHERE tenant_id IS NOT DISTINCT FROM NULLIF($1, '')::uuid)`, tenantID)
 	if insertErr != nil {
 		// 落库失败后仍尝试重读：若对方已建好，本次请求照样能拿到配置。
 		if cfg, err := r.Load(ctx, tenantID); err == nil {
@@ -141,7 +141,7 @@ func (r *Repository) EnsureRow(ctx context.Context, tenantID string) (Config, er
 	return r.Load(ctx, tenantID)
 }
 
-// SaveWebhook 只更新 Webhook 四列；多列一起写，避免出现"开关已开但地址没存"的中间态。
+// SaveWebhook 原子更新 Webhook 类型与配置，避免类型、地址和签名密钥只生效一半。
 // 行不存在时先 EnsureRow，保证首次保存也能落库。
 func (r *Repository) SaveWebhook(ctx context.Context, tenantID string, hook Webhook) error {
 	raw, err := json.Marshal(hook.Fields)
@@ -152,13 +152,13 @@ func (r *Repository) SaveWebhook(ctx context.Context, tenantID string, hook Webh
 		return err
 	}
 	where, args := tenantPredicate(tenantID)
-	// $1..$4 是四个待写值，WHERE 里的定位占位符整体后移 4 位，避免与 SET 的编号撞车。
+	// $1..$5 是五个待写值，WHERE 里的定位占位符整体后移 5 位。
 	query := `UPDATE system_settings
 SET webhook_enabled = $1, webhook_url = $2, webhook_secret = $3,
-    webhook_fields = $4, updated_at = now()
-WHERE ` + rebasePlaceholders(where, 4)
+    webhook_fields = $4, webhook_provider = $5, updated_at = now()
+WHERE ` + rebasePlaceholders(where, 5)
 	if _, err := r.db.ExecContext(ctx, query,
-		append([]any{hook.Enabled, hook.URL, hook.Secret, string(raw)}, args...)...); err != nil {
+		append([]any{hook.Enabled, hook.URL, hook.Secret, string(raw), hook.Provider}, args...)...); err != nil {
 		return fmt.Errorf("保存 Webhook 配置失败: %w", err)
 	}
 	return nil

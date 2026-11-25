@@ -91,6 +91,12 @@ func TestEnvironmentEnumMatchesContract(t *testing.T) {
 	}
 }
 
+func TestWebhookProviderEnumMatchesContract(t *testing.T) {
+	if got := loadSpec(t).Components.Schemas["WebhookProvider"].Enum; !reflect.DeepEqual(got, WebhookProviders) {
+		t.Fatalf("WebhookProvider.enum=%v 与 Go WebhookProviders=%v 不一致", got, WebhookProviders)
+	}
+}
+
 func TestPlatformEnumMatchesContract(t *testing.T) {
 	spec := loadSpec(t)
 	want := spec.Components.Schemas["Platform"].Enum

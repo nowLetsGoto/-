@@ -231,6 +231,7 @@ const (
 	RouteBuildVersions        = APIPrefix + "/builds/{id}/versions"
 	RouteBuildFile            = APIPrefix + "/builds/{id}/file"
 	RouteSharedBuild          = APIPrefix + "/public/builds/{id}"
+	RouteSharedBuildVersions  = APIPrefix + "/public/builds/{id}/versions"
 	RouteSharedBuildFile      = APIPrefix + "/public/builds/{id}/file"
 	RouteHealth               = "/healthz"
 	RouteDownloadPage         = "/d/{id}"
@@ -280,7 +281,7 @@ var APIRoutes = []string{
 	RoutePeople, RoutePersonByID, RouteTeams, RouteTeamByID,
 	RoutePermissions, RouteMenus, RouteRoles, RouteRoleByID,
 	RouteSettings, RouteWebhookTest, RouteAPIKeyRotate, RouteOpenBuilds,
-	RouteStage, RouteBuilds, RouteBuildByID, RouteBuildVersions, RouteBuildFile, RouteSharedBuild, RouteSharedBuildFile, RouteHealth,
+	RouteStage, RouteBuilds, RouteBuildByID, RouteBuildVersions, RouteBuildFile, RouteSharedBuild, RouteSharedBuildVersions, RouteSharedBuildFile, RouteHealth,
 }
 
 // Webhook 可推送字段的键：与 api/openapi.yaml 的 x-webhook-fields 键集合一致。
@@ -410,12 +411,20 @@ type LoginResult struct {
 	TenantID string `json:"tenantId"`
 }
 
-// WebhookConfig 是 Webhook 的完整配置；字段集合见 WebhookFields。
+const (
+	WebhookProviderGeneric = "generic"
+	WebhookProviderFeishu  = "feishu"
+)
+
+var WebhookProviders = []string{WebhookProviderGeneric, WebhookProviderFeishu}
+
+// WebhookConfig 是 Webhook 的完整配置；provider 缺省兼容通用 JSON，字段集合见 WebhookFields。
 type WebhookConfig struct {
-	Enabled bool     `json:"enabled"`
-	URL     string   `json:"url"`
-	Secret  string   `json:"secret"`
-	Fields  []string `json:"fields"`
+	Provider string   `json:"provider"`
+	Enabled  bool     `json:"enabled"`
+	URL      string   `json:"url"`
+	Secret   string   `json:"secret"`
+	Fields   []string `json:"fields"`
 }
 
 // WebhookFieldOption 是设置页渲染复选框用的字段目录项。
@@ -1162,7 +1171,7 @@ type SharedBuild struct {
 	CreatedAt        string `json:"createdAt"`
 }
 
-// PublicBuildVersion 是登录预览环境与版本选择的白名单投影：
+// PublicBuildVersion 是下载页环境、平台与版本选择的白名单投影：
 // 暴露版本辨识、包大小和更新说明，不包含相对路径、上传者或原始文件名。
 type PublicBuildVersion struct {
 	ID               string `json:"id"`
@@ -1174,6 +1183,7 @@ type PublicBuildVersion struct {
 	Platform         string `json:"platform"`
 	CreatedAt        string `json:"createdAt"`
 	DownloadPagePath string `json:"downloadPagePath"`
+	DownloadPageURL  string `json:"downloadPageUrl"`
 	// ProjectKey 用于「查看更多」跳回应用包列表；预览页只有 build id，无法自行推出项目。
 	ProjectKey string `json:"projectKey"`
 }

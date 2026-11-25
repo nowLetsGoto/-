@@ -65,25 +65,26 @@ type Deps struct {
 // chi 的默认 405 处理器会自动回填 Allow 头；一旦自定义 MethodNotAllowed 就必须自己补，
 // 否则响应缺少 Allow，与契约 §6.1 的「405 + Allow + JSON 外壳」不一致。
 var allowedMethods = map[string]string{
-	contract.RouteLogin:           "POST",
-	contract.RouteMe:              "GET",
-	contract.RouteMePassword:      "PUT",
-	contract.RouteProjects:        "GET, POST",
-	contract.RouteProjectByKey:    "GET, PUT",
-	contract.RoutePeople:          "GET, POST",
-	contract.RoutePersonByID:      "GET, PUT",
-	contract.RouteTeams:           "GET, POST",
-	contract.RouteTeamByID:        "GET, PUT",
-	contract.RouteOpenBuilds:      "POST",
-	contract.RouteSettings:        "GET, PUT",
-	contract.RouteWebhookTest:     "POST",
-	contract.RouteBuilds:          "GET, POST",
-	contract.RouteStage:           "POST",
-	contract.RouteBuildByID:       "GET, PUT, DELETE",
-	contract.RouteBuildVersions:   "GET",
-	contract.RouteBuildFile:       "GET",
-	contract.RouteSharedBuild:     "GET",
-	contract.RouteSharedBuildFile: "GET",
+	contract.RouteLogin:               "POST",
+	contract.RouteMe:                  "GET",
+	contract.RouteMePassword:          "PUT",
+	contract.RouteProjects:            "GET, POST",
+	contract.RouteProjectByKey:        "GET, PUT",
+	contract.RoutePeople:              "GET, POST",
+	contract.RoutePersonByID:          "GET, PUT",
+	contract.RouteTeams:               "GET, POST",
+	contract.RouteTeamByID:            "GET, PUT",
+	contract.RouteOpenBuilds:          "POST",
+	contract.RouteSettings:            "GET, PUT",
+	contract.RouteWebhookTest:         "POST",
+	contract.RouteBuilds:              "GET, POST",
+	contract.RouteStage:               "POST",
+	contract.RouteBuildByID:           "GET, PUT, DELETE",
+	contract.RouteBuildVersions:       "GET",
+	contract.RouteBuildFile:           "GET",
+	contract.RouteSharedBuild:         "GET",
+	contract.RouteSharedBuildVersions: "GET",
+	contract.RouteSharedBuildFile:     "GET",
 }
 
 // allowedMethodsFor 返回该请求应回填的 Allow 值。
@@ -137,8 +138,9 @@ func NewRouter(d Deps) http.Handler {
 	r.Route(contract.APIPrefix, func(api chi.Router) {
 		api.Post("/auth/login", middleware.Wrap(d.Login.Login))
 
-		// 分享无需登录，但详情和文件都必须逐次校验绑定单个版本的分享凭证。
+		// 分享无需登录；详情、同应用版本与文件都必须逐次校验来源包的分享凭证。
 		api.Get("/public/builds/{id}", middleware.Wrap(d.Builds.SharedGet))
+		api.Get("/public/builds/{id}/versions", middleware.Wrap(d.Builds.SharedVersions))
 		api.Get("/public/builds/{id}/file", middleware.Wrap(d.Builds.SharedDownloadFile))
 
 		// 外部系统上传：X-API-Key 鉴权，与管理端登录态互不影响。

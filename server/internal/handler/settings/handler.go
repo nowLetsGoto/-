@@ -1,9 +1,9 @@
-// Package settings · 平台设置接口（仅超级管理员）。
+// Package settings · 按公司范围与 settings.read/write 权限控制的平台集成接口。
 // 职责：读取设置、轮换 API Key、保存 Webhook 配置、触发一次测试投递。
 // 输入：HTTP 请求（JSON）；输出：统一 JSON 响应。
 // 边界：不做校验（在 service/settings）、不实现发送（在 service/webhook）；
 //
-//	整组由路由层的 RequireSuperAdmin 守门——密钥与平台配置不对普通账号开放。
+//	归属由登录身份推导；超级管理员维护平台兜底配置。
 package settings
 
 import (
@@ -39,10 +39,10 @@ func (h *Handler) Get(w http.ResponseWriter, r *http.Request) error {
 	return handler.OK(w, data)
 }
 
-// Update 覆盖式保存 Webhook 配置；请求体恰好 4 个字段。
+// Update 覆盖式保存 Webhook 配置；省略 provider 时兼容通用 JSON。
 func (h *Handler) Update(w http.ResponseWriter, r *http.Request) error {
 	var in contract.WebhookConfig
-	if err := handler.DecodeJSON(w, r, &in, "enabled/url/secret/fields"); err != nil {
+	if err := handler.DecodeJSON(w, r, &in, "provider/enabled/url/secret/fields"); err != nil {
 		return err
 	}
 	data, err := h.settings.UpdateWebhook(r.Context(), authctx.ScopeFrom(r.Context()), in)
@@ -51,7 +51,7 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) error {
 	}
 	// 改 Webhook 等于改「发布成功会通知谁」，必须留痕。secret 不进审计。
 	h.audit.Record(r.Context(), authctx.From(r.Context()), "settings.webhook_updated", "settings", "webhook",
-		map[string]any{"enabled": data.Webhook.Enabled, "url": data.Webhook.URL, "fields": data.Webhook.Fields},
+		map[string]any{"enabled": data.Webhook.Enabled, "provider": data.Webhook.Provider, "fields": data.Webhook.Fields},
 		handler.ClientIP(r))
 	return handler.OK(w, data)
 }

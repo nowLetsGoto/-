@@ -1,13 +1,15 @@
 // Package settings · 系统设置的业务层。
 // 职责：组装设置页数据、校验并保存 Webhook 配置、对外提供 API Key。
 // 输入：repository/settings 的读写能力、contract 的字段目录与上限。
-// 输出：contract.Settings（含 availableFields 与 apiKey）。
+// 输出：contract.Settings（含可选字段与 API Key 配置状态）。
 // 边界：不碰 HTTP、不投递 Webhook（在 service/webhook）、不做数据库方言拼装。
 package settings
 
 import (
 	"context"
 	"fmt"
+	"net/url"
+	"slices"
 	"strings"
 
 	"dandelion/server/internal/contract"
@@ -41,25 +43,25 @@ func settingsTenant(scope contract.Scope) (string, error) {
 	return scope.TenantID, nil
 }
 
-// Get 返回设置页所需的全部数据：Webhook 配置、API Key、可选字段目录。
+// Get 返回设置页所需的 Webhook 配置、API Key 配置状态与可选字段目录。
 // 字段目录由契约生成，前端据此渲染复选框，不再硬编码一份中文标签。
 func (s *Service) Get(ctx context.Context, scope contract.Scope) (contract.Settings, error) {
 	tenantID, err := settingsTenant(scope)
 	if err != nil {
 		return contract.Settings{}, err
 	}
-	// EnsureRow：新建的公司还没有配置行时按默认值创建，
-	// 这样设置页第一次打开就有确定的 Key 可看，而不是报「配置不存在」。
+	// EnsureRow：新建的公司还没有配置行时按默认值创建，首次打开也能读取配置。
 	cfg, err := s.repo.EnsureRow(ctx, tenantID)
 	if err != nil {
 		return contract.Settings{}, err
 	}
 	return contract.Settings{
 		Webhook: contract.WebhookConfig{
-			Enabled: cfg.Enabled,
-			URL:     cfg.URL,
-			Secret:  cfg.Secret,
-			Fields:  cfg.Fields,
+			Provider: cfg.Provider,
+			Enabled:  cfg.Enabled,
+			URL:      cfg.URL,
+			Secret:   cfg.Secret,
+			Fields:   cfg.Fields,
 		},
 		// 只告诉前端「配没配过」，不返回 Key 本身：库里是摘要，也还原不出明文。
 		// 要拿明文只能走轮换（一次性）。
@@ -102,6 +104,13 @@ func (s *Service) UpdateWebhook(ctx context.Context, scope contract.Scope, in co
 
 // normalize 把请求值收敛成可入库的配置；校验失败一律返回 ValidationError（映射 400）。
 func normalize(in contract.WebhookConfig) (settingsrepo.Webhook, error) {
+	provider := in.Provider
+	if provider == "" {
+		provider = contract.WebhookProviderGeneric
+	}
+	if !slices.Contains(contract.WebhookProviders, provider) {
+		return settingsrepo.Webhook{}, &contract.ValidationError{Message: "不支持的 Webhook 类型"}
+	}
 	target := strings.TrimSpace(in.URL)
 	secret := strings.TrimSpace(in.Secret)
 
@@ -122,6 +131,15 @@ func normalize(in contract.WebhookConfig) (settingsrepo.Webhook, error) {
 			return settingsrepo.Webhook{}, &contract.ValidationError{Message: "Webhook 地址" + err.Error()}
 		}
 		target = normalized
+		if provider == contract.WebhookProviderFeishu {
+			u, _ := url.Parse(target)
+			const prefix = "/open-apis/bot/v2/hook/"
+			if u.Scheme != "https" || u.Host != "open.feishu.cn" || u.User != nil ||
+				u.RawQuery != "" || u.Fragment != "" || !strings.HasPrefix(u.Path, prefix) ||
+				strings.TrimPrefix(u.Path, prefix) == "" || strings.Contains(strings.TrimPrefix(u.Path, prefix), "/") {
+				return settingsrepo.Webhook{}, &contract.ValidationError{Message: "请填写飞书自定义机器人的 HTTPS Webhook 地址"}
+			}
+		}
 	}
 
 	fields := dedupe(in.Fields)
@@ -135,8 +153,11 @@ func normalize(in contract.WebhookConfig) (settingsrepo.Webhook, error) {
 			}
 		}
 	}
+	if provider == contract.WebhookProviderFeishu && !slices.Contains(fields, contract.FieldDownloadPageURL) {
+		return settingsrepo.Webhook{}, &contract.ValidationError{Message: "飞书通知必须包含下载页地址"}
+	}
 
-	return settingsrepo.Webhook{Enabled: in.Enabled, URL: target, Secret: secret, Fields: fields}, nil
+	return settingsrepo.Webhook{Provider: provider, Enabled: in.Enabled, URL: target, Secret: secret, Fields: fields}, nil
 }
 
 // dedupe 去重并保持前端勾选顺序，避免同一字段推两遍。

@@ -8,11 +8,18 @@
  */
 import type { Environment, Platform } from '../api/builds';
 import type { SessionMode } from '../api/session';
+import type { WebhookProvider } from '../api/settings';
 
 export interface Option<T extends string> {
   value: T;
   label: string;
 }
+
+/** 通知协议选项；配置页与说明统一使用这份展示文案。 */
+export const WEBHOOK_PROVIDERS: ReadonlyArray<Option<WebhookProvider>> = [
+  { value: 'generic', label: '通用 Webhook' },
+  { value: 'feishu', label: '飞书机器人' },
+];
 
 /**
  * 四环境常驻切换项。

@@ -428,7 +428,7 @@ export interface paths {
         put?: never;
         /**
          * 向当前 Webhook 地址发一条示例消息
-         * @description 同步投递一条示例 payload，把目标返回的状态码带回来。 目标不可达不算接口错误：仍返回 200，由 delivered/statusCode/message 表达结果。
+         * @description 使用已保存的配置同步投递测试消息，飞书测试卡片明确标为测试且不提供虚假下载按钮。 飞书投递必须同时满足 HTTP 2xx 与响应 code=0；业务错误也返回 delivered=false。 目标不可达不算接口错误：仍返回 200，由 delivered/statusCode/message 表达结果。
          */
         post: operations["testWebhook"];
         delete?: never;
@@ -612,9 +612,29 @@ export interface paths {
         };
         /**
          * 免登录查看分享绑定的单个版本
-         * @description 每次验证分享凭证，不使用或继承访问者登录态。不返回历史版本、内部路径、上传者或原始文件名。 缺失、篡改、跨包、过期和撤销的凭证统一返回 404，响应禁止缓存。
+         * @description 每次验证分享凭证，不使用或继承访问者登录态。不返回内部路径、上传者或原始文件名。 同应用的环境、平台及历史版本通过 /public/builds/{id}/versions 获取。 缺失、篡改、跨包、过期和撤销的凭证统一返回 404，响应禁止缓存。
          */
         get: operations["getSharedBuild"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/public/builds/{id}/versions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 凭分享授权查看同应用的环境、平台及历史版本
+         * @description 每次先验证来源包的分享凭证，分区由已验证的凭证固定，不继承访问者登录态。 返回同项目、同 appName、同上传者的其它包；同平台按 packageId 收敛，跨平台允许不同包名。 仅返回已有且有效的分享授权，不创建或恢复已撤销、过期的授权。 每个目标版本携带自己的 downloadPageUrl，切换后详情和文件仍逐次验证目标包凭证。 不返回内部路径、上传者、原始文件名或项目 key；缺失或无效来源凭证统一返回 404，禁止缓存。
+         */
+        get: operations["getSharedBuildVersions"];
         put?: never;
         post?: never;
         delete?: never;
@@ -672,8 +692,15 @@ export interface components {
          * @enum {string}
          */
         WebhookField: "id" | "appName" | "packageId" | "version" | "buildNumber" | "environment" | "platform" | "changelog" | "fileSize" | "originalFileName" | "downloadPageUrl" | "downloadFileUrl" | "downloadCount" | "createdAt";
-        /** @description Webhook 配置。enabled=true 时 url 必填且必须是 http(s) 绝对地址； secret 非空时投递会带 X-Dandelion-Signature: sha256=<HMAC-SHA256(body)>。 */
+        /**
+         * @description 通用 JSON Webhook 或飞书自定义机器人；存量配置默认 generic。
+         * @default generic
+         * @enum {string}
+         */
+        WebhookProvider: "generic" | "feishu";
+        /** @description Webhook 配置。enabled=true 时 url 必填且必须是 http(s) 绝对地址； provider 省略时按 generic 处理。generic 的 secret 用于请求头 X-Dandelion-Signature； feishu 的 secret 为飞书机器人签名密钥，用于请求体 timestamp/sign。 飞书地址须为官方 HTTPS 自定义机器人地址，fields 必须包含 downloadPageUrl。 */
         WebhookConfig: {
+            provider?: components["schemas"]["WebhookProvider"];
             enabled: boolean;
             url: string;
             secret: string;
@@ -1210,7 +1237,7 @@ export interface components {
         SharedBuildResponse: components["schemas"]["ApiResponse"] & {
             data: components["schemas"]["SharedBuild"];
         };
-        /** @description 登录预览的环境与版本选择项；只暴露跳转、辨识及版本说明所需字段 */
+        /** @description 下载页的环境、平台与版本选择项；只暴露跳转、辨识及版本说明所需字段 */
         PublicBuildVersion: {
             /** Format: uuid */
             id: string;
@@ -1229,7 +1256,9 @@ export interface components {
             createdAt: string;
             /** @description 相对路径 /d/{id}；只用于前端路由跳转，严禁用于二维码 / 复制 / 下载 */
             downloadPagePath: string;
-            /** @description 包所属项目 key；「查看更多」据此跳回应用包列表 */
+            /** @description 目标包自身的绝对分享地址；分享入口切换版本时必须使用此地址中的目标凭证；登录预览列表中为空串 */
+            downloadPageUrl: string;
+            /** @description 包所属项目 key；登录预览的「查看更多」据此跳回应用包列表；分享列表为空串 */
             projectKey: string;
         };
         PublicBuildVersionsResponse: components["schemas"]["ApiResponse"] & {
@@ -2928,6 +2957,31 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SharedBuildResponse"];
+                };
+            };
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    getSharedBuildVersions: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description 包稳定唯一标识 */
+                id: components["parameters"]["BuildId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 可用分享版本的白名单列表，按发布时间倒序 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PublicBuildVersionsResponse"];
                 };
             };
             404: components["responses"]["NotFound"];

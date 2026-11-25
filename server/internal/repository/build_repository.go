@@ -159,7 +159,7 @@ func (r *BuildRepository) FindByID(ctx context.Context, id string) (contract.Bui
 
 // ListSiblingVersions 返回同项目、同应用、同上传者的其它包，按时间倒序。
 // 默认按平台和 package_id 收敛；includePlatforms 允许不同平台使用不同包名。
-// 只给登录预览使用：调用方先按真实项目校验范围和读取权限，SQL 再限定项目 / 应用 / owner，
+// 调用方先按真实项目校验登录读取权限，或校验来源包的独立分享凭证；SQL 再限定项目 / 应用 / owner，
 // 不依赖调用方传 projectID（Build DTO 本身不带这一列）。
 func (r *BuildRepository) ListSiblingVersions(ctx context.Context, id string, includePlatforms bool) ([]contract.Build, string, error) {
 	var projectKey string

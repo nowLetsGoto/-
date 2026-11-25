@@ -2,11 +2,16 @@
  * 公开下载页的数据加载与版本投影。
  * 职责：按包 id 读取详情和同应用版本，合并当前包并按发布时间排序，独立呈现版本列表错误。
  * 输入：路由包 id 与可选分享凭证；输出：包详情、完整版本列表、加载/错误/缺失状态与重试函数。
- * 边界：只通过 builds API 取数；分享模式不加载其它版本；登录预览按当前平台收敛，跨平台包单独供切换；不生成地址、不选环境。
+ * 边界：只通过 builds API 取数；分享模式仅加载后端授权的同应用版本；按当前平台收敛，跨平台包单独供切换；不生成地址、不选环境。
  */
 import { useEffect, useMemo, useState } from 'react';
 import type { DownloadBuild, PublicBuildVersion } from '../api/builds';
-import { getBuild, getSharedBuild, listBuildVersions } from '../api/builds';
+import {
+  getBuild,
+  getSharedBuild,
+  listBuildVersions,
+  listSharedBuildVersions,
+} from '../api/builds';
 import { readSession } from '../api/session';
 import { ApiError, errorMessage } from '../api/client';
 
@@ -60,7 +65,9 @@ export function usePublicDownload(id: string, shareToken: string | null) {
         Math.max(0, minimumLoading - (performance.now() - startedAt)),
       );
     };
-    const versionsRequest = (shared ? Promise.resolve([]) : listBuildVersions(id)).then(
+    const versionsRequest = (
+      shared ? listSharedBuildVersions(id, shareToken) : listBuildVersions(id)
+    ).then(
       (versions) => ({ versions, versionsError: '' }),
       (err: unknown) => ({ versions: [], versionsError: errorMessage(err) }),
     );
@@ -77,6 +84,7 @@ export function usePublicDownload(id: string, shareToken: string | null) {
           platform: build.platform,
           createdAt: build.createdAt,
           downloadPagePath: build.downloadPagePath,
+          downloadPageUrl: build.downloadPageUrl,
           projectKey: '',
         };
         const unique = new Map([current, ...result.versions].map((item) => [item.id, item]));

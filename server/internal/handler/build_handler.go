@@ -172,6 +172,16 @@ func (h *BuildHandler) SharedGet(w http.ResponseWriter, r *http.Request) error {
 	return OK(w, build)
 }
 
+// SharedVersions 仅使用来源分享凭证，返回同应用可切换的有效分享版本。
+func (h *BuildHandler) SharedVersions(w http.ResponseWriter, r *http.Request) error {
+	shareHeaders(w)
+	versions, err := h.svc.SharedVersions(r.Context(), chi.URLParam(r, "id"), shareToken(r))
+	if err != nil {
+		return err
+	}
+	return OK(w, versions)
+}
+
 func (h *BuildHandler) SharedDownloadFile(w http.ResponseWriter, r *http.Request) error {
 	shareHeaders(w)
 	id := chi.URLParam(r, "id")

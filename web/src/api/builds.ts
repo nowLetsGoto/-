@@ -24,6 +24,8 @@ export type PublicBuildVersion = Schemas['PublicBuildVersion'];
 /** 契约路径的前端唯一镜像；页面不得自行拼 /api/v1 路径。 */
 const ROUTES = {
   sharedBuild: (id: string): string => `/api/v1/public/builds/${encodeURIComponent(id)}`,
+  sharedVersions: (id: string): string =>
+    `/api/v1/public/builds/${encodeURIComponent(id)}/versions`,
   stage: '/api/v1/builds/stage',
   builds: '/api/v1/builds',
   buildById: (id: string): string => `/api/v1/builds/${encodeURIComponent(id)}`,
@@ -69,9 +71,14 @@ export function deleteBuild(id: string): Promise<void> {
   return del<void>(ROUTES.buildById(id));
 }
 
-/** 独立分享只读取授权版本，不请求其它版本。 */
+/** 独立分享读取当前授权版本，不依赖登录态。 */
 export function getSharedBuild(id: string, token: string): Promise<DownloadBuild> {
   return getShared<DownloadBuild>(ROUTES.sharedBuild(id), token);
+}
+
+/** 先验证来源分享，再返回同应用的其它有效分享版本及各自的目标地址。 */
+export function listSharedBuildVersions(id: string, token: string): Promise<PublicBuildVersion[]> {
+  return getShared<PublicBuildVersion[]>(ROUTES.sharedVersions(id), token);
 }
 
 /** 登录预览的其它版本与平台包，由 hook 按平台、页面按环境选择。 */

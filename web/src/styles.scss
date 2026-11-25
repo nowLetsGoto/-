@@ -2918,6 +2918,11 @@ code {
 
 /* ================= 下载页（移动端优先的公开应用分发） ================= */
 
+/* 下载页始终预留纵向滚动条位置，版本记录展开/收起时居中内容不横向跳动。 */
+:root:has(.public-download-shell) {
+  scrollbar-gutter: stable;
+}
+
 .public-download-shell,
 .download-version-sheet {
   --download-bg: #f6f8fa;
@@ -3602,7 +3607,8 @@ code {
   text-align: right;
 }
 .download-version-list {
-  max-height: 328px;
+  /* 每行 71px，最多显示六行；超出后仅在表头下方的版本列表内滚动。 */
+  max-height: 426px;
   margin: 0;
   padding: 0;
   overflow-y: auto;
@@ -4249,7 +4255,7 @@ code {
     width: auto;
     min-width: 36px;
     height: 36px;
-    padding-inline: 9px;
+    padding-inline: 8px;
     border: 1px solid var(--download-line);
     border-radius: 18px;
     color: var(--download-muted);
@@ -4258,6 +4264,56 @@ code {
   .download-mobile-share img {
     width: 17px;
     height: 17px;
+  }
+  .download-version-options {
+    /* 三张完整卡片加半张提示可继续滚动；矮屏优先保留底部确认按钮。 */
+    max-height: min(422px, calc(85dvh - 240px));
+    padding-right: 6px;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    scrollbar-color: var(--download-faint) var(--download-line);
+    scrollbar-width: thin;
+    scrollbar-gutter: stable;
+  }
+  .download-version-options::-webkit-scrollbar {
+    width: 5px;
+  }
+  .download-version-options::-webkit-scrollbar-track {
+    border-radius: 5px;
+    background: var(--download-line);
+  }
+  .download-version-options::-webkit-scrollbar-thumb {
+    border-radius: 5px;
+    background: var(--download-faint);
+  }
+  .download-version-option.ant-radio-wrapper {
+    flex: 0 0 112px;
+    height: 112px;
+    padding-block: 12px;
+  }
+  .download-version-option > span:last-child {
+    gap: 4px;
+  }
+  .download-option-title {
+    height: 24px;
+    line-height: 24px;
+  }
+  .download-option-title strong {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .download-option-title small {
+    flex-shrink: 0;
+  }
+  .download-option-meta {
+    overflow: hidden;
+    line-height: 18px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .download-option-description {
+    line-height: 16px;
   }
   .download-container {
     width: 100%;

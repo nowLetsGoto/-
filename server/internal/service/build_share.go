@@ -1,4 +1,4 @@
-// 职责：签发和校验只授权一个版本的免登录分享凭证，并投影公开字段。
+// 职责：签发和校验绑定单个版本的分享凭证，提供公开详情及同应用可切换的有效分享版本。
 // 输入：现有服务密钥、固定分区的授权记录、包 ID；输出：签名凭证、公开详情或文件引用。
 // 边界：不读 HTTP、不写 SQL；与登录令牌及 API Key 隔离用途，每次访问都读取授权状态。
 package service
@@ -61,33 +61,68 @@ func parseShareToken(token string) (contract.SessionMode, string, string, bool) 
 	return mode, parts[2], parts[3], true
 }
 
-func (s *BuildService) sharedBuild(ctx context.Context, id, token string) (contract.Build, contract.SessionMode, error) {
+func (s *BuildService) validateShare(ctx context.Context, id, token string) (repository.BuildShare, contract.SessionMode, error) {
 	missing := contract.NotFound(contract.ResourceShare)
 	mode, shareID, signature, ok := parseShareToken(token)
 	if !ok || !contract.IsValidUUID(id) {
-		return contract.Build{}, "", missing
+		return repository.BuildShare{}, "", missing
 	}
 	share, err := s.shares.For(mode).FindByID(ctx, shareID)
 	if err != nil {
 		if errors.Is(err, contract.ErrNotFound) {
-			return contract.Build{}, "", missing
+			return repository.BuildShare{}, "", missing
 		}
-		return contract.Build{}, "", err
+		return repository.BuildShare{}, "", err
 	}
 	if share.BuildID != id || !shareActive(share, time.Now()) ||
 		!hmac.Equal([]byte(signature), []byte(s.signer.signature(mode, share))) {
-		return contract.Build{}, "", missing
+		return repository.BuildShare{}, "", missing
+	}
+	return share, mode, nil
+}
+
+func (s *BuildService) sharedBuild(ctx context.Context, id, token string) (contract.Build, contract.SessionMode, error) {
+	share, mode, err := s.validateShare(ctx, id, token)
+	if err != nil {
+		return contract.Build{}, "", err
 	}
 	// 分区由已验签的凭证固定，包由数据库授权绑定，不跨分区猜测。
 	build, err := s.repos.For(mode).FindByID(ctx, share.BuildID)
 	if errors.Is(err, contract.ErrNotFound) {
-		return contract.Build{}, "", missing
+		return contract.Build{}, "", contract.NotFound(contract.ResourceShare)
 	}
 	if err != nil {
 		return contract.Build{}, "", err
 	}
 	s.fillURLs(&build, token)
 	return build, mode, nil
+}
+
+// SharedVersions 先验证来源包，再从同分区、同项目、同应用中筛选已有有效分享。
+// 不消费访问者身份，不允许任意目标 ID；每个选择项携带目标包自身的凭证。
+func (s *BuildService) SharedVersions(ctx context.Context, id, token string) ([]contract.PublicBuildVersion, error) {
+	_, mode, err := s.sharedBuild(ctx, id, token)
+	if err != nil {
+		return nil, err
+	}
+	builds, _, err := s.repos.For(mode).ListSiblingVersions(ctx, id, true)
+	if err != nil {
+		return nil, err
+	}
+	return s.sharedVersionChoices(ctx, builds, mode)
+}
+
+func (s *BuildService) sharedVersionChoices(ctx context.Context, builds []contract.Build, mode contract.SessionMode) ([]contract.PublicBuildVersion, error) {
+	if err := s.fillShareURLs(ctx, builds, mode); err != nil {
+		return nil, err
+	}
+	items := make([]contract.PublicBuildVersion, 0, len(builds))
+	for _, b := range builds {
+		if b.DownloadPageURL != "" {
+			items = append(items, buildVersion(b, ""))
+		}
+	}
+	return items, nil
 }
 
 func (s *BuildService) GetShared(ctx context.Context, id, token string) (contract.SharedBuild, error) {

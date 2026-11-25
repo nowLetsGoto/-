@@ -15,7 +15,8 @@
 | --- | --- |
 | 请求头 | `X-API-Key: <key>` |
 | Key 来源 | 管理端「系统设置 → 外部 API」 |
-| 存储 | `system_settings.api_key`，32 位随机串，建表时生成 |
+| 存储 | 32 位随机 Key 由管理员生成；数据库仅保存 SHA-256 摘要，明文只返回一次 |
+| 公司归属 | 由生成 Key 的公司管理员账号自动确定；平台兜底 Key 不允许上传 |
 | 隔离 | 只授权 `/open/builds`；用它访问 `/api/v1/builds` 等管理接口仍会 401 |
 
 Key 为空或服务端未配置时，接口一律拒绝——宁可全拒，也不放行一个没有凭据的写入口。
@@ -80,7 +81,7 @@ curl -X POST https://dandelion.example.com/api/v1/open/builds \
 }
 ```
 
-`downloadPageUrl` 可以直接发给测试同学：手机扫码打开独立下载页，无需登录。必须完整保留 shareToken 查询参数；它只允许查看和下载本次发布的一个版本，公司 API Key 不能放进分享链接。
+`downloadPageUrl` 可以直接发给测试同学：手机扫码打开独立下载页，无需登录。必须完整保留 shareToken 查询参数；详情和下载凭证绑定当前版本，页面可通过受控版本接口切换同项目、同应用、同上传者的其它有效分享，切换使用目标包自己的地址。公司 API Key 不能放进分享链接。
 
 ## 5. 错误
 
@@ -94,6 +95,8 @@ curl -X POST https://dandelion.example.com/api/v1/open/builds \
 错误统一返回 `{code, data: null, message}`，`message` 是可直接上屏的中文。
 
 ## 6. 与 Webhook 的关系
+
+“平台集成 → Webhook”选择“飞书机器人”后，会直接发送带“打开下载页”按钮的卡片，CI 无需重复通知。飞书签名使用请求体 `timestamp/sign`。完整步骤见 [飞书发布通知接入](15-FEISHU-WEBHOOK.md)。下方自定义信封和请求头签名仅用于“通用 Webhook”。
 
 上传成功（`201`）后会**异步**触发一次 Webhook，事件名 `build.created`。
 两者互不阻塞：Webhook 目标不可达只记日志，不影响上传结果。
@@ -119,4 +122,4 @@ printf '%s' "$BODY" | openssl dgst -sha256 -hmac "$SECRET" | awk '{print "sha256
 
 - 不做并发限流、不做重试队列：失败重试由调用方（CI）自己决定。
 - 不支持查询 / 删除 / 更新，写接口只有一个。
-- Key 轮换目前走运维 SQL（`UPDATE system_settings SET api_key = ...`），后续可在设置页加「重新生成」。
+- Key 通过“平台集成 → 外部 API → 轮换”更新，旧 Key 立即失效，需要同步更新 CI 密钥变量。

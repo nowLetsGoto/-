@@ -11,6 +11,7 @@ type Schemas = components['schemas'];
 
 export type Settings = Schemas['Settings'];
 export type WebhookConfig = Schemas['WebhookConfig'];
+export type WebhookProvider = Schemas['WebhookProvider'];
 export type WebhookField = Schemas['WebhookField'];
 export type WebhookTestResult = Schemas['WebhookTestResult'];
 

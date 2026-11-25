@@ -14,7 +14,7 @@
 | --- | --- |
 | 上传包 | 拖拽 / 点击选 `.apk`、`.ipa`，必选环境与平台，选填应用名、包名、版本号、构建号、更新说明 |
 | 按环境 + 平台查列表 | 四环境常驻切换 + 平台筛选（写进 URL，可转发），按上传时间倒序 |
-| 独立下载页 | `/d/:id?shareToken=...` 单版本免登录分享；裸路径为登录预览，直接打开 / 刷新由 SPA fallback 兜住 |
+| 独立下载页 | `/d/:id?shareToken=...` 免登录查看并切换同应用有效分享版本；裸路径为登录预览，直接打开 / 刷新由 SPA fallback 兜住 |
 | 下载原始文件 | Android 返回 `application/vnd.android.package-archive`，iOS 返回 `application/octet-stream` |
 | 下载页二维码 | 内容为该包下载页的**绝对地址**，手机默认相机可扫 |
 | 自动解析 | APK/IPA 解析应用名、包名、版本号、构建号并自动带出表单，字段始终可改，失败降级不阻塞 |
@@ -134,6 +134,7 @@ make build          # 前端产物 → server/public/，再 CGO_ENABLED=0 go bui
 | 7 | GET | `/api/v1/builds/{id}` | 需登录＋项目读取权限 | 内部下载预览详情 |
 | 8 | GET | `/api/v1/builds/{id}/file` | 需登录＋项目读取权限 | 原始包流 |
 | 分享详情 | GET | `/api/v1/public/builds/{id}` | 分享 Token | 免登录，只返回授权版本的白名单详情 |
+| 分享版本 | GET | `/api/v1/public/builds/{id}/versions` | 来源包分享 Token | 同应用的环境、平台及历史版本，各带目标包自己的分享地址 |
 | 分享文件 | GET | `/api/v1/public/builds/{id}/file` | 分享 Token | 免登录原生下载；每次校验授权 |
 | 内部历史 | GET | `/api/v1/builds/{id}/versions` | 需登录＋项目读取权限 | 内部预览的其他版本 |
 | 9 | GET | `/healthz` | 公开 | 健康检查（独立于 `/api/v1`） |
@@ -227,8 +228,8 @@ curl -sS http://localhost:8080/d/<ID> | head -5
 3. **三个 URL 由 `service/build_service.go` 的 `buildURLs(id)` 唯一生成**，`Create` / `List` / `Get` 统一调用；repository 的 `rowToBuild` 把这三个字段留空，绝不入库（换域名不用刷数据）。前端零拼接。
 4. **下载次数在 `io.Copy` 成功且写出字节 == `Content-Length` 之后**才 `UPDATE ... +1`；404 / 路径非法 / 文件缺失 / 客户端中断 / copy 出错 / 字节不足一律不计数；计数是 2s 短超时的旁路，失败只记日志、绝不阻断已完成的下载。第一版不做强去重（按钮点击后禁用 3s）、不做 Range / 断点续传。
 5. **契约是单一来源**：环境 / 平台枚举只写在 `api/openapi.yaml`，前端用生成类型，后端用 `go test ./...` 的契约一致性测试比对（把 yaml 里的 `pre` 改成 `pre2` 测试必须失败）；数据库 `environment` 列只 `NOT NULL`、**没有 CHECK**，因为枚举的真相在契约里，不该有两份。
-6. **账号登录与免登录分享分离**：账号登录令牌用于内部操作；`/d/{id}?shareToken=...` 用独立授权访问一个版本，接收者不需要账号。详情与文件每次都验证签名、分区、绑定包及授权状态，其他版本只对有项目权限的登录预览开放。默认长期有效，过期、撤销和 revision 已在服务端校验，管理入口后续再做。实现与流程见 [下载分享 MVP](docs/14-SHARE-TOKEN-MVP.md)。
-7. **Webhook 与外部接口都是旁路**：`BuildService.Create` 成功后只调一次 `BuildNotifier`（实现是 `service/webhook`，异步投递、失败只记日志），所以第三方挂了也不会让发布失败；`/open/builds` 用 `X-API-Key` 鉴权、与管理端登录态互不影响，两者都复用同一份 `handler.ReadUpload` 与 `handler.ValidateCommitInput`，不另写一套校验。
+6. **账号登录与免登录分享分离**：账号登录令牌用于内部操作；`/d/{id}?shareToken=...` 用独立授权访问一个版本，接收者不需要账号。详情与文件每次都验证签名、分区、绑定包及授权状态；版本列表先验证来源分享，再限定同项目、同应用、同上传者，只返回已有有效分享，各目标使用自己的凭证。默认长期有效，过期、撤销和 revision 已在服务端校验，管理入口后续再做。实现与流程见 [下载分享 MVP](docs/14-SHARE-TOKEN-MVP.md)。
+7. **Webhook 与外部接口都是旁路**：`BuildService.Create` 成功后只调一次 `BuildNotifier`（实现是 `service/webhook`，异步投递、失败只记日志），所以第三方挂了也不会让发布失败；`/open/builds` 用 `X-API-Key` 鉴权、与管理端登录态互不影响，两者都复用同一份 `handler.ReadUpload` 与 `handler.ValidateCommitInput`，不另写一套校验。平台集成支持通用 JSON 与飞书机器人；飞书卡片按钮完整保留单版本分享凭证，HTTP 成功且业务码为 0 才确认投递成功。配置与验收见 [飞书发布通知接入](docs/15-FEISHU-WEBHOOK.md)。
 8. **项目是一级归属，不是筛选条件**：`builds.project_id` 必填 + 外键 + `(project_id, environment, platform, created_at DESC)` 索引，所有列表查询都先按项目收敛；前端路由把项目做成**路径前缀** `/p/:key/*`（环境仍留在查询参数），所以切项目只是换前缀、**不丢板块**（在「应用包」切项目仍留在「应用包」）；`/settings` 与 `/d/:id` 不带项目前缀，前者是平台级配置、后者靠全局唯一的 id 定位。存量数据整体归入 `key=default` 的「默认项目」，老链接靠前端重定向兜住。项目不存在（key 被删/改名/拼错）由 `components/ProjectGate.tsx` 在骨架层统一拦成空态卡片，不放任各页面弹红色 400。
 
 9. **基础资料是纯主数据，不含权限**：人员 / 团队 / 项目三张主表 + 三张多对多关联表（`team_members` / `project_members` / `team_projects`），关联由两侧各自维护自己那一半（人员页改 `teamIds`、团队页改 `personIds`，落到同一张表）；编辑一律**全量覆盖**（事务内先清后写），前端每次提交完整多选结果。**列表接口直接返回关联的 `{id,name}`（`RelationRef`）**，因此人员管理只调 `/people`、团队管理只调 `/teams`、项目管理只调 `/projects`——页面不会为了把 ID 显示成名字再去拉别的列表（这是「一个页面一个列表接口」的硬约束）。`people.username` 关联登录账号，`GET /api/v1/me` 用它把「我关联的第一个项目」投影给前端做列表页默认值——**只做默认值，不做权限**；谁能看哪个项目仍由 P2 的角色体系决定。
