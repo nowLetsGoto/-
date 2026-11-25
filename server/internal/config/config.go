@@ -21,8 +21,8 @@ const DefaultMaxUploadMB = 200
 
 const (
 	defaultDatabaseURL   = "postgres://dandelion:dandelion@localhost:5432/dandelion?sslmode=disable"
-	defaultPublicBaseURL = "http://localhost:8080"
-	defaultPort          = "8080"
+	defaultPublicBaseURL = "http://localhost:10088"
+	defaultPort          = "10088"
 	defaultHost          = "0.0.0.0"
 	defaultStorageDir    = "./storage"
 	defaultGOEnv         = "development"
