@@ -27,6 +27,17 @@ for label in $LABELS; do
   fi
 done
 
+# 第零步：把可执行文件同步到 ~/dandelion-runtime。
+# 原因：macOS 的 TCC 保护 Desktop/Documents/Downloads，launchd 启动的程序
+# 执行这些目录下的二进制会被内核拒绝（posix_spawn: Operation not permitted，
+# 表现为 launchd 报 EX_CONFIG 78）。把程序放到家目录根部即可绕开。
+# 数据（storage）仍留在仓库目录，通过绝对路径 STORAGE_DIR 引用。
+RUNTIME="$HOME/dandelion-runtime"
+echo "同步运行时到 ${RUNTIME} ..."
+mkdir -p "${RUNTIME}/logs"
+cp -f "${ROOT}/bin/dandelion" "${RUNTIME}/dandelion"
+chmod +x "${RUNTIME}/dandelion"
+
 # 第一步：停掉手动启动的旧进程，否则 launchd 启动时会端口冲突。
 # 只按端口定位，不误杀 PostgreSQL(5432) 等其他服务。
 echo "清理手动启动的旧进程..."
@@ -42,9 +53,14 @@ sleep 2
 for label in $LABELS; do
   launchctl bootout "${DOMAIN}/${label}" 2>/dev/null || true
 done
+# launchd 对刚卸载的 label 有短暂冷却期，立即 bootstrap 会返回 EX_CONFIG(78)。
+sleep 3
 for label in $LABELS; do
-  launchctl bootstrap "$DOMAIN" "${AGENTS}/${label}.plist"
-  echo "已加载 ${label}"
+  if launchctl bootstrap "$DOMAIN" "${AGENTS}/${label}.plist" 2>/dev/null; then
+    echo "已加载 ${label}"
+  else
+    echo "加载失败 ${label}，见下方诊断" >&2
+  fi
 done
 
 echo ""
@@ -53,6 +69,25 @@ sleep 12
 
 echo "=== 服务状态 ==="
 launchctl list | grep com.dandelion || true
+
+# 78 = EX_CONFIG：launchd 拒绝启动。打印诊断，避免反复盲试。
+echo ""
+echo "=== 启动诊断 ==="
+for label in $LABELS; do
+  code="$(launchctl print "${DOMAIN}/${label}" 2>/dev/null | grep 'last exit code' | sed -E 's/.*= ([0-9]+):.*/\1/')"
+  state="$(launchctl print "${DOMAIN}/${label}" 2>/dev/null | grep 'state =' | head -1 | sed -E 's/.*= //')"
+  echo "${label}: state=${state:-?} exit=${code:-none}"
+done
+
+echo ""
+echo "--- 错误日志 ---"
+for label in $LABELS; do
+  short="${label#com.dandelion.}"
+  err="${ROOT}/logs/${short}.err.log"
+  if [ -s "$err" ]; then
+    echo "[$label]"; tail -10 "$err"
+  fi
+done
 
 echo ""
 echo "=== 防休眠断言 ==="

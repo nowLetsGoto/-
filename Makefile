@@ -7,7 +7,7 @@
 -include .env
 export DATABASE_URL PUBLIC_BASE_URL PORT HOST STORAGE_DIR MAX_UPLOAD_MB GO_ENV VITE_API_BASE ADMIN_USERNAME ADMIN_PASSWORD AUTH_SECRET
 
-.PHONY: gen\:api dev build test lint up down
+.PHONY: gen\:api dev build deploy test lint up down
 
 # 契约变更时重生成前端类型；生成物入库，前端 dev 不需要 Go、后端 build 不需要 Node。
 gen\:api:
@@ -21,6 +21,22 @@ dev:
 build:
 	npm --prefix web run build
 	cd server && CGO_ENABLED=0 go build -o ../bin/dandelion ./cmd/server
+
+# 构建并让「正在对外服务的后台进程」立即跑上新版本。
+# 为什么需要单独一步：launchd 常驻的是 ~/dandelion-runtime/dandelion 的副本，
+# 直接把新构建拷过去并重启服务，公网才会看到最新代码。
+# 若后台服务尚未安装，这一步只做构建，不报错。
+deploy:
+	@$(MAKE) build
+	@mkdir -p "$$HOME/dandelion-runtime/logs"
+	@cp -f bin/dandelion "$$HOME/dandelion-runtime/dandelion"
+	@chmod +x "$$HOME/dandelion-runtime/dandelion"
+	@if launchctl print "gui/$$(id -u)/com.dandelion.server" >/dev/null 2>&1; then \
+		launchctl kickstart -k "gui/$$(id -u)/com.dandelion.server"; \
+		echo "已重启服务，公网将使用新版本"; \
+	else \
+		echo "后台服务未安装（跳过重启）。需要常驻请执行：bash scripts/install-autostart.sh"; \
+	fi
 
 test:
 	cd server && go test ./...
