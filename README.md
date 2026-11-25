@@ -53,10 +53,10 @@ Makefile                 gen:api / dev / build / test / up / down
 docker compose -f deploy/docker-compose.yml up -d db   # 必须先起数据库
 cp .env.example .env                                   # 必改 PUBLIC_BASE_URL；生产还需改 AUTH_SECRET 与 ADMIN_PASSWORD
 npm --prefix web install
-make dev                                               # 同时起 :8080（Go）与 :5173（Vite）
+make dev                                               # 同时起 :10088（Go）与 :5173（Vite）
 ```
 
-- 开发时浏览器打开 `http://localhost:5173`；`/api` 由 Vite 代理到 :8080。
+- 开发时浏览器打开 `http://localhost:5173`；`/api` 由 Vite 代理到 :10088。
 - 首次打开会先到登录页：默认 `admin` / `admin123456`（可用 `.env` 的 `ADMIN_USERNAME` / `ADMIN_PASSWORD` 改）。
 - 手机扫码请访问 `PUBLIC_BASE_URL` 指向的**局域网地址**（Vite 已监听 `0.0.0.0`），并确保手机与开发机同网段、防火墙放行 5173。
 - 契约变更后执行 `make gen:api` 重生成 `web/src/api/schema.d.ts` 并提交入库；生成物入库后，前端 dev 不需要 Go、后端 build 不需要 Node。
@@ -94,8 +94,8 @@ make build          # 前端产物 → server/public/，再 CGO_ENABLED=0 go bui
 | 变量 | 默认值 | 说明 |
 | --- | --- | --- |
 | `DATABASE_URL` | `postgres://dandelion:dandelion@localhost:5432/dandelion?sslmode=disable` | PostgreSQL 连接串；生产改 `sslmode=require` |
-| `PUBLIC_BASE_URL` | `http://localhost:8080` | 对外访问入口基址，三个绝对 URL 的唯一来源；生产必填手机可达地址 |
-| `PORT` | `8080` | Go 监听端口 |
+| `PUBLIC_BASE_URL` | `http://localhost:10088` | 对外访问入口基址，三个绝对 URL 的唯一来源；生产必填手机可达地址 |
+| `PORT` | `10088` | Go 监听端口 |
 | `HOST` | `0.0.0.0` | Go 监听地址 |
 | `STORAGE_DIR` | `./storage` | 运行时数据根，相对进程工作目录（make 系列命令在仓库根运行） |
 | `MAX_UPLOAD_MB` | `200` | 单包上限，不得超过契约的 200 MB |
@@ -109,8 +109,8 @@ make build          # 前端产物 → server/public/，再 CGO_ENABLED=0 go bui
 
 | 场景 | 取值 | 谁提供 `/d/:id` | 手机可达前提 |
 | --- | --- | --- | --- |
-| 本地开发 | `http://<开发机局域网IP>:5173` | Vite dev server（history fallback） | 同 WiFi / 同网段、防火墙放行 5173；**不能填 :8080，dev 下 Go 不托管 SPA** |
-| 单机 / 内网 | `http://<内网IP>:8080` 或 `http://dandelion.internal` | Go 单二进制 embed 或 Nginx | 同内网 / VPN / 内网 DNS |
+| 本地开发 | `http://<开发机局域网IP>:5173` | Vite dev server（history fallback） | 同 WiFi / 同网段、防火墙放行 5173；**不能填 :10088，dev 下 Go 不托管 SPA** |
+| 单机 / 内网 | `http://<内网IP>:10088` 或 `http://dandelion.internal` | Go 单二进制 embed 或 Nginx | 同内网 / VPN / 内网 DNS |
 | 公网 / 容器 | `https://dandelion.example.com` | Nginx 终止 TLS + 反代 | 公网 DNS + 有效证书 |
 
 禁止 `localhost` / `127.0.0.1` / `0.0.0.0` / `::1` / 容器内部服务名。生产环境非法会 fail-fast；开发环境放宽，但前端二维码区会显示「当前对外基址不可被手机访问，请配置 PUBLIC_BASE_URL」，不会渲染扫不开的码。
@@ -175,38 +175,38 @@ printf 'fake apk for smoke test' > /tmp/demo.apk
 printf 'fake ipa for smoke test' > /tmp/demo.ipa
 
 # ⓪ 登录换令牌（默认 admin / admin123456）
-TOKEN=$(curl -sS -X POST http://localhost:8080/api/v1/auth/login \
+TOKEN=$(curl -sS -X POST http://localhost:10088/api/v1/auth/login \
   -H 'Content-Type: application/json' \
   -d '{"username":"admin","password":"admin123456"}' | python3 -c 'import sys,json;print(json.load(sys.stdin)["data"]["token"])')
 
 # ⓪' 项目列表（存量数据都在 key=default 的「默认项目」里）
-curl -sS -H "Authorization: Bearer $TOKEN" http://localhost:8080/api/v1/projects
+curl -sS -H "Authorization: Bearer $TOKEN" http://localhost:10088/api/v1/projects
 
 # ① 暂存：选文件时由前端自动触发；返回 stageToken / parsed / warnings
 curl -sS -H "Authorization: Bearer $TOKEN" \
-  -F "file=@/tmp/demo.apk" http://localhost:8080/api/v1/builds/stage
+  -F "file=@/tmp/demo.apk" http://localhost:10088/api/v1/builds/stage
 
 # ② 提交发布 commit：只发 JSON（恰好 9 字段），不带文件、不带 metaSource；把 <TOKEN> 换成上一步的 stageToken
-curl -sS -X POST http://localhost:8080/api/v1/builds \
+curl -sS -X POST http://localhost:10088/api/v1/builds \
   -H "Authorization: Bearer $TOKEN" \
   -H 'Content-Type: application/json' \
   -d '{"project":"default","stageToken":"<TOKEN>","environment":"test","platform":"android","appName":"商城 App","packageId":"com.example.shop","version":"1.2.0","buildNumber":"3","changelog":"修复登录态过期问题"}'
 
 # ③ 列表（project 必填；platform 省略或 all 表示不筛）
 curl -sS -H "Authorization: Bearer $TOKEN" \
-  'http://localhost:8080/api/v1/builds?project=default&environment=test&platform=android'
+  'http://localhost:10088/api/v1/builds?project=default&environment=test&platform=android'
 
 # ④ 免登录分享详情（SHARE_TOKEN 从服务端返回的 downloadPageUrl 中取得）
-curl -sS -H "X-Share-Token: $SHARE_TOKEN" http://localhost:8080/api/v1/public/builds/<ID>
+curl -sS -H "X-Share-Token: $SHARE_TOKEN" http://localhost:10088/api/v1/public/builds/<ID>
 
 # ⑤ 免登录原生下载（直接使用返回的 downloadFileUrl，完整保留查询参数）
 curl -OJ "$DOWNLOAD_FILE_URL"
 
 # ⑥ 健康检查
-curl -sS http://localhost:8080/healthz
+curl -sS http://localhost:10088/healthz
 
 # ⑦ SPA fallback：直接访问下载页拿到 index.html
-curl -sS http://localhost:8080/d/<ID> | head -5
+curl -sS http://localhost:10088/d/<ID> | head -5
 ```
 
 自造的小包不是合法 APK / IPA，stage 会返回 `warnings`（解析失败），但**上传仍会成功** —— 这正好用来验证 P0-9 的失败降级。
@@ -258,7 +258,7 @@ sudo cp -R bin deploy .env /opt/dandelion/
 sudo cp deploy/dandelion.service /etc/systemd/system/dandelion.service
 sudo systemctl daemon-reload && sudo systemctl enable --now dandelion
 ```
-`WorkingDirectory=/opt/dandelion`，`EnvironmentFile` 必须包含 `PUBLIC_BASE_URL` 与 `DATABASE_URL`，服务在 `postgresql.service` 之后启动，崩溃自动拉起。Go 单二进制自带静态资源与 SPA fallback，只开 8080 即可。
+`WorkingDirectory=/opt/dandelion`，`EnvironmentFile` 必须包含 `PUBLIC_BASE_URL` 与 `DATABASE_URL`，服务在 `postgresql.service` 之后启动，崩溃自动拉起。Go 单二进制自带静态资源与 SPA fallback，只开 10088 即可。
 
 ### ③ 容器（三服务）
 ```bash
@@ -310,10 +310,10 @@ tar -xzf uploads_YYYY-MM-DD.tar.gz -C storage
 | --- | --- |
 | 上传大包返回 413 | 先看 Nginx `client_max_body_size 210m`，再看 `MAX_UPLOAD_MB`（不得超过 200）与契约 `x-constants.maxUploadMB` |
 | 操作时提示「登录状态已失效」 | 令牌 12 小时过期，或服务端换了 `AUTH_SECRET`（换密钥会让全部旧令牌失效）；重新登录即可 |
-| 手机扫码打不开 / 二维码区显示「基址不可被手机访问」 | 检查 `PUBLIC_BASE_URL` 是否是手机可达的绝对地址；本地开发要填局域网 IP + `:5173`，不能填 localhost 或 `:8080` |
+| 手机扫码打不开 / 二维码区显示「基址不可被手机访问」 | 检查 `PUBLIC_BASE_URL` 是否是手机可达的绝对地址；本地开发要填局域网 IP + `:5173`，不能填 localhost 或 `:10088` |
 | 重启后包不见了 | 检查 `storage/` 卷挂载与 `DATABASE_URL` 是否指向同一个 PostgreSQL；DB 记录与 uploads 文件必须成对存在 |
 | 提交提示「暂存文件已失效，请重新选择文件」 | token 超过 1 小时、服务重启清空了 tmp、或已用过；重新选一次文件即可 |
-| 改了后端代码，接口却返回「接口不存在」 | 8080 上还是上一个 `dev-server` 进程（Go 没有热重载，替换二进制不影响已运行的进程）。重启 `make dev` 即可 |
+| 改了后端代码，接口却返回「接口不存在」 | 10088 上还是上一个 `dev-server` 进程（Go 没有热重载，替换二进制不影响已运行的进程）。重启 `make dev` 即可 |
 | 表单没有自动带出包名/版本 | 包可能损坏或是加固包，解析失败属预期降级，`warnings` 会提示，手填后照常上传 |
 | `go test ./...` 失败且提示枚举不一致 | 有人改了 `api/openapi.yaml` 却没同步 Go 常量，或反之；契约测试就是用来卡住这种漂移的 |
 | `/d/{id}` 刷新 404 | 单机检查 Go 的 SPA fallback，容器检查 Nginx `try_files $uri /index.html`；两处都要有 |

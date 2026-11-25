@@ -1940,3 +1940,87 @@ Key 本身有效、只是没有公司归属。文案直接指向修法
 
 ### 状态
 未 git commit。
+
+---
+
+## §37 公网部署与后台常驻（2026-11-25）
+
+### 拓扑
+本地 Mac 跑服务 → Cloudflare Tunnel → `https://dandelion.dreamgarden.world`
+代码与数据都在本地，公网只是入口。
+
+### 关键配置
+| 项 | 值 |
+|---|---|
+| 端口 | 8080 → **10088**（全项目统一） |
+| 公网基址 | `PUBLIC_BASE_URL=https://dandelion.dreamgarden.world` |
+| 环境 | `GO_ENV=production`（默认口令与弱密钥会被 fail-fast 拒绝） |
+| 隧道 | `~/.cloudflared/config.yml` → `localhost:10088` |
+| DNS | CNAME `dandelion` → `<tunnel-id>.cfargotunnel.com` |
+
+`PUBLIC_BASE_URL` 是二维码/复制地址/下载按钮三个绝对 URL 的唯一来源，
+改端口不影响它（域名不带端口）。生产模式下填本机地址会启动失败。
+
+### ⚠️ launchd 的 TCC 陷阱（本次最大教训）
+服务在 launchd 下持续报 **EX_CONFIG(78)**，日志为：
+
+```
+Service could not initialize: posix_spawn(/bin/bash), error 0x1 - Operation not permitted
+```
+
+排查过程中的错误假设（都试过、都无效）：
+- ❌ 以为是 `/bin/bash` 被安全策略拦 → 但 `vite` 服务用 bash 却成功
+- ❌ 以为是 bootout/bootstrap 冷却期 → 加 sleep 无效
+- ❌ 以为是 plist 语法/XML 注释/权限 → `plutil -lint` 全通过
+
+**真正原因**：macOS 的 **TCC 保护 Desktop / Documents / Downloads**。
+launchd 启动的程序只要**执行这些目录下的二进制**，或被设为**工作目录**，内核直接拒绝。
+`vite` 能成功的唯一原因是它实际执行的是 `~/.workbuddy/...` 下的 npm，
+Desktop 只是它 `cd` 进去的路径之一——恰好没踩到执行限制。
+
+**解决**：把可执行文件搬出 Desktop。
+
+```
+~/dandelion-runtime/dandelion   ← 二进制副本（launchd 执行这个）
+~/dandelion-runtime/logs/       ← 日志
+STORAGE_DIR=~/Desktop/dandelion/storage  ← 数据留在原处，用绝对路径引用
+```
+
+安装脚本会自动同步二进制；`make deploy` 封装了"构建 → 同步 → kickstart"。
+
+### 四个 LaunchAgent
+| 服务 | 内容 |
+|---|---|
+| `com.dandelion.server` | 生产后端 :10088，RunAtLoad + KeepAlive |
+| `com.dandelion.vite` | 本地开发 :5173（公网不指向它） |
+| `com.dandelion.tunnel` | cloudflared，断线自动重连 |
+| `com.dandelion.keepawake` | `caffeinate -i -s`，阻止系统空闲休眠 |
+
+plist 里环境变量通过 `EnvironmentVariables` 内联（不依赖 `.env` 加载，
+因为 launchd 的 PATH 只有 `/usr/bin:/bin:/usr/sbin:/sbin`）。
+
+### 另一个坑：手动启动的进程会被清理
+在助手会话里用 `&`/`nohup` 启动的进程会随命令结束被回收，
+表现为"启动 30 秒后 200 变 000"。**只有 launchd 能真正常驻**，
+不要用手动进程验证长期可用性。
+
+### 熄屏 vs 休眠
+- 屏幕熄灭（`displaysleep 30`）**不影响**服务，不必关
+- 系统空闲休眠（原 `sleep 1`）才是断线元凶 → `caffeinate` 已阻止
+- **合盖仍会休眠**，`caffeinate` 挡不住，需 `sudo pmset -c sleep 0 disksleep 0`
+- 笔记本当服务器仍有风险：系统更新重启、断电、合盖都会中断
+
+### 日常操作
+| 场景 | 命令 |
+|---|---|
+| 本地开发 | `make dev` |
+| 改代码后让公网生效 | `make deploy` |
+| 查看状态 | `launchctl list \| grep dandelion` |
+| 卸载自启 | `bash scripts/uninstall-autostart.sh` |
+
+### 验证
+四个服务均 `state=running` / `never exited`；PID 长时间不变；
+`https://dandelion.dreamgarden.world/` 与 `/login` 均 200。
+
+### 状态
+未 git commit。
