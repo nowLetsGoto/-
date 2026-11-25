@@ -8,12 +8,12 @@ package settings
 import (
 	"context"
 	"fmt"
-	"net/url"
 	"slices"
 	"strings"
 
 	"dandelion/server/internal/contract"
 	settingsrepo "dandelion/server/internal/repository/settings"
+	webhooksvc "dandelion/server/internal/service/webhook"
 )
 
 // Service 是设置页的唯一业务入口。
@@ -131,14 +131,8 @@ func normalize(in contract.WebhookConfig) (settingsrepo.Webhook, error) {
 			return settingsrepo.Webhook{}, &contract.ValidationError{Message: "Webhook 地址" + err.Error()}
 		}
 		target = normalized
-		if provider == contract.WebhookProviderFeishu {
-			u, _ := url.Parse(target)
-			const prefix = "/open-apis/bot/v2/hook/"
-			if u.Scheme != "https" || u.Host != "open.feishu.cn" || u.User != nil ||
-				u.RawQuery != "" || u.Fragment != "" || !strings.HasPrefix(u.Path, prefix) ||
-				strings.TrimPrefix(u.Path, prefix) == "" || strings.Contains(strings.TrimPrefix(u.Path, prefix), "/") {
-				return settingsrepo.Webhook{}, &contract.ValidationError{Message: "请填写飞书自定义机器人的 HTTPS Webhook 地址"}
-			}
+		if err := webhooksvc.ValidateProviderURL(provider, target); err != nil {
+			return settingsrepo.Webhook{}, err
 		}
 	}
 

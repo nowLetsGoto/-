@@ -21,7 +21,7 @@
 | 下载次数 | 仅在完整流式下载成功后 +1，列表页与下载页展示同一口径 |
 | 登录 | 账号登录（种子管理员默认 `admin` / `admin123456`）；登录时选单人/团队模式，单人默认；令牌 12 小时有效 |
 
-**明确不做**：iOS 浏览器直接安装（plist / itms-services）、列表页二维码入口、推送 / 通知 / Webhook / 订阅 / CI 集成 / 开放 API Key、多成员与角色权限（第一版只有单管理员登录，没有成员体系）、密码或回答问题安装、有效期 / 定时发布 / 短链、渠道与统计报表、鸿蒙 / CDN / 多语言、包删除与上传后编辑、应用图标解析、后端二维码接口、`POST /builds/parse` 预览端点、提交接口携带文件、任何多板块功能。
+**早期版本范围说明（部分已由后续实现覆盖）**：列表页二维码入口、推送 / 通知 / Webhook / 订阅 / CI 集成 / 开放 API Key、多成员与角色权限（第一版只有单管理员登录，没有成员体系）、密码或回答问题安装、有效期 / 定时发布 / 短链、渠道与统计报表、鸿蒙 / CDN / 多语言、包删除与上传后编辑、应用图标解析、后端二维码接口、`POST /builds/parse` 预览端点、提交接口携带文件、任何多板块功能。当前 iOS 在线安装能力见第 9 节，其余功能以代码及接口契约为准。
 
 ---
 
@@ -61,6 +61,10 @@ make dev                                               # 同时起 :10088（Go�
 - 手机扫码请访问 `PUBLIC_BASE_URL` 指向的**局域网地址**（Vite 已监听 `0.0.0.0`），并确保手机与开发机同网段、防火墙放行 5173。
 - 契约变更后执行 `make gen:api` 重生成 `web/src/api/schema.d.ts` 并提交入库；生成物入库后，前端 dev 不需要 Go、后端 build 不需要 Node。
 - 纯静态自检：`make test`（Go 契约一致性测试）、`npm --prefix web run build`（前端类型检查 + 构建）。
+
+### 本地前端连接远程后端
+
+在仓库根 `.env` 将 `VITE_API_BASE` 设为目标后端地址，然后执行 `make dev-web`，浏览器打开 `http://localhost:5173`。请求经 Vite 同源代理访问该后端，所有操作使用目标环境的数据；修改地址后重启前端并重新登录。恢复本地联调时清空此项并执行 `make dev`；正式环境按同源方式部署时，清空此项再构建。
 
 ### 无 Docker：使用本机 PostgreSQL
 
@@ -103,7 +107,7 @@ make build          # 前端产物 → server/public/，再 CGO_ENABLED=0 go bui
 | `ADMIN_USERNAME` | `admin` | 唯一管理员账号，不落库 |
 | `ADMIN_PASSWORD` | `admin123456` | 管理员口令；**生产必须改** |
 | `AUTH_SECRET` | `dandelion-dev-only-secret-change-me` | 登录令牌及分享签名派生的根密钥；轮换会使已发登录令牌和分享签名失效，生产沿用默认值会 fail-fast（`openssl rand -hex 32`） |
-| `VITE_API_BASE` | 空 | 前端 API 基址，留空表示同源 / 走代理 |
+| `VITE_API_BASE` | 空 | 开发时为 Vite 代理目标，留空代理本地 :10088；生产构建时为前端 API 基址，留空使用同源 |
 
 ### `PUBLIC_BASE_URL` 三场景
 
@@ -166,6 +170,7 @@ make build          # 前端产物 → server/public/，再 CGO_ENABLED=0 go bui
 | 35 | GET | `/api/v1/roles/{key}` | 需登录 | 角色详情（编辑页回填） |
 | 36 | PUT | `/api/v1/roles/{key}` | **超管** | 编辑角色名称 / 描述 / 权限；**超管角色权限不可改** |
 | 37 | GET | `/`、`/upload`、`/d/{id}` | 公开 | 静态资源 + SPA fallback |
+| 38 | GET | `/api/v1/public/builds/{id}/manifest.plist` | 分享凭证 | iOS OTA 安装清单，需 HTTPS；元数据读取原始 IPA，成功返回 XML |
 
 > 标「需登录」的接口要带 `Authorization: Bearer <token>`，缺失或过期返回 401；带了的接口也一律按 `project` 隔离，串项目的包互相看不到。
 
@@ -291,16 +296,20 @@ tar -xzf uploads_YYYY-MM-DD.tar.gz -C storage
 
 ---
 
-## 9. iOS 第一版限制与 P1 前置条件
+## 9. iOS 在线安装
 
-**第一版只提供 `.ipa` 文件下载，不能像蒲公英那样在手机浏览器点一下直接安装。** 下载页对 iOS 包会明确提示这一点。若后续勾选 P1-4（iOS 直接安装），需要先满足 6 项前置条件：
+下载页支持已签名 IPA 的 Apple OTA 安装。服务器设置手机可访问、证书可信的 `PUBLIC_BASE_URL=https://你的域名`，重启后端后，iPhone / iPad 上会自动显示「安装 iOS 应用」。未开启 HTTPS 时，iPhone / iPad 的主按钮显示「在线安装暂不可用」，点击打开安装说明，不自动下载 IPA；原始 IPA 下载保留在安装帮助中，电脑端仍可直接下载。前端无需写死域名，也不需要单独配置清单数据。
 
-1. 公网可访问的 **HTTPS 域名 + 有效 CA 证书**（`itms-services://` 要求 https，内网自签证书手机不信任）。
-2. 生成并托管符合 Apple 规范的 `manifest.plist`，其中包含IPA 地址、bundle id、版本号、应用名与图标地址。
-3. 明确的签名方式：企业签名（Apple Developer Enterprise Program）或 Ad Hoc 描述文件，并保证设备 UDID 已登记。
-4. IPA 的 `CFBundleIdentifier` / `CFBundleVersion` 与 plist 完全一致，否则安装会在校验阶段失败。
-5. 下载页新增 iOS 专用安装入口与服务端 plist 生成/托管接口（第一版两者都没有，也不预留）。
-6. 手机网络能解析并访问该域名（内网 DNS / 公网 DNS + 防火墙放行）；`PUBLIC_BASE_URL` 需一并切换成该 HTTPS 域名，已转发的旧二维码会失效。
+下载页本身可以通过 HTTP 打开；安装清单与 IPA 文件的绝对地址统一由 `PUBLIC_BASE_URL` 生成，需要使用证书可信的 HTTPS。
+这是 Apple OTA 的传输要求，见 [Apple 官方部署说明](https://support.apple.com/guide/deployment/distribute-proprietary-in-house-apps-depce7cefc4d/web)。现有 HTTP 后台可继续使用；可由 Nginx 等入口提供 HTTPS，再反向代理到应用的 HTTP 端口。
+
+1. 上传已有 Ad Hoc 或企业签名的真机 IPA。平台分发原始安装包，不重新签名，也不在下载前收集 UDID 或检查设备安装资格。
+2. 在 Safari 中打开分享下载页并点击安装。飞书、微信内打开时，通过浏览器菜单转到 Safari；系统安装可能在后台进行，可返回主屏幕查看进度。
+3. 系统先请求 `/api/v1/public/builds/{id}/manifest.plist?shareToken=...`，后端验证分享凭证后生成 XML 清单。Bundle ID、构建号和应用名读取原始 IPA 的 `Info.plist`，不受页面中编辑过的展示字段影响。
+4. 清单中的 IPA URL 由同一个 `PUBLIC_BASE_URL` 生成，携带当前包自己的分享凭证。系统下载 IPA 时再次校验授权；缺失、篡改、跨包、过期和撤销的凭证均不能访问。读取清单不计下载次数，IPA 完整下载成功后才计数。
+5. iOS 系统负责签名、描述文件及设备安装资格的校验。安装成功后 App 显示在主屏幕；无法安装时，由系统显示失败提示，下载页不提前判断或拦截设备。
+
+服务端只验证分享权限、HTTPS 安装地址及生成清单所需的 IPA 元数据，不替代 iOS 的安装校验。原始 IPA 下载入口保留在安装帮助中。TestFlight 是独立的 App Store Connect 发布流程，需要发布方另外提供邀请链接。
 
 ---
 

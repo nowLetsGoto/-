@@ -345,23 +345,29 @@ func (s *BuildService) Create(ctx context.Context, in contract.CommitInput, iden
 	return build, nil
 }
 
-// buildURLs 是唯一 URL 生成处，仅使用 PUBLIC_BASE_URL；内部预览路径不含凭证。
-func (s *BuildService) buildURLs(id, token string) (pagePath, pageURL, fileURL string) {
+// buildURLs 是唯一 URL 生成处，仅使用 PUBLIC_BASE_URL；iOS 在线安装只签发 HTTPS 清单地址。
+func (s *BuildService) buildURLs(id, token, platform string) (pagePath, pageURL, fileURL, iosInstallURL string) {
 	pagePath = strings.Replace(contract.RouteDownloadPage, "{id}", id, 1)
 	if token == "" {
-		return pagePath, "", ""
+		return pagePath, "", "", ""
 	}
 	query := "?" + url.Values{"shareToken": {token}}.Encode()
 	base := strings.TrimRight(s.cfg.PublicBaseURL, "/")
 	fileRel := strings.Replace(contract.RouteSharedBuildFile, "{id}", id, 1)
-	return pagePath, base + pagePath + query, base + fileRel + query
+	if parsed, err := url.Parse(base); err == nil && parsed.Scheme == "https" && parsed.Host != "" && platform == contract.PlatformIOS {
+		manifestRel := strings.Replace(contract.RouteSharedBuildManifest, "{id}", id, 1)
+		iosInstallURL = "itms-services://?" + url.Values{
+			"action": {"download-manifest"}, "url": {base + manifestRel + query},
+		}.Encode()
+	}
+	return pagePath, base + pagePath + query, base + fileRel + query, iosInstallURL
 }
 
 func (s *BuildService) fillURLs(b *contract.Build, token string) {
-	b.DownloadPagePath, b.DownloadPageURL, b.DownloadFileURL = s.buildURLs(b.ID, token)
+	b.DownloadPagePath, b.DownloadPageURL, b.DownloadFileURL, b.IOSInstallURL = s.buildURLs(b.ID, token, b.Platform)
 }
 
-// List 返回该项目的按时间倒序列表，空结果为空数组；统一填充三个 URL 字段。
+// List 返回该项目的按时间倒序列表，空结果为空数组；统一填充下载与安装地址。
 // 分区由 identity 决定：单人只可能看到自己分区里的包，团队看到团队分区。
 // owner 一并下传：单人分区的仓储会把它变成 SQL 条件，隔离不只依赖这次 resolveProject。
 func (s *BuildService) List(ctx context.Context, q contract.ListQuery, identity contract.Identity) (contract.ListResult, error) {

@@ -233,6 +233,7 @@ const (
 	RouteSharedBuild          = APIPrefix + "/public/builds/{id}"
 	RouteSharedBuildVersions  = APIPrefix + "/public/builds/{id}/versions"
 	RouteSharedBuildFile      = APIPrefix + "/public/builds/{id}/file"
+	RouteSharedBuildManifest  = APIPrefix + "/public/builds/{id}/manifest.plist"
 	RouteHealth               = "/healthz"
 	RouteDownloadPage         = "/d/{id}"
 )
@@ -281,7 +282,7 @@ var APIRoutes = []string{
 	RoutePeople, RoutePersonByID, RouteTeams, RouteTeamByID,
 	RoutePermissions, RouteMenus, RouteRoles, RouteRoleByID,
 	RouteSettings, RouteWebhookTest, RouteAPIKeyRotate, RouteOpenBuilds,
-	RouteStage, RouteBuilds, RouteBuildByID, RouteBuildVersions, RouteBuildFile, RouteSharedBuild, RouteSharedBuildVersions, RouteSharedBuildFile, RouteHealth,
+	RouteStage, RouteBuilds, RouteBuildByID, RouteBuildVersions, RouteBuildFile, RouteSharedBuild, RouteSharedBuildVersions, RouteSharedBuildFile, RouteSharedBuildManifest, RouteHealth,
 }
 
 // Webhook 可推送字段的键：与 api/openapi.yaml 的 x-webhook-fields 键集合一致。
@@ -1125,7 +1126,7 @@ func NormalizeHTTPURL(raw string) (string, error) {
 
 var errInvalidHTTPURL = errors.New("必须是 http:// 或 https:// 开头的绝对地址")
 
-// Build 是完整包 DTO；三个 URL 字段由 service.buildURLs 填充，repository 映射时留空。
+// Build 是完整包 DTO；下载及 iOS 安装地址由 service.buildURLs 填充，repository 映射时留空。
 type Build struct {
 	ID          string `json:"id"`
 	Environment string `json:"environment"`
@@ -1146,6 +1147,7 @@ type Build struct {
 	DownloadPagePath string `json:"downloadPagePath"`
 	DownloadPageURL  string `json:"downloadPageUrl"`
 	DownloadFileURL  string `json:"downloadFileUrl"`
+	IOSInstallURL    string `json:"iosInstallUrl"`
 	CreatedAt        string `json:"createdAt"`
 	// OwnerUserID 是上传者账号 id；system 表示由外部 API 或历史数据产生。
 	OwnerUserID string `json:"ownerUserId"`
@@ -1168,6 +1170,7 @@ type SharedBuild struct {
 	DownloadPagePath string `json:"downloadPagePath"`
 	DownloadPageURL  string `json:"downloadPageUrl"`
 	DownloadFileURL  string `json:"downloadFileUrl"`
+	IOSInstallURL    string `json:"iosInstallUrl"`
 	CreatedAt        string `json:"createdAt"`
 }
 

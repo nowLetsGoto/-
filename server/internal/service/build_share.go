@@ -136,6 +136,7 @@ func (s *BuildService) GetShared(ctx context.Context, id, token string) (contrac
 		BuildNumber: b.BuildNumber, Changelog: b.Changelog, FileSize: b.FileSize,
 		FileExt: b.FileExt, DownloadCount: b.DownloadCount, CreatedAt: b.CreatedAt,
 		DownloadPagePath: b.DownloadPagePath, DownloadPageURL: b.DownloadPageURL, DownloadFileURL: b.DownloadFileURL,
+		IOSInstallURL: b.IOSInstallURL,
 	}, nil
 }
 

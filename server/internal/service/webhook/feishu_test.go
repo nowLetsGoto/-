@@ -175,6 +175,9 @@ func TestWebhookPostValidatesFeishuReceiptAndKeepsGenericProtocol(t *testing.T) 
 		t.Run(tc.name, func(t *testing.T) {
 			cfg, build := feishuConfig(), publishedBuild()
 			cfg.Provider = tc.provider
+			if tc.provider != contract.WebhookProviderFeishu {
+				cfg.URL = "https://hooks.example/receiver"
+			}
 			svc := &Service{client: &http.Client{Transport: memoryTransport(func(req *http.Request) (*http.Response, error) {
 				body, err := io.ReadAll(req.Body)
 				if err != nil {
@@ -261,5 +264,22 @@ func TestTestDeliveryReportsBusinessFailureWithHTTPStatus(t *testing.T) {
 	}
 	if _, err := svc.Test(context.Background(), contract.Scope{}); err != contract.ErrForbidden {
 		t.Fatal(fmt.Sprintf("没有公司范围应拒绝测试：%v", err))
+	}
+}
+
+func TestMisconfiguredFeishuDoesNotSendOrReportSuccess(t *testing.T) {
+	for _, provider := range []string{"", contract.WebhookProviderGeneric} {
+		t.Run("provider="+provider, func(t *testing.T) {
+			cfg := feishuConfig()
+			cfg.Provider = provider
+			svc := &Service{repo: memoryConfig{cfg: cfg}, client: &http.Client{Transport: memoryTransport(func(*http.Request) (*http.Response, error) {
+				t.Fatal("类型不匹配时不应向飞书发送通用 JSON")
+				return nil, nil
+			})}}
+			result, err := svc.Test(context.Background(), contract.Scope{TenantID: "company-a"})
+			if err != nil || result.Delivered || result.StatusCode != 0 || !strings.Contains(result.Message, "通知类型") {
+				t.Fatalf("错误协议不应显示投递成功：%+v err=%v", result, err)
+			}
+		})
 	}
 }

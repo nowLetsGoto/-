@@ -209,17 +209,42 @@ function DownloadVersions({
 
 function DownloadLink({
   build,
+  devicePlatform,
   disabled,
   onClick,
+  onInstallHelp,
 }: {
   build: DownloadBuild;
+  devicePlatform: Platform | null;
   disabled: boolean;
   onClick: (event: MouseEvent<HTMLAnchorElement>) => void;
+  onInstallHelp: () => void;
 }): JSX.Element {
+  const installUrl =
+    devicePlatform === 'ios' && build.platform === 'ios' ? build.iosInstallUrl : '';
+  if (
+    devicePlatform === 'ios' &&
+    build.platform === 'ios' &&
+    !installUrl &&
+    build.downloadFileUrl
+  ) {
+    return (
+      <Button
+        className="download-install"
+        type="button"
+        disabled={disabled}
+        onClick={onInstallHelp}
+      >
+        <img src={infoIcon} alt="" />
+        <span>在线安装暂不可用</span>
+        <small>查看安装说明</small>
+      </Button>
+    );
+  }
   return (
     <a
       className={`download-install${disabled ? ' is-disabled' : ''}`}
-      href={build.downloadFileUrl || undefined}
+      href={installUrl || build.downloadFileUrl || undefined}
       onClick={(event) => {
         if (!build.downloadFileUrl) event.preventDefault();
         else onClick(event);
@@ -231,10 +256,14 @@ function DownloadLink({
         {!build.downloadFileUrl
           ? '分享暂不可用'
           : disabled
-            ? '正在准备下载…'
-            : build.platform === 'ios'
-              ? '下载 IPA 文件'
-              : '下载安装'}
+            ? installUrl
+              ? '正在唤起安装…'
+              : '正在准备下载…'
+            : installUrl
+              ? '安装 iOS 应用'
+              : build.platform === 'ios'
+                ? '下载 IPA 文件'
+                : '下载安装'}
       </span>
       <small>{formatBytes(build.fileSize)}</small>
     </a>
@@ -248,6 +277,7 @@ function DeviceDownloadAction({
   disabled,
   onSwitch,
   onDownload,
+  onInstallHelp,
 }: {
   build: DownloadBuild;
   devicePlatform: Platform | null;
@@ -255,9 +285,18 @@ function DeviceDownloadAction({
   disabled: boolean;
   onSwitch: (platform: Platform) => void;
   onDownload: (event: MouseEvent<HTMLAnchorElement>) => void;
+  onInstallHelp: () => void;
 }): JSX.Element {
   if (!devicePlatform || devicePlatform === build.platform) {
-    return <DownloadLink build={build} disabled={disabled} onClick={onDownload} />;
+    return (
+      <DownloadLink
+        build={build}
+        devicePlatform={devicePlatform}
+        disabled={disabled}
+        onClick={onDownload}
+        onInstallHelp={onInstallHelp}
+      />
+    );
   }
   const label = platformLabel(devicePlatform);
   return (
@@ -777,7 +816,13 @@ export function DownloadPage(): JSX.Element {
                       {selectedBuild.version} · Build {selectedBuild.buildNumber || '—'}
                     </span>
                   </div>
-                  <p className="download-qr-caption">使用手机浏览器扫码打开</p>
+                  <p className="download-qr-caption">
+                    {selectedBuild.platform === 'ios'
+                      ? selectedBuild.iosInstallUrl
+                        ? 'iPhone / iPad 请用 Safari 打开并安装'
+                        : '当前链接暂未提供 iOS 在线安装'
+                      : '使用手机浏览器扫码打开'}
+                  </p>
                   <DeviceDownloadAction
                     build={selectedBuild}
                     devicePlatform={devicePlatform}
@@ -785,6 +830,7 @@ export function DownloadPage(): JSX.Element {
                     disabled={downloadDisabled}
                     onSwitch={changePlatform}
                     onDownload={onDownload}
+                    onInstallHelp={() => setSheet('help')}
                   />
                 </div>
               ) : (
@@ -850,6 +896,7 @@ export function DownloadPage(): JSX.Element {
             disabled={downloadDisabled}
             onSwitch={changePlatform}
             onDownload={onDownload}
+            onInstallHelp={() => setSheet('help')}
           />
         ) : (
           <Button className="download-install" type="button" disabled>
@@ -858,7 +905,9 @@ export function DownloadPage(): JSX.Element {
         )}
         <p>
           {selectedBuild?.platform === 'ios'
-            ? '原始 IPA 文件 · 需签名工具或 TestFlight 安装'
+            ? selectedBuild.iosInstallUrl
+              ? '请在 Safari 中打开安装 · 安装结果由 iOS 系统提示'
+              : '在线安装暂不可用 · 点击查看安装说明'
             : '原始安装包 · 仅供内部使用'}
         </p>
       </footer>
@@ -976,11 +1025,29 @@ export function DownloadPage(): JSX.Element {
           <h3>{platform} 安装说明</h3>
           <p>
             {build.platform === 'ios'
-              ? '本页提供原始 IPA 文件，iOS 无法通过浏览器直接安装。请联系发布方获取企业签名、TestFlight 入口或使用签名工具安装。'
+              ? selectedBuild?.iosInstallUrl
+                ? '请在 iPhone / iPad 的 Safari 中打开此页，点击「安装 iOS 应用」并按系统提示确认。从飞书或微信内打开时，请使用浏览器菜单转到 Safari。系统安装可能在后台进行，可返回主屏幕查看进度。'
+                : '当前链接暂未提供 iOS 在线安装。下载 IPA 文件不会直接在手机上安装 App，请向发布方获取在线安装链接。'
               : build.platform === 'android'
                 ? '下载完成后打开 APK 文件。如系统提示禁止安装未知应用，请确认来源可信，再为当前浏览器或文件管理器开启安装权限。'
                 : '下载完成后按系统指引安装。如提示应用来源未知，请先向发布方确认来源可信。'}
           </p>
+          {build.platform === 'ios' ? (
+            <>
+              <h3>iOS 安装结果</h3>
+              <p>
+                确认安装后，可返回主屏幕查看进度。安装是否成功以 iOS
+                系统提示为准；如果出现「无法验证其完整性」等提示，请将提示反馈给发布方。
+              </p>
+              {selectedBuild?.downloadFileUrl ? (
+                <p>
+                  需要通过电脑安装时，可
+                  <a href={selectedBuild.downloadFileUrl}>下载原始 IPA 文件</a>。 TestFlight
+                  需要发布方另外提供邀请链接。
+                </p>
+              ) : null}
+            </>
+          ) : null}
           <h3>下载后打不开安装包？</h3>
           <p>
             请核对文件大小。如果下载中断，请删除未完成的文件后重新下载。仍无法打开时，可用系统自带浏览器重试。

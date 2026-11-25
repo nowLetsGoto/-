@@ -67,6 +67,9 @@ func TestSharedVersionsRejectInvalidSourceBeforeReadingBuilds(t *testing.T) {
 			if _, err := svc.SharedVersions(context.Background(), tc.id, tc.token); !errors.Is(err, contract.ErrNotFound) {
 				t.Fatalf("无效来源必须返回404：%v", err)
 			}
+			if _, err := svc.SharedIOSManifest(context.Background(), tc.id, tc.token); !errors.Is(err, contract.ErrNotFound) {
+				t.Fatalf("无效来源不得读取安装清单：%v", err)
+			}
 		})
 	}
 }

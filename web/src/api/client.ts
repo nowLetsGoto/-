@@ -1,14 +1,15 @@
 /**
  * 前端唯一 HTTP 出入口。
  * 职责：拼接同源/代理基址、自动附带登录令牌、统一解包 {code,data,message}、把失败抛成 ApiError。
- * 输入：API 相对路径与 fetch 配置；输出：已解包的 data。
+ * 输入：API 相对路径与 fetch 配置；输出：已解包的 data；开发时经 Vite 代理选择后端。
  * 边界：不业务判断、不缓存（只有 GET 的在途去重，落地即失效）、不拼 window.location.origin；
  *       FormData 不手动设 Content-Type（浏览器自带 boundary）；
  *       登录请求的 401 在这里处理（清会话 + 回登录页），分享错误留在分享页，页面无需各自兜底。
  */
 import { clearSession, readSession } from './session';
 
-const baseURL: string = import.meta.env.VITE_API_BASE ?? '';
+// 开发统一走同源代理；构建产物仍支持 VITE_API_BASE，留空时按部署入口同源访问。
+const baseURL: string = import.meta.env.DEV ? '' : (import.meta.env.VITE_API_BASE ?? '');
 
 /** 登录页路径：401 时整页跳到这里，避免在 fetch 层引入 react-router。 */
 const LOGIN_PAGE = '/login';

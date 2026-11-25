@@ -125,6 +125,9 @@ func (s *Service) Test(ctx context.Context, scope contract.Scope) (contract.Webh
 
 // post 组装并发送一次请求；返回目标状态码（未收到响应时为 0）。
 func (s *Service) post(ctx context.Context, cfg settingsrepo.Config, build contract.Build, testing bool) (int, error) {
+	if err := ValidateProviderURL(cfg.Provider, cfg.URL); err != nil {
+		return 0, err
+	}
 	// tenantId 取「配置所属公司」而不是包的公司：回落到兜底行时，
 	// 接收端看到的是平台兜底配置发出的通知，标成具体公司反而误导。
 	var message any = payload{

@@ -591,7 +591,7 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * 下载原始包文件（唯一不套 JSON 的成功响应）
+         * 下载原始包文件（成功响应不套 JSON）
          * @description io.Copy 成功完成且写出字节等于 Content-Length 之后才原子 +1 下载次数； 404、路径非法、文件缺失、客户端中断、copy 出错、字节不足一律不计数。
          */
         get: operations["downloadBuildFile"];
@@ -663,6 +663,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/public/builds/{id}/manifest.plist": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 凭分享授权获取 iOS 在线安装清单
+         * @description 每次验证绑定单个版本的分享凭证、分区、有效期及撤销状态，不读取登录态。 仅支持 iOS IPA，PUBLIC_BASE_URL 必须为手机可信的 HTTPS 地址。 清单的 bundle-identifier 与 bundle-version 从原始 IPA 读取，不使用可编辑的展示字段。 清单中的 IPA 地址使用同一分享凭证，系统下载时仍会重新校验授权。 读取清单不增加下载次数；成功返回 XML plist，错误返回统一 JSON 外壳。
+         */
+        get: operations["getSharedIOSManifest"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/healthz": {
         parameters: {
             query?: never;
@@ -698,7 +718,7 @@ export interface components {
          * @enum {string}
          */
         WebhookProvider: "generic" | "feishu";
-        /** @description Webhook 配置。enabled=true 时 url 必填且必须是 http(s) 绝对地址； provider 省略时按 generic 处理。generic 的 secret 用于请求头 X-Dandelion-Signature； feishu 的 secret 为飞书机器人签名密钥，用于请求体 timestamp/sign。 飞书地址须为官方 HTTPS 自定义机器人地址，fields 必须包含 downloadPageUrl。 */
+        /** @description Webhook 配置。enabled=true 时 url 必填且必须是 http(s) 绝对地址； provider 省略时按 generic 处理。generic 的 secret 用于请求头 X-Dandelion-Signature； feishu 的 secret 为飞书机器人签名密钥，用于请求体 timestamp/sign。 飞书地址须为官方 HTTPS 自定义机器人地址，fields 必须包含 downloadPageUrl。 飞书机器人地址不能使用 generic 类型；保存时拒绝该组合，测试投递时返回 delivered=false。 */
         WebhookConfig: {
             provider?: components["schemas"]["WebhookProvider"];
             enabled: boolean;
@@ -1186,6 +1206,8 @@ export interface components {
             downloadPageUrl: string;
             /** @description 有效分享的绝对文件地址，下载按钮的唯一来源；分享失效时为空串 */
             downloadFileUrl: string;
+            /** @description iOS 的 itms-services 安装地址，仅有效分享且 PUBLIC_BASE_URL 为 HTTPS 时提供；其它情况为空串 */
+            iosInstallUrl?: string;
             /**
              * Format: date-time
              * @description ISO 8601 UTC
@@ -1228,6 +1250,8 @@ export interface components {
              * @description 绝对地址，下载按钮的唯一来源
              */
             downloadFileUrl: string;
+            /** @description iOS 的 itms-services 安装地址，嵌套同凭证的 HTTPS 安装清单；未启用 HTTPS 或非 iOS 时为空串 */
+            iosInstallUrl?: string;
             /**
              * Format: date-time
              * @description ISO 8601 UTC
@@ -3019,6 +3043,32 @@ export interface operations {
                 };
             };
             404: components["responses"]["NotFound"];
+        };
+    };
+    getSharedIOSManifest: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description 包稳定唯一标识 */
+                id: components["parameters"]["BuildId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Apple OTA 安装清单；Cache-Control 为 private, no-store */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/xml": string;
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["InternalError"];
         };
     };
     health: {

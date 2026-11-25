@@ -16,6 +16,8 @@ func TestNormalizeWebhookProvider(t *testing.T) {
 		disabled, wantError    bool
 	}{
 		{"存量通用配置", "", "https://hooks.example/receiver", []string{"appName"}, false, false},
+		{"飞书地址误选通用", "generic", "https://open.feishu.cn/open-apis/bot/v2/hook/test", []string{"downloadPageUrl"}, false, true},
+		{"存量飞书地址未选类型", "", "https://open.feishu.cn/open-apis/bot/v2/hook/test", []string{"downloadPageUrl"}, false, true},
 		{"飞书配置", "feishu", "https://open.feishu.cn/open-apis/bot/v2/hook/test", []string{"downloadPageUrl"}, false, false},
 		{"未知类型", "other", "https://hooks.example", []string{"appName"}, false, true},
 		{"缺少下载地址", "feishu", "https://open.feishu.cn/open-apis/bot/v2/hook/test", []string{"appName"}, false, true},

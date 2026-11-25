@@ -85,6 +85,7 @@ var allowedMethods = map[string]string{
 	contract.RouteSharedBuild:         "GET",
 	contract.RouteSharedBuildVersions: "GET",
 	contract.RouteSharedBuildFile:     "GET",
+	contract.RouteSharedBuildManifest: "GET",
 }
 
 // allowedMethodsFor 返回该请求应回填的 Allow 值。
@@ -142,6 +143,7 @@ func NewRouter(d Deps) http.Handler {
 		api.Get("/public/builds/{id}", middleware.Wrap(d.Builds.SharedGet))
 		api.Get("/public/builds/{id}/versions", middleware.Wrap(d.Builds.SharedVersions))
 		api.Get("/public/builds/{id}/file", middleware.Wrap(d.Builds.SharedDownloadFile))
+		api.Get("/public/builds/{id}/manifest.plist", middleware.Wrap(d.Builds.SharedIOSManifest))
 
 		// 外部系统上传：X-API-Key 鉴权，与管理端登录态互不影响。
 		api.With(apikey.Require(d.APIKey)).Post("/open/builds", middleware.Wrap(d.Open.Upload))

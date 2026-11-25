@@ -7,7 +7,7 @@
 -include .env
 export DATABASE_URL PUBLIC_BASE_URL PORT HOST STORAGE_DIR MAX_UPLOAD_MB GO_ENV VITE_API_BASE ADMIN_USERNAME ADMIN_PASSWORD AUTH_SECRET
 
-.PHONY: gen\:api dev build deploy test lint up down
+.PHONY: gen\:api dev dev-web build deploy test lint up down
 
 # 契约变更时重生成前端类型；生成物入库，前端 dev 不需要 Go、后端 build 不需要 Node。
 gen\:api:
@@ -17,6 +17,10 @@ gen\:api:
 dev:
 	@cd server && go build -o ../bin/dev-server ./cmd/server
 	@( ./bin/dev-server ) & ( npm --prefix web run dev ) & trap 'kill 0' INT TERM; wait
+
+# 只启动本地前端；VITE_API_BASE 指定要联调的后端，留空时仍代理到本地 :10088。
+dev-web:
+	npm --prefix web run dev -- --port 5173 --strictPort
 
 build:
 	npm --prefix web run build
