@@ -55,7 +55,7 @@ func TestSoloModeGrantsBusinessPermissionsWithoutRole(t *testing.T) {
 		t.Fatalf("单人模式不应报错: %v", err)
 	}
 
-	for _, permission := range []string{"build.read", "build.write", "project.read"} {
+	for _, permission := range []string{"build.read", "build.write", "build.delete", "project.read", "project.write"} {
 		if _, ok := permissions[permission]; !ok {
 			t.Fatalf("单人模式应具备 %s", permission)
 		}

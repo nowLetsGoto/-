@@ -22,6 +22,16 @@ const ICONS = {
     'M14 4.5H6.5A1.5 1.5 0 0 0 5 6v12a1.5 1.5 0 0 0 1.5 1.5H14 M17 8.5 20.5 12 17 15.5 M20 12h-9',
   /** 侧栏账号按钮右侧的展开指示：默认朝上（卡片向上弹），展开后朝下。 */
   chevron: 'M7 14.5 12 9.5l5 5',
+  search: 'M10.5 17a6.5 6.5 0 1 0 0-13a6.5 6.5 0 0 0 0 13 M15.5 15.5 21 21',
+  edit: 'm15.5 4.5 4 4 M4 20l4.5-1 12-12a2.8 2.8 0 0 0-4-4l-12 12z',
+  trash: 'M4 7h16 M9 7V4h6v3 M6 7l1 14h10l1-14 M10 10v7 M14 10v7',
+  file: 'M14 3H6v18h12V7z M14 3v5h4 M9 12h6 M9 16h4',
+  download: 'M12 3v12 M7 10l5 5 5-5 M5 16v5h14v-5',
+  clock: 'M12 8v5l3 2 M21 12a9 9 0 1 0-18 0a9 9 0 0 0 18 0',
+  external: 'M9 5H4v15h15v-5 M13 4h7v7 M11 13l9-9',
+  phone: 'M7 3h10v18H7z M11 18h2',
+  warning:
+    'M12 8v5 M12 17h.01 M10.3 4.2 2.5 18a2 2 0 0 0 1.7 3h15.6a2 2 0 0 0 1.7-3L13.7 4.2a2 2 0 0 0-3.4 0',
 } as const;
 
 export type IconName = keyof typeof ICONS;

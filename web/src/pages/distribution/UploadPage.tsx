@@ -20,6 +20,7 @@ import { ApiError, errorMessage } from '../../api/client';
 import { Button, Input, Segmented, TextArea } from '../../components/Controls';
 import { FileDropzone } from '../../components/FileDropzone';
 import { useEnvironment } from '../../hooks/useEnvironment';
+import { useCopyText } from '../../hooks/useCopyText';
 import { useCurrentProject } from '../../hooks/useProjects';
 import { ENVIRONMENTS, PLATFORMS, platformFromFileName } from '../../utils/format';
 
@@ -54,6 +55,7 @@ const initialForm = (environment: Environment): FormState => ({
 });
 
 export function UploadPage(): JSX.Element {
+  const copy = useCopyText();
   const navigate = useNavigate();
   const { key } = useCurrentProject();
   const [globalEnvironment] = useEnvironment();
@@ -167,11 +169,10 @@ export function UploadPage(): JSX.Element {
   };
 
   const copyText = async (text: string): Promise<void> => {
-    try {
-      await navigator.clipboard.writeText(text);
+    if (await copy(text)) {
       setCopied(true);
       window.setTimeout(() => setCopied(false), 2000);
-    } catch {
+    } else {
       setError('复制失败，请手动选中地址复制');
     }
   };

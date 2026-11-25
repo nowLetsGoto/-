@@ -1,18 +1,20 @@
 /**
  * 前端 API 函数与 URL 唯一消费处。
- * 职责：定义五个接口调用；三个对外地址一律直接使用服务端返回的 Build DTO 字段。
+ * 职责：封装上传、查询、编辑与删除；三个对外地址一律使用服务端返回的 Build DTO 字段。
  * 输入：File / 表单值 / 查询条件 / 包 id；输出：契约生成的类型。
  * 边界：禁止 window.location.origin 拼接、禁止用 downloadPagePath 生成二维码/复制/下载链接；
  *       commitBuild 只发 JSON（恰好 8 字段），绝不携带文件与 metaSource；isShareableUrl 只做可达性判断，不生成地址。
  */
 import type { components } from './schema';
-import { get, postForm, postJSON } from './client';
+import { del, get, getShared, postForm, postJSON, putJSON } from './client';
 
 type Schemas = components['schemas'];
 
 export type Build = Schemas['Build'];
+export type DownloadBuild = Schemas['SharedBuild'];
 export type StageResult = Schemas['StageResult'];
 export type CommitBuildRequest = Schemas['CommitBuildRequest'];
+export type UpdateBuildRequest = Schemas['UpdateBuildRequest'];
 export type ListBuildsResult = Schemas['ListBuildsResult'];
 export type Environment = Schemas['Environment'];
 export type Platform = Schemas['Platform'];
@@ -21,6 +23,7 @@ export type PublicBuildVersion = Schemas['PublicBuildVersion'];
 
 /** 契约路径的前端唯一镜像；页面不得自行拼 /api/v1 路径。 */
 const ROUTES = {
+  sharedBuild: (id: string): string => `/api/v1/public/builds/${encodeURIComponent(id)}`,
   stage: '/api/v1/builds/stage',
   builds: '/api/v1/builds',
   buildById: (id: string): string => `/api/v1/builds/${encodeURIComponent(id)}`,
@@ -58,9 +61,22 @@ export function getBuild(id: string): Promise<Build> {
   return get<Build>(ROUTES.buildById(id));
 }
 
-/** 公开下载页的「其它版本」：接口失败时页面直接隐藏板块，不阻断主下载流程。 */
+export function updateBuild(id: string, input: UpdateBuildRequest): Promise<Build> {
+  return putJSON<Build>(ROUTES.buildById(id), input);
+}
+
+export function deleteBuild(id: string): Promise<void> {
+  return del<void>(ROUTES.buildById(id));
+}
+
+/** 独立分享只读取授权版本，不请求其它版本。 */
+export function getSharedBuild(id: string, token: string): Promise<DownloadBuild> {
+  return getShared<DownloadBuild>(ROUTES.sharedBuild(id), token);
+}
+
+/** 登录预览的其它版本与平台包，由 hook 按平台、页面按环境选择。 */
 export function listBuildVersions(id: string): Promise<PublicBuildVersion[]> {
-  return get<PublicBuildVersion[]>(ROUTES.buildVersions(id));
+  return get<PublicBuildVersion[]>(`${ROUTES.buildVersions(id)}?includePlatforms=true`);
 }
 
 /**

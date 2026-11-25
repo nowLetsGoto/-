@@ -14,7 +14,7 @@
 | --- | --- |
 | 上传包 | 拖拽 / 点击选 `.apk`、`.ipa`，必选环境与平台，选填应用名、包名、版本号、构建号、更新说明 |
 | 按环境 + 平台查列表 | 四环境常驻切换 + 平台筛选（写进 URL，可转发），按上传时间倒序 |
-| 独立下载页 | `/d/:id` 长期可分享地址，直接打开 / 刷新都由 SPA fallback 兜住 |
+| 独立下载页 | `/d/:id?shareToken=...` 单版本免登录分享；裸路径为登录预览，直接打开 / 刷新由 SPA fallback 兜住 |
 | 下载原始文件 | Android 返回 `application/vnd.android.package-archive`，iOS 返回 `application/octet-stream` |
 | 下载页二维码 | 内容为该包下载页的**绝对地址**，手机默认相机可扫 |
 | 自动解析 | APK/IPA 解析应用名、包名、版本号、构建号并自动带出表单，字段始终可改，失败降级不阻塞 |
@@ -47,7 +47,7 @@ Makefile                 gen:api / dev / build / test / up / down
 
 ## 3. 快速开始（本地）
 
-前置：Go 1.22+、Node 20+、PostgreSQL 16+（用 Docker 起，或用本机已装实例，见下）。
+前置：Go 1.24+、Node 20+、PostgreSQL 16+（用 Docker 起，或用本机已装实例，见下）。
 
 ```bash
 docker compose -f deploy/docker-compose.yml up -d db   # 必须先起数据库
@@ -102,7 +102,7 @@ make build          # 前端产物 → server/public/，再 CGO_ENABLED=0 go bui
 | `GO_ENV` | `development` | `development` 放宽不可达基址；其它值按生产严格校验、非法即 fail-fast |
 | `ADMIN_USERNAME` | `admin` | 唯一管理员账号，不落库 |
 | `ADMIN_PASSWORD` | `admin123456` | 管理员口令；**生产必须改** |
-| `AUTH_SECRET` | `dandelion-dev-only-secret-change-me` | 登录令牌的 HMAC 密钥；生产沿用默认值会 fail-fast（`openssl rand -hex 32`） |
+| `AUTH_SECRET` | `dandelion-dev-only-secret-change-me` | 登录令牌及分享签名派生的根密钥；轮换会使已发登录令牌和分享签名失效，生产沿用默认值会 fail-fast（`openssl rand -hex 32`） |
 | `VITE_API_BASE` | 空 | 前端 API 基址，留空表示同源 / 走代理 |
 
 ### `PUBLIC_BASE_URL` 三场景
@@ -119,7 +119,7 @@ make build          # 前端产物 → server/public/，再 CGO_ENABLED=0 go bui
 
 ---
 
-## 5. 接口速查（37 个）
+## 5. 接口速查（以下为常用接口，完整路径以 OpenAPI 为准）
 
 统一响应 `{code, data, message}`：成功 `code=0`，失败 `code` = HTTP 状态码（只有 400 / 401 / 404 / 405 / 413 / 500）且 `data=null`。唯一例外是文件下载成功返回二进制流。
 
@@ -131,8 +131,11 @@ make build          # 前端产物 → server/public/，再 CGO_ENABLED=0 go bui
 | 4 | POST | `/api/v1/builds/stage` | 需登录 | multipart `file`，暂存 + 同步解析，恒 200（解析失败只写 `warnings`） |
 | 5 | POST | `/api/v1/builds` | 需登录 | **application/json**，`CommitBuildRequest` **恰好 9 字段**（`project` + stageToken + 表单值），不含文件与 `metaSource`，返回 201 完整 Build |
 | 6 | GET | `/api/v1/builds?project=&environment=&platform=` | 需登录 | 列表，`project` 必填、`platform` 省略或 `all` 表示不筛，空结果 `items: []` |
-| 7 | GET | `/api/v1/builds/{id}` | 公开 | 详情 / 404（下载页取数，扫码的人无需登录） |
-| 8 | GET | `/api/v1/builds/{id}/file` | 公开 | 原始包流 |
+| 7 | GET | `/api/v1/builds/{id}` | 需登录＋项目读取权限 | 内部下载预览详情 |
+| 8 | GET | `/api/v1/builds/{id}/file` | 需登录＋项目读取权限 | 原始包流 |
+| 分享详情 | GET | `/api/v1/public/builds/{id}` | 分享 Token | 免登录，只返回授权版本的白名单详情 |
+| 分享文件 | GET | `/api/v1/public/builds/{id}/file` | 分享 Token | 免登录原生下载；每次校验授权 |
+| 内部历史 | GET | `/api/v1/builds/{id}/versions` | 需登录＋项目读取权限 | 内部预览的其他版本 |
 | 9 | GET | `/healthz` | 公开 | 健康检查（独立于 `/api/v1`） |
 | 10 | GET | `/api/v1/settings` | **超管** | Webhook 配置 + API Key + 可推送字段目录（普通账号 403） |
 | 11 | PUT | `/api/v1/settings` | **超管** | 覆盖保存 Webhook 配置（含字段勾选） |
@@ -192,11 +195,11 @@ curl -sS -X POST http://localhost:8080/api/v1/builds \
 curl -sS -H "Authorization: Bearer $TOKEN" \
   'http://localhost:8080/api/v1/builds?project=default&environment=test&platform=android'
 
-# ④ 详情（公开，无需令牌）
-curl -sS http://localhost:8080/api/v1/builds/<ID>
+# ④ 免登录分享详情（SHARE_TOKEN 从服务端返回的 downloadPageUrl 中取得）
+curl -sS -H "X-Share-Token: $SHARE_TOKEN" http://localhost:8080/api/v1/public/builds/<ID>
 
-# ⑤ 下载原始文件（公开）
-curl -OJ http://localhost:8080/api/v1/builds/<ID>/file
+# ⑤ 免登录原生下载（直接使用返回的 downloadFileUrl，完整保留查询参数）
+curl -OJ "$DOWNLOAD_FILE_URL"
 
 # ⑥ 健康检查
 curl -sS http://localhost:8080/healthz
@@ -219,12 +222,12 @@ curl -sS http://localhost:8080/d/<ID> | head -5
 
 ## 6. 关键设计（读代码前先看这十三条）
 
-1. **单人 / 团队分表隔离**：业务数据分两个 PostgreSQL schema——`team` 与 `solo`，各持一套同构的 `projects` / `builds` / `audit_logs`。分表的目的是让「单人只看自己」成为**结构事实**而不是纪律要求：越权在表边界上就不可能发生，不需要每条 SQL 都记得拼 owner 条件。全局事实（`users` / `roles` / `people` / `teams` / `system_settings` 与 `project_members` / `team_projects` 等关联表）留在 `public`，因为它们跨模式共享，且登录发生在选模式之前。唯一性按分区各定：`team.projects(key)` 全平台唯一，`solo.projects(owner_user_id, key)` 只在本人空间内唯一（两个人各自拥有一个 `web` 互不冲突）。代码层的唯一投影是 `repository.Partitioned[T]`：装配层建两份同构仓储，上层用 `.For(mode)` 取，业务代码里不出现 `if team / else solo`；公开链路（下载页、原始文件）无登录态，用 `.All()` 跨分区查找。`schema.sql` 幂等并 `//go:embed` 进二进制，启动时执行；存量 `public` 表由 `ALTER TABLE ... SET SCHEMA team` 迁入（外键引用表 OID，不会断）。**部署约束**：DDL 必须由应用自己的数据库账号执行，属主决定访问权。
+1. **单人 / 团队分表隔离**：业务数据分两个 PostgreSQL schema——`team` 与 `solo`，各持一套同构的 `projects` / `builds` / `audit_logs`。分表的目的是让「单人只看自己」成为**结构事实**而不是纪律要求：越权在表边界上就不可能发生，不需要每条 SQL 都记得拼 owner 条件。全局事实（`users` / `roles` / `people` / `teams` / `system_settings` 与 `project_members` / `team_projects` 等关联表）留在 `public`，因为它们跨模式共享，且登录发生在选模式之前。唯一性按分区各定：`team.projects(key)` 全平台唯一，`solo.projects(owner_user_id, key)` 只在本人空间内唯一（两个人各自拥有一个 `web` 互不冲突）。代码层的唯一投影是 `repository.Partitioned[T]`：装配层建两份同构仓储，上层用 `.For(mode)` 取，业务代码里不出现 `if team / else solo`；分享链路无账号登录态，但先验证独立分享凭证，再用 `.For(mode)` 定位绑定分区和版本。`schema.sql` 幂等并 `//go:embed` 进二进制，启动时执行；存量 `public` 表由 `ALTER TABLE ... SET SCHEMA team` 迁入（外键引用表 OID，不会断）。**部署约束**：DDL 必须由应用自己的数据库账号执行，属主决定访问权。
 2. **stage 上传对用户透明，不是两步发布**：选文件那一刻自动上传一次到 `storage/tmp/{token}.{ext}` 并同步解析（5s 超时、manifest/plist ≤5MB、zip 条目上限），前端只把解析值填进**未被用户改动**的字段；用户全程只点一次「上传并发布」，commit 请求是纯 JSON（恰好 9 个字段，含 `project`，不含文件、不含 `metaSource`），服务端不再调用解析器、也不覆盖任何用户值，只 rename + 写库 + 生成地址；`metaSource` 由服务端按「是否发生空值兜底」派生（`fallback` / `parsed`）后入库，前端无法伪造。token 有效期 1 小时、用后即失效，启动时清空 tmp、每次 stage 前清理 1 小时孤儿。
 3. **三个 URL 由 `service/build_service.go` 的 `buildURLs(id)` 唯一生成**，`Create` / `List` / `Get` 统一调用；repository 的 `rowToBuild` 把这三个字段留空，绝不入库（换域名不用刷数据）。前端零拼接。
 4. **下载次数在 `io.Copy` 成功且写出字节 == `Content-Length` 之后**才 `UPDATE ... +1`；404 / 路径非法 / 文件缺失 / 客户端中断 / copy 出错 / 字节不足一律不计数；计数是 2s 短超时的旁路，失败只记日志、绝不阻断已完成的下载。第一版不做强去重（按钮点击后禁用 3s）、不做 Range / 断点续传。
 5. **契约是单一来源**：环境 / 平台枚举只写在 `api/openapi.yaml`，前端用生成类型，后端用 `go test ./...` 的契约一致性测试比对（把 yaml 里的 `pre` 改成 `pre2` 测试必须失败）；数据库 `environment` 列只 `NOT NULL`、**没有 CHECK**，因为枚举的真相在契约里，不该有两份。
-6. **登录只有一个账号，令牌是无状态的**：账号口令来自 `ADMIN_USERNAME` / `ADMIN_PASSWORD`，不落库、不建会话表，比对用 `subtle.ConstantTimeCompare`；令牌是「到期时间戳.`HMAC-SHA256`」串，服务端不存会话，重启后仍然有效。**受保护的只有「上传 / 发布 / 列表 / 系统设置」**，`/d/{id}` 与原始文件下载必须公开——扫码的人没有账号。`AUTH_SECRET` 生产沿用默认值会 fail-fast。
+6. **账号登录与免登录分享分离**：账号登录令牌用于内部操作；`/d/{id}?shareToken=...` 用独立授权访问一个版本，接收者不需要账号。详情与文件每次都验证签名、分区、绑定包及授权状态，其他版本只对有项目权限的登录预览开放。默认长期有效，过期、撤销和 revision 已在服务端校验，管理入口后续再做。实现与流程见 [下载分享 MVP](docs/14-SHARE-TOKEN-MVP.md)。
 7. **Webhook 与外部接口都是旁路**：`BuildService.Create` 成功后只调一次 `BuildNotifier`（实现是 `service/webhook`，异步投递、失败只记日志），所以第三方挂了也不会让发布失败；`/open/builds` 用 `X-API-Key` 鉴权、与管理端登录态互不影响，两者都复用同一份 `handler.ReadUpload` 与 `handler.ValidateCommitInput`，不另写一套校验。
 8. **项目是一级归属，不是筛选条件**：`builds.project_id` 必填 + 外键 + `(project_id, environment, platform, created_at DESC)` 索引，所有列表查询都先按项目收敛；前端路由把项目做成**路径前缀** `/p/:key/*`（环境仍留在查询参数），所以切项目只是换前缀、**不丢板块**（在「应用包」切项目仍留在「应用包」）；`/settings` 与 `/d/:id` 不带项目前缀，前者是平台级配置、后者靠全局唯一的 id 定位。存量数据整体归入 `key=default` 的「默认项目」，老链接靠前端重定向兜住。项目不存在（key 被删/改名/拼错）由 `components/ProjectGate.tsx` 在骨架层统一拦成空态卡片，不放任各页面弹红色 400。
 

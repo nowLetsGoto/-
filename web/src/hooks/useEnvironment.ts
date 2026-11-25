@@ -4,7 +4,8 @@
  * 输入：react-router 的 searchParams；输出：当前环境与切换函数。
  * 边界：不做请求、不存 localStorage——URL 是唯一真相，刷新/转发/跨板块切换都不丢。
  */
-import { useSearchParams } from 'react-router-dom';
+import { useCallback } from 'react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import type { Environment } from '../api/builds';
 import { ENVIRONMENTS } from '../utils/format';
 
@@ -15,17 +16,29 @@ function isEnvironment(value: string | null): value is Environment {
   return ENVIRONMENTS.some((item) => item.value === value);
 }
 
-export function useEnvironment(): [Environment, (next: Environment) => void] {
+export function useEnvironment<T extends Environment | 'all' = Environment>(
+  defaultEnvironment: T = DEFAULT_ENVIRONMENT as T,
+): [Environment | T, (next: Environment | T, pathname?: string) => void] {
   const [params, setParams] = useSearchParams();
+  const navigate = useNavigate();
   // 旧版把环境写成 ?environment=；这里一并认，避免已转发的链接失效。
   const raw = params.get('env') ?? params.get('environment');
 
-  const setEnvironment = (next: Environment): void => {
-    const updated = new URLSearchParams(params);
-    updated.delete('environment');
-    updated.set('env', next);
-    setParams(updated, { replace: true });
-  };
+  // 公开下载页切环境时可同时切到对应的包；一次导航保证 URL 的包与环境不出现中间态。
+  const setEnvironment = useCallback(
+    (next: Environment | T, pathname?: string): void => {
+      const updated = new URLSearchParams(params);
+      updated.delete('environment');
+      updated.set('env', next);
+      updated.delete('page');
+      if (pathname) {
+        navigate({ pathname, search: updated.toString() }, { replace: true });
+      } else {
+        setParams(updated, { replace: true });
+      }
+    },
+    [params, navigate, setParams],
+  );
 
-  return [isEnvironment(raw) ? raw : DEFAULT_ENVIRONMENT, setEnvironment];
+  return [isEnvironment(raw) ? raw : defaultEnvironment, setEnvironment];
 }

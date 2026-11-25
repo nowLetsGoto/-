@@ -20,7 +20,7 @@ export interface Option<T extends string> {
  */
 export const ENVIRONMENTS: ReadonlyArray<Option<Environment>> = [
   { value: 'test', label: '测试' },
-  { value: 'hotfix', label: '紧急修复' },
+  { value: 'hotfix', label: '热更' },
   { value: 'pre', label: '预发' },
   { value: 'prd', label: '生产' },
 ];

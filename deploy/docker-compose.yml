@@ -8,6 +8,9 @@ services:
   db:
     image: postgres:16-alpine
     restart: unless-stopped
+    ports:
+      # 供本机开发服务与数据库客户端连接，不向局域网暴露数据库。
+      - "127.0.0.1:5432:5432"
     environment:
       POSTGRES_DB: dandelion
       POSTGRES_USER: dandelion

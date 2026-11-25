@@ -188,9 +188,10 @@ func (s *Service) Check(ctx context.Context, identity contract.Identity, project
 // 只是返回空边界；真正的数据库错误则向上传递，由中间件转成 500。
 //
 // 层级映射（普通账号两档已统一，见下方普通账号分支的说明）：
-//   super_admin                 → {All:true}
-//   platform_admin              → {TenantID: 账号所属公司}，公司内看全部团队
-//   team_admin / member         → {TenantID, TeamIDs: team_members, TeamScoped:true}
+//
+//	super_admin                 → {All:true}
+//	platform_admin              → {TenantID: 账号所属公司}，公司内看全部团队
+//	team_admin / member         → {TenantID, TeamIDs: team_members, TeamScoped:true}
 //
 // 注意：这里的层级判定只用于"决定数据范围"。普通账号的**能力与菜单**不再看层级，
 // 完全由角色配置（permissions + menuKeys）决定——这是「身份只保留超管与公司管理员」的产品决策。
@@ -331,6 +332,7 @@ func soloPermissions() map[string]struct{} {
 	return map[string]struct{}{
 		"build.read":    {},
 		"build.write":   {},
+		"build.delete":  {},
 		"project.read":  {},
 		"project.write": {},
 	}
@@ -437,4 +439,3 @@ func (s *Service) ValidateRoleAssignable(ctx context.Context, identity contract.
 	}
 	return nil
 }
-

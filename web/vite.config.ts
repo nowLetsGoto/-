@@ -15,8 +15,8 @@ export default defineConfig({
     preprocessorOptions: { scss: { api: 'modern-compiler' } },
   },
   server: {
-    // 手机与开发机同网段时可打开开发服务器，PUBLIC_BASE_URL 才能指向它。
-    host: '192.168.6.14',
+    // 监听本机所有 IPv4 网卡，局域网 IP 变化后仍可启动并供同网段手机访问。
+    host: '0.0.0.0',
     proxy: {
       '/api': {
         target: 'http://localhost:8080',

@@ -33,6 +33,8 @@ interface PageState {
 /** 动作的中文说明；未登记的动作直接显示原始 action，避免"漏配就没法看"。 */
 const ACTION_LABELS: Record<string, string> = {
   'build.created': '发布包',
+  'build.updated': '编辑应用包',
+  'build.deleted': '删除应用包',
   'user.created': '新建账号',
   'user.updated': '编辑账号',
   'user.deleted': '删除账号',

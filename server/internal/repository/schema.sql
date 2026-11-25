@@ -86,6 +86,19 @@ BEGIN
       )
     $ddl$, s);
 
+    -- 一包一份分享授权：分区与包外键固定范围，删除包时一起移除；不存登录凭据。
+    EXECUTE format($ddl$
+      CREATE TABLE IF NOT EXISTS %1$I.build_shares (
+        id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        build_id   UUID NOT NULL UNIQUE REFERENCES %1$I.builds(id) ON DELETE CASCADE,
+        revision   BIGINT NOT NULL DEFAULT 1 CHECK (revision > 0),
+        expires_at TIMESTAMPTZ,
+        revoked_at TIMESTAMPTZ
+      )
+    $ddl$, s);
+    -- 存量包原先已经公开；迁移后换成需要分享凭证的地址，重复启动不重置授权。
+    EXECUTE format('INSERT INTO %1$I.build_shares (build_id) SELECT id FROM %1$I.builds ON CONFLICT (build_id) DO NOTHING', s);
+
     -- 审计日志：只读，任何人不可改不可删。actor_name 冗余存姓名，
     -- 账号改名或被禁用后历史日志仍可读；detail 存 JSONB，展示时再格式化。
     EXECUTE format($ddl$
@@ -342,7 +355,8 @@ CREATE TABLE IF NOT EXISTS people (
   email      TEXT        NOT NULL DEFAULT '',
   phone      TEXT        NOT NULL DEFAULT '',
   title      TEXT        NOT NULL DEFAULT '',
-  role_key   TEXT        REFERENCES roles(key) ON DELETE SET NULL,
+  -- 仅供下方存量迁移使用；roles.key 已非全局唯一，新库不能再向它建外键。
+  role_key   TEXT,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
