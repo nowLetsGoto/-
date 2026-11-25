@@ -32,7 +32,8 @@ type Webhook struct {
 // Config 是整行配置；APIKey 只读，不随 SaveWebhook 更新。
 type Config struct {
 	Webhook
-	APIKey string
+	APIKey      string
+	GitRepoPath string
 	// TenantID 是这行配置的归属公司，空串表示平台兜底行。
 	TenantID string
 	// FromFallback 标记本次读取是否回落到平台兜底行，供 webhook 日志区分。
@@ -48,11 +49,11 @@ func NewRepository(db *sql.DB) *Repository {
 	return &Repository{db: db}
 }
 
-const selectColumns = `webhook_enabled, webhook_url, webhook_secret, webhook_fields, api_key, coalesce(tenant_id::text, '')`
+const selectColumns = `webhook_enabled, webhook_url, webhook_secret, webhook_fields, api_key, coalesce(tenant_id::text, ''), git_repo_path`
 
 // tenantPredicate 生成「定位某一行」的 WHERE 片段：
 // tenantID 非空按公司定位，空则定位平台兜底行。
-// 用 IS NULL 而不是 = ''：tenant_id 是 UUID 列，只有 NULL 能表达「平台级」。
+// 用 IS NULL 而不是 = ”：tenant_id 是 UUID 列，只有 NULL 能表达「平台级」。
 func tenantPredicate(tenantID string) (string, []any) {
 	if tenantID == "" {
 		return `tenant_id IS NULL`, nil
@@ -69,7 +70,7 @@ func (r *Repository) Load(ctx context.Context, tenantID string) (Config, error) 
 	var raw string
 	row := r.db.QueryRowContext(ctx,
 		`SELECT `+selectColumns+` FROM system_settings WHERE `+where, args...)
-	if err := row.Scan(&cfg.Enabled, &cfg.URL, &cfg.Secret, &raw, &cfg.APIKey, &cfg.TenantID); err != nil {
+	if err := row.Scan(&cfg.Enabled, &cfg.URL, &cfg.Secret, &raw, &cfg.APIKey, &cfg.TenantID, &cfg.GitRepoPath); err != nil {
 		if errors.Is(err, sql.ErrNoRows) || errors.Is(err, pgx.ErrNoRows) {
 			return Config{}, ErrNotFound
 		}
@@ -220,6 +221,33 @@ func (r *Repository) TenantByAPIKey(ctx context.Context, apiKey string) (string,
 		return "", fmt.Errorf("反查 API Key 归属失败: %w", err)
 	}
 	return tenantID, nil
+}
+
+// GitRepoPath 仅精确读取当前公司行，不应用 webhook 的平台回退语义。
+func (r *Repository) GitRepoPath(ctx context.Context, tenantID string) (string, error) {
+	where, args := tenantPredicate(tenantID)
+	var path string
+	err := r.db.QueryRowContext(ctx, `SELECT git_repo_path FROM system_settings WHERE `+where, args...).Scan(&path)
+	if errors.Is(err, sql.ErrNoRows) || errors.Is(err, pgx.ErrNoRows) {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("读取仓库配置失败: %w", err)
+	}
+	return path, nil
+}
+
+// SaveGitRepoPath 只更新本公司仓库路径，首次配置复用已有幂等建行。
+func (r *Repository) SaveGitRepoPath(ctx context.Context, tenantID, path string) error {
+	if _, err := r.EnsureRow(ctx, tenantID); err != nil {
+		return err
+	}
+	where, args := tenantPredicate(tenantID)
+	_, err := r.db.ExecContext(ctx, `UPDATE system_settings SET git_repo_path=$1,updated_at=now() WHERE `+rebasePlaceholders(where, 1), append([]any{path}, args...)...)
+	if err != nil {
+		return fmt.Errorf("保存仓库配置失败: %w", err)
+	}
+	return nil
 }
 
 // ErrNotFound 表示目标公司（或平台兜底行）还没有配置。

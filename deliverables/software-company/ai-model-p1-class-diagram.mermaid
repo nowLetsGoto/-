@@ -1,0 +1,284 @@
+classDiagram
+    direction LR
+
+    %% ===== 契约层：既有 DTO 扩展 =====
+    class AIModel {
+        +String ID
+        +String TenantID
+        +String Name
+        +String Provider
+        +String Protocol
+        +String BaseURL
+        +String ModelID
+        +String APIKeyMask
+        +bool ThinkingEnabled
+        +int ContextTokens
+        +int TimeoutMS
+        +float64 Temperature
+        +float64 TopP
+        +int MaxTokens
+        +[]String Capabilities
+        +RawMessage ExtraConfig
+        %% P1：Protocol 取值扩为 openai|anthropic|openai_responses
+    }
+
+    class AIModelRecord {
+        +AIModel AIModel
+        +String Ciphertext
+        +String Nonce
+        %% Ciphertext/Nonce 均为 json:"-"，绝不进 DTO/日志
+    }
+
+    class ChatRequest {
+        +String TenantID
+        +String Scene
+        +[]ChatMessage Messages
+        +[]String Capabilities
+        +int MinContextTokens
+        +String ReasoningEffort
+        %% 三个新字段全零值 == 未声明 == P0 行为
+    }
+
+    class ChatResult {
+        +String Content
+        +String ReasoningContent
+        +String ModelID
+        +bool UsedDefault
+        +bool UsedFallback
+        +int64 LatencyMS
+        +int PromptTokens
+        +int CompletionTokens
+        +bool TokensReported
+    }
+
+    class ChatError {
+        +string Category
+        +string Message
+        +int StatusCode
+        +error Cause
+    }
+
+    class ChatNeeds {
+        +bool Declared
+        +[]String Capabilities
+        +int MinContextTokens
+        +String Effort
+        +int EffortRank
+        +Declared() bool
+    }
+
+    class QuotaDecision {
+        +bool Allow
+        +bool Warn
+        +string Reason
+    }
+
+    %% ===== 契约层：新增统计与阈值 =====
+    class AIModelCallRecord {
+        +String ID
+        +String TenantID
+        +String ModelID
+        +String ModelName
+        +String ModelIdentifier
+        +String Protocol
+        +String Scene
+        +bool Success
+        +String ErrorCategory
+        +int StatusCode
+        +*int64 PromptTokens
+        +*int64 CompletionTokens
+        +bool TokensReported
+        +int64 LatencyMS
+        +bool UsedUpstream
+        +bool UsedDefault
+        +bool UsedFallback
+        +[]String RequestedCapabilities
+        +int RequestedMinContext
+        +String RequestedEffort
+        +String CreatedAt
+    }
+
+    class AIQuotaConfig {
+        +bool Enabled
+        +int MaxCalls
+        +int WindowMinutes
+        +string Action
+        +RawMessage ExtraConfig
+        +string UpdatedAt
+    }
+
+    class AIQuotaInput {
+        +bool Enabled
+        +int MaxCalls
+        +int WindowMinutes
+        +string Action
+    }
+
+    class AIModelCallQuery {
+        +time.Time Start
+        +time.Time End
+        +[]string GroupBy
+        +bool IncludeLocal
+        +string TenantID
+    }
+
+    class AIModelCallStats {
+        +int TotalCalls
+        +int SuccessCalls
+        +int FailedCalls
+        +int LocalRejected
+        +*int64 PromptTokens
+        +*int64 CompletionTokens
+        +int TokensUnreported
+        +*int64 AvgSuccessLatencyMS
+        +[]AICallCategoryCount FailureCategories
+        +[]AICallGroup Groups
+    }
+
+    %% ===== 协议适配层：唯一差异承载 =====
+    class protocolSpec {
+        <<interface>>
+        +build(model, params, messages) 返回 endpoint+header+body
+        +parse(raw, statusCode, model, plainKey) 返回 ChatResult
+    }
+
+    class protocolOpenAI {
+        +build()
+        +parse()
+    }
+    class protocolAnthropic {
+        +build()
+        +parse()
+    }
+    class protocolResponses {
+        +build()
+        +parse()
+    }
+
+    class protocol_common {
+        <<package>>
+        +$splitSystem(messages) 返回 system+rest
+        +$planThinking(effort) thinkingPlan
+        +$usageFrom(prompt, completion, reported) 返回 usage
+        +$buildChatResult(model, plainKey, content, reasoning) 返回 ChatResult
+        +$withDefaultProbe(messages) []ChatMessage
+    }
+
+    class thinkingPlan {
+        +string OpenAIEffort
+        +int AnthropicBudget
+        +string ResponsesEffort
+    }
+
+    %% ===== service：编排 + 纯函数 =====
+    class ModelChatService {
+        -AIModelRepository modelRepo
+        -AIModelCallRepository callRepo
+        -AIQuotaRepository quotaRepo
+        -modelkey.Codec codec
+        -http.Client client
+        +Chat(ctx, req) 返回 ChatResult
+        +Test(ctx, scope, id) 返回 AIModelTestResult
+        -invoke(ctx, model, needs, req) 返回 ChatResult
+    }
+
+    class chat_select {
+        <<package>>
+        +$normalizeNeeds(req) 返回 ChatNeeds
+        +$selectModel(candidates, needs) 返回 AIModelRecord
+        +$hasAllCapabilities(model, needs) 返回 bool
+        +$newCapabilityMismatch(candidates, needs) 返回 error
+    }
+
+    class chat_quota {
+        <<package>>
+        +$normalizeQuota(cfg) 返回 AIQuotaConfig
+        +$decideQuota(cfg, usedCalls) 返回 QuotaDecision
+    }
+
+    class chat_record {
+        <<package>>
+        +$buildCallRecord(in) AIModelCallRecord
+    }
+
+    class chat_transport {
+        <<package>>
+        +$transport(ctx, client, endpoint, header, plainKey, timeoutMS) 返回 raw+status+err
+    }
+
+    class ModelStatsService {
+        -AIModelCallRepository callRepo
+        -AIQuotaRepository quotaRepo
+        +Usage(ctx, scope, query) 返回 AIModelCallStats
+        +GetQuota(ctx, scope) 返回 AIQuotaConfig
+        +UpdateQuota(ctx, scope, input) 返回 AIQuotaConfig
+    }
+
+    %% ===== repository =====
+    class AIModelRepository {
+        <<interface>>
+        +FindDefaultOrFirstEnabled(scope) 返回 model+usedDefault
+        +ListEnabled(scope) 返回 models
+        +HasOtherEnabled() bool
+    }
+
+    class AIModelCallRepository {
+        <<interface>>
+        +Insert(ctx, record) 返回 error
+        +Aggregate(ctx, scope, query) 返回 stats
+        +CountInWindow(ctx, scope, minutes) 返回 count
+        +DeleteExpired(ctx, before) 返回 affected
+    }
+
+    class AIQuotaRepository {
+        <<interface>>
+        +Find(ctx, scope) 返回 cfg
+        +Upsert(ctx, scope, input) 返回 cfg
+    }
+
+    class modelkey_Codec {
+        <<interface>>
+        +Seal(plain) 返回 ciphertext+nonce+mask
+        +Open(ciphertext, nonce) 返回 plain
+        +Mask(plain) 返回 mask
+        +Redact(s) 返回 s
+    }
+
+    %% ===== handler =====
+    class AIModelUsageHandler {
+        -ModelStatsService svc
+        -audit auditor
+        +GetUsage(w, r)
+        +GetQuota(w, r)
+        +UpdateQuota(w, r)
+    }
+
+    %% ===== 关系 =====
+    AIModelRecord *-- AIModel : 内嵌
+    ChatRequest ..> ChatMessage : 含
+    ChatNeeds ..> ChatRequest : normalizeNeeds 产出
+    AIModelCallRecord ..> ChatResult : buildCallRecord 折入
+    AIModelCallStats *-- AIModelCallQuery : 由查询决定
+    AIModelCallStats *-- AIQuotaConfig : 附带当前阈值
+
+    protocolOpenAI ..|> protocolSpec : 实现
+    protocolAnthropic ..|> protocolSpec : 实现
+    protocolResponses ..|> protocolSpec : 实现
+    protocolOpenAI ..> protocol_common : 复用共用层
+    protocolAnthropic ..> protocol_common : 复用共用层
+    protocolResponses ..> protocol_common : 复用共用层
+    protocol_common ..> thinkingPlan : planThinking 产出
+
+    ModelChatService --> AIModelRepository : 取候选
+    ModelChatService --> AIModelCallRepository : 落记录/窗口计数
+    ModelChatService --> AIQuotaRepository : 读阈值
+    ModelChatService --> modelkey_Codec : 解密取 Key
+    ModelChatService ..> chat_select : selectModel
+    ModelChatService ..> chat_quota : decideQuota
+    ModelChatService ..> chat_record : buildCallRecord
+    ModelChatService ..> chat_transport : transport（唯一 client.Do）
+    ModelChatService ..> protocolSpec : chatOnce 内按协议分派
+
+    ModelStatsService --> AIModelCallRepository : 聚合
+    ModelStatsService --> AIQuotaRepository : 读/写阈值
+    AIModelUsageHandler --> ModelStatsService : 调用

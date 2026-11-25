@@ -1,0 +1,214 @@
+classDiagram
+    %% ===== 契约 / DTO（internal/contract）=====
+    class DeliveryRecord {
+        +string ID
+        +int64 Seq
+        +string RequirementID
+        +string ReqKey
+        +string RequirementTitle
+        +string ProjectName
+        +string RequirementStatus
+        +string TestResult
+        +string TestSummary
+        +string TestReportRef
+        +string TestRegisteredBy
+        +string TestRegisteredAt
+        +string AcceptanceStatus
+        +string AcceptanceItems
+        +string AcceptanceNote
+        +string AcceptedBy
+        +string AcceptedAt
+        +bool Archived
+        +string ArchivedBy
+        +string ArchivedAt
+        +string CreatorName
+        +string CreatedAt
+    }
+    class DeliveryDetail {
+        +string RequirementID
+        +string ReqKey
+        +string Title
+        +string Description
+        +string AcceptanceCriteria
+        +string RequirementStatus
+        +string ProjectName
+        +DeliveryRecord Current
+        +DeliveryRecord[] History
+    }
+    class DeliveryCommit {
+        +string Sha
+        +string ShortSha
+        +string Author
+        +string Time
+        +string Subject
+    }
+    class GitSnapshot {
+        +string Status
+        +string Message
+        +string Branch
+        +bool WorkspaceClean
+        +int ChangedFileCount
+        +DeliveryCommit[] Commits
+        +string ReadAt
+    }
+    class TestRegisterInput {
+        +string Result
+        +string Summary
+        +string ReportRef
+    }
+    class DeliveryAcceptInput {
+        +string Result
+        +string Note
+        +AcceptanceItemResult[] Items
+    }
+    class AcceptanceItemResult {
+        +int Index
+        +string Result
+    }
+    class GitRepoConfig {
+        +string GitRepoPath
+        +string[] AllowedRoots
+        +bool Configured
+    }
+    class GitRepoInput {
+        +string GitRepoPath
+    }
+    class DeliveryQuery {
+        +PageQuery Page
+        +string Keyword
+        +string AcceptanceStatus
+        +string Archived
+    }
+
+    %% ===== 安全核心（internal/gitreader）=====
+    class CommandWhitelist {
+        <<contract>>
+        +map~string,string[]~ Commands
+        +Args(op, repoPath) string[]
+    }
+    class PathResolver {
+        <<pure>>
+        +ResolveRepoPath(configured, allowedRoots) string, error
+        -contains(root, resolved) bool
+    }
+    class Sanitizer {
+        <<pure>>
+        +Sanitize(text) string
+    }
+    class AcceptanceParser {
+        <<pure>>
+        +SplitAcceptanceCriteria(text) AcceptanceItem[]
+        +ValidateAcceptanceItems(criteria, result, items) error
+    }
+    class GitReader {
+        -string[] allowedRoots
+        -int timeoutSeconds
+        -string gitBinary
+        +NewReader(allowedRoots, timeoutSeconds) GitReader
+        +Read(ctx, configuredPath) GitSnapshot
+        -run(ctx, op, repoPath) string, error
+    }
+    class GitError {
+        +string Status
+        +string Message
+    }
+
+    %% ===== repository 层 =====
+    class DeliveryRepository {
+        -sql.DB db
+        -string table
+        -string reqTable
+        +ListCurrent(ctx, query, scope) DeliveryRecordList
+        +FindDetail(ctx, requirementID, scope) DeliveryDetail
+        +FindCurrent(ctx, requirementID, scope) DeliveryRecord
+        +History(ctx, requirementID, scope) DeliveryRecord[]
+        +Append(ctx, row, scope) DeliveryRecord
+        +WithLockedRequirement(ctx, scope, requirementID, fn) DeliveryRecord
+        +Archive(ctx, row, requirementID, scope) DeliveryRecord
+        +RequirementVisible(ctx, requirementID, scope) bool
+    }
+    class SettingsRepository {
+        <<modified>>
+        -sql.DB db
+        +Load(ctx, tenantID) Config
+        +GitRepoPath(ctx, tenantID) string
+        +SaveGitRepoPath(ctx, tenantID, path) error
+    }
+
+    %% ===== service 层 =====
+    class DeliveryService {
+        -DeliveryRepository repo
+        -SettingsRepository settings
+        -GitReader reader
+        -RequirementValidator requirements
+        +List(ctx, query, scope) DeliveryRecordList
+        +Detail(ctx, requirementID, scope) DeliveryDetail
+        +RefreshGit(ctx, requirementID, scope) GitSnapshot
+        +RegisterTest(ctx, requirementID, scope, actor, in) DeliveryRecord
+        +Accept(ctx, requirementID, scope, actor, in) DeliveryRecord
+        +Archive(ctx, requirementID, scope, actor) DeliveryRecord
+        -snapshotCurrent(ctx, requirementID, scope) DeliveryRecord
+        -assertWritable(ctx, requirementID, scope) void
+    }
+    class SettingsService {
+        <<modified>>
+        -SettingsRepository repo
+        -string[] allowedRoots
+        +GetGitRepo(ctx, scope) GitRepoConfig
+        +UpdateGitRepo(ctx, scope, in) GitRepoConfig
+    }
+
+    %% ===== handler 层 =====
+    class DeliveryHandler {
+        -DeliveryService svc
+        -AuditService audit
+        +List(w, r) error
+        +Detail(w, r) error
+        +RefreshGit(w, r) error
+        +RegisterTest(w, r) error
+        +Accept(w, r) error
+        +Archive(w, r) error
+        -record(actor, action, requirementID, detail, r) void
+    }
+    class SettingsHandlerGit {
+        <<modified>>
+        -SettingsService svc
+        -AuditService audit
+        +GetGitRepo(w, r) error
+        +UpdateGitRepo(w, r) error
+    }
+    class AuditService {
+        +Record(ctx, actor, action, objectType, objectID, detail, ip) void
+    }
+    class Identity {
+        +string UserID
+        +string TenantID
+        +SessionMode Mode
+    }
+    class Scope {
+        +bool All
+        +string TenantID
+        +bool TeamScoped
+    }
+
+    %% ===== 关系 =====
+    GitReader --> CommandWhitelist : fixed args only
+    GitReader --> PathResolver : validate before exec
+    GitReader --> Sanitizer : scrub stdout
+    GitReader ..> GitSnapshot : returns
+    GitReader ..> GitError : failure status
+    DeliveryRepository ..> DeliveryRecord : maps rows
+    DeliveryRepository ..> DeliveryDetail : assembles
+    DeliveryService --> DeliveryRepository : depends
+    DeliveryService --> SettingsRepository : repo path
+    DeliveryService --> GitReader : live read
+    DeliveryService --> AcceptanceParser : validate current criteria
+    DeliveryService --> RequirementValidator : scope guard
+    SettingsService --> SettingsRepository : path persistence
+    SettingsService ..> PathResolver : validate on save
+    SettingsHandlerGit --> SettingsService : calls
+    DeliveryHandler --> DeliveryService : calls
+    DeliveryHandler --> AuditService : 3 events
+    SettingsHandlerGit --> AuditService : config event
+    DeliveryService ..> Identity : actor
+    DeliveryService ..> Scope : isolation

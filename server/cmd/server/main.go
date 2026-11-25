@@ -26,6 +26,7 @@ import (
 	"dandelion/server/internal/app"
 	"dandelion/server/internal/config"
 	"dandelion/server/internal/contract"
+	"dandelion/server/internal/gitreader"
 	"dandelion/server/internal/handler"
 	audithandler "dandelion/server/internal/handler/audit"
 	"dandelion/server/internal/handler/login"
@@ -38,6 +39,7 @@ import (
 	teamshandler "dandelion/server/internal/handler/teams"
 	tenanthandler "dandelion/server/internal/handler/tenant"
 	userhandler "dandelion/server/internal/handler/user"
+	"dandelion/server/internal/modelkey"
 	"dandelion/server/internal/repository"
 	auditrepo "dandelion/server/internal/repository/audit"
 	peopleRepo "dandelion/server/internal/repository/people"
@@ -136,7 +138,7 @@ func run() error {
 	// 系统设置与 Webhook：配置读写归 settings，投递归 webhook；
 	// 发布流程只依赖 service.BuildNotifier 接口，因此不需要认识 webhook 的实现。
 	settingsRepo := settingsrepo.NewRepository(db)
-	settingsService := settingssvc.NewService(settingsRepo)
+	settingsService := settingssvc.NewService(settingsRepo, cfg.GitAllowedRoots...)
 	webhookService := webhooksvc.NewService(settingsRepo)
 
 	svc := service.NewBuildService(cfg, paths, buildRepos, projectRepos, webhookService)
@@ -168,6 +170,49 @@ func run() error {
 	rdcService := rdcsvc.NewService(rdcRepository, projectRepos.For(contract.ModeTeam), paths)
 	rdcHandler := rdchandler.NewHandler(rdcService, auditService, paths)
 
+	// 研发任务编排层：仓储固定 team 分区，需求仓储同时充当 RequirementValidator。
+	// 7 个操作共用 rdc.dev.read，写审计复用同一个 auditService（team 模式落 team.audit_logs）。
+	devRepository := rdcrepo.NewDevRepository(db)
+	devService := rdcsvc.NewDevService(devRepository, rdcRepository)
+	devHandler := rdchandler.NewDevHandler(devService, auditService)
+
+	// 人工审核中心：审核仓储复用研发仓储的表名与 JOIN；状态写入经 DevService 唯一入口。
+	// 5 个操作共用 rdc.review.read，写审计复用同一个 auditService。
+	reviewRepository := rdcrepo.NewReviewRepository(db, devRepository)
+	reviewService := rdcsvc.NewReviewService(reviewRepository, devService)
+	reviewHandler := rdchandler.NewReviewHandler(reviewService, auditService)
+
+	// AI 人机交互层：复用 03 的 team 分区与审核记录表；生产注入 unavailableProvider——
+	// 所有产物读取都真实报「执行器未就绪」，UI 显示真实空态、零假数据、零假按钮。
+	// Group B 环境解锁后只需把这里的一处 provider 换成真实执行器实现。
+	interactionRepository := rdcrepo.NewInteractionRepository(db)
+	interactionService := rdcsvc.NewInteractionService(interactionRepository, rdcsvc.NewUnavailableProvider())
+	interactionHandler := rdchandler.NewInteractionHandler(interactionService, auditService)
+
+	deliveryRepo := rdcrepo.NewDeliveryRepository(db)
+	deliveryService := rdcsvc.NewDeliveryService(deliveryRepo, settingsRepo, gitreader.NewReader(cfg.GitAllowedRoots, cfg.GitTimeoutSeconds))
+	deliveryHandler := rdchandler.NewDeliveryHandler(deliveryService, auditService)
+
+	// 第 5 菜单「AI模型」：主密钥由 config 校验后交给唯一加密入口；构造失败直接中止启动。
+	// 配置业务与统一 Chat 共用同一个 team 仓储；HTTP 客户端全局唯一，硬超时由契约限定。
+	modelCodec, err := modelkey.New(cfg.ModelEncryptionKey)
+	if err != nil {
+		return fmt.Errorf("初始化 AI 模型加密器失败: %w", err)
+	}
+	aiModelRepo := rdcrepo.NewAIModelRepository(db)
+	// 统计与限流各自一张表、各自一个仓储（生命周期不同，不合并成"胖仓储"）。
+	aiModelCallRepo := rdcrepo.NewAIModelCallRepository(db)
+	aiModelQuotaRepo := rdcrepo.NewAIModelQuotaRepository(db)
+	aiModelService := rdcsvc.NewModelService(aiModelRepo, modelCodec)
+	// 注意：清理过期记录（DeleteExpired）本版只提供仓储方法与单测，未接任何调度器；
+	// 接定时任务时在此处新增一行调度装配即可，不会影响已有调用路径。
+	modelHTTPClient := &http.Client{Timeout: contract.ModelCallHardTimeout}
+	modelChatService := rdcsvc.NewModelChatService(
+		aiModelRepo, aiModelCallRepo, aiModelQuotaRepo, modelCodec, modelHTTPClient)
+	aiModelHandler := rdchandler.NewAIModelHandler(aiModelService, modelChatService, auditService)
+	aiModelStatsService := rdcsvc.NewModelStatsService(aiModelCallRepo, aiModelQuotaRepo)
+	aiModelUsageHandler := rdchandler.NewAIModelUsageHandler(aiModelStatsService, auditService)
+
 	// 删账号要顺带清掉它在单人分区的项目与文件，因此账号服务依赖清理器与存储路径。
 	// teams 仓储用于校验团队管理员的团队归属，防止跨公司/跨团队授权；
 	// authzService 用于校验「调用者有没有资格分配这个角色」（非超管拿不到 super-admin）。
@@ -197,23 +242,29 @@ func run() error {
 		return fmt.Errorf("读取内嵌静态资源失败: %w", err)
 	}
 	router := app.NewRouter(app.Deps{
-		Builds:   builds,
-		Open:     openAPI,
-		Login:    loginHandler,
-		Projects: projectHandler,
-		People:   peopleHandler,
-		Teams:    teamsHandler,
-		Tenants:  tenantHandler,
-		Users:    userHandler,
-		Audit:    auditHandler,
-		Roles:    roleHandler,
-		Authz:    authzService,
-		Settings: settingsHandler,
-		RDC:      rdcHandler,
-		Verify:   loginService.Verify,
-		APIKey:   settingsService.APIKeyByRequest,
-		Health:   health,
-		StaticFS: public,
+		Builds:         builds,
+		Open:           openAPI,
+		Login:          loginHandler,
+		Projects:       projectHandler,
+		People:         peopleHandler,
+		Teams:          teamsHandler,
+		Tenants:        tenantHandler,
+		Users:          userHandler,
+		Audit:          auditHandler,
+		Roles:          roleHandler,
+		Authz:          authzService,
+		Settings:       settingsHandler,
+		RDC:            rdcHandler,
+		RDCDev:         devHandler,
+		RDCReview:      reviewHandler,
+		RDCInteraction: interactionHandler,
+		RDCDelivery:    deliveryHandler,
+		RDCModel:       aiModelHandler,
+		RDCModelUsage:  aiModelUsageHandler,
+		Verify:         loginService.Verify,
+		APIKey:         settingsService.APIKeyByRequest,
+		Health:         health,
+		StaticFS:       public,
 	})
 
 	server := &http.Server{

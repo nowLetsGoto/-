@@ -7,6 +7,7 @@
 // 输出：contract.Requirement / RequirementDetail / RequirementList / FileRef；
 //
 //	校验失败返回 ValidationError，越界返回 NotFoundError。
+//
 // 边界：不碰 *http.Request / ResponseWriter、不写 SQL、不判权限；
 //
 //	归属公司从 scope 取、附件相对路径只由 storage.Paths 生成，请求体不接受任何归属字段。

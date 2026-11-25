@@ -80,6 +80,12 @@ const (
 	ResourceRequirement = "需求"
 	// ResourceRequirementAttachment 是需求图片的受保护读取资源名。
 	ResourceRequirementAttachment = "需求图片"
+	// ResourceDevTask / ResourceDevSubtask 是研发任务的资源名，供 404 文案统一生成。
+	ResourceDevTask        = "研发任务"
+	ResourceDevSubtask     = "研发子任务"
+	ResourceDeliveryRecord = "交付记录"
+	// ResourceAIModel 是 AI 模型配置的 404 资源名，隔离越界与不存在同口径。
+	ResourceAIModel = "AI 模型"
 )
 
 // NotFoundError 是「指定资源不存在」的错误，由 handler.WriteError 翻译成 404。
@@ -240,8 +246,55 @@ const (
 	RouteRDCRequirementByKey = APIPrefix + "/rdc/requirements/{reqKey}"
 	// RouteRDCRequirementAttachment 是需求图片的受保护读取入口；按附件 id 定位，不暴露相对路径。
 	RouteRDCRequirementAttachment = APIPrefix + "/rdc/requirement-attachments/{id}"
-	RouteHealth              = "/healthz"
-	RouteDownloadPage        = "/d/{id}"
+	// RouteRDCDevTasks 是研发任务的列表 + 新建入口（同一路径不同方法）。
+	RouteRDCDevTasks = APIPrefix + "/rdc/dev/tasks"
+	// RouteRDCDevTaskByID 是研发任务详情 / 编辑 / 删除入口，按 UUID 定位。
+	RouteRDCDevTaskByID = APIPrefix + "/rdc/dev/tasks/{id}"
+	// RouteRDCDevSubtaskTransition 是子任务手动推进一态的专用入口（纯编排，不接 Agent）。
+	RouteRDCDevSubtaskTransition = APIPrefix + "/rdc/dev/tasks/{id}/subtasks/{subtaskId}/transition"
+	// RouteRDCDevSubtaskSkip 是子任务标记 SKIPPED 的专用入口；标记后不可恢复。
+	RouteRDCDevSubtaskSkip = APIPrefix + "/rdc/dev/tasks/{id}/subtasks/{subtaskId}/skip"
+	// RouteRDCDevSubtaskResubmit 是驳回后重新研发（rejected→ai_completed）的专用入口，研发中心触发。
+	RouteRDCDevSubtaskResubmit = APIPrefix + "/rdc/dev/tasks/{id}/subtasks/{subtaskId}/resubmit"
+	// 人工审核中心路由：待审列表、审核详情、通过、驳回、提交确认。
+	RouteRDCReviewTasks        = APIPrefix + "/rdc/reviews/tasks"
+	RouteRDCReviewTaskByID     = APIPrefix + "/rdc/reviews/tasks/{id}"
+	RouteRDCReviewApprove      = APIPrefix + "/rdc/reviews/tasks/{id}/subtasks/{subtaskId}/approve"
+	RouteRDCReviewReject       = APIPrefix + "/rdc/reviews/tasks/{id}/subtasks/{subtaskId}/reject"
+	RouteRDCReviewCommit       = APIPrefix + "/rdc/reviews/tasks/{id}/subtasks/{subtaskId}/commit"
+	RouteRDCDeliveryRecords    = APIPrefix + "/rdc/delivery/records"
+	RouteRDCDeliveryByReq      = APIPrefix + "/rdc/delivery/records/{requirementId}"
+	RouteRDCDeliveryGitRefresh = APIPrefix + "/rdc/delivery/records/{requirementId}/git/refresh"
+	RouteRDCDeliveryTest       = APIPrefix + "/rdc/delivery/records/{requirementId}/test"
+	RouteRDCDeliveryAccept     = APIPrefix + "/rdc/delivery/records/{requirementId}/accept"
+	RouteRDCDeliveryArchive    = APIPrefix + "/rdc/delivery/records/{requirementId}/archive"
+	RouteSettingsGitRepo       = APIPrefix + "/settings/git-repo"
+	// AI 人机交互层（team 专属，9 条；挂 03 人工审核中心，全部沿用 rdc.review.read，不新增写点）。
+	RouteRDCInteractionDiffReview = APIPrefix + "/rdc/interactions/tasks/{id}/subtasks/{subtaskId}/diff-review"
+	// RouteRDCInteractionDiffSubmit 提交整份 hunk 三态决策并写 diff_submitted 证据。
+	RouteRDCInteractionDiffSubmit = APIPrefix + "/rdc/interactions/tasks/{id}/subtasks/{subtaskId}/diff-review/submit"
+	// RouteRDCInteractionHunkDecision 单 hunk 决策只 UPSERT 决策表，提交时统一留痕。
+	RouteRDCInteractionHunkDecision = APIPrefix + "/rdc/interactions/diff-reviews/{reviewId}/hunks/{hunkId}/decision"
+	// RouteRDCInteractionPlanGet / PlanConfirm 是生成前的门禁读与确认，不推进子任务状态。
+	RouteRDCInteractionPlanGet     = APIPrefix + "/rdc/interactions/tasks/{id}/subtasks/{subtaskId}/plan-confirmation"
+	RouteRDCInteractionPlanConfirm = APIPrefix + "/rdc/interactions/plan-confirmations/{planId}/confirm"
+	// RouteRDCInteractionCheckpoints / Rollback 是证据层回滚，哈希不匹配 409 且不写真实文件。
+	RouteRDCInteractionCheckpoints = APIPrefix + "/rdc/interactions/tasks/{id}/subtasks/{subtaskId}/checkpoints"
+	RouteRDCInteractionRollback    = APIPrefix + "/rdc/interactions/checkpoints/{checkpointId}/rollback"
+	// RouteRDCInteractionApprovalGet / ApprovalDec 是风险 → 介入强度的徽标与留痕。
+	RouteRDCInteractionApprovalGet = APIPrefix + "/rdc/interactions/tasks/{id}/subtasks/{subtaskId}/approval"
+	RouteRDCInteractionApprovalDec = APIPrefix + "/rdc/interactions/tasks/{id}/subtasks/{subtaskId}/approval/decide"
+	// AI 模型配置（team 专属，7 路径 / 10 操作；不注册任何前端可直调的 Chat 路由）。
+	// usage / quota 是静态段，注册与 allowedMethods 派发都必须先于 {id} 判断（否则被参数段吞掉）。
+	RouteRDCModels       = APIPrefix + "/rdc/models"
+	RouteRDCModelUsage   = APIPrefix + "/rdc/models/usage"
+	RouteRDCModelQuota   = APIPrefix + "/rdc/models/quota"
+	RouteRDCModelByID    = APIPrefix + "/rdc/models/{id}"
+	RouteRDCModelDefault = APIPrefix + "/rdc/models/{id}/default"
+	RouteRDCModelStatus  = APIPrefix + "/rdc/models/{id}/status"
+	RouteRDCModelTest    = APIPrefix + "/rdc/models/{id}/test"
+	RouteHealth          = "/healthz"
+	RouteDownloadPage    = "/d/{id}"
 )
 
 // 契约级上限，与 x-constants 对齐。
@@ -290,6 +343,15 @@ var APIRoutes = []string{
 	RouteSettings, RouteWebhookTest, RouteAPIKeyRotate, RouteOpenBuilds,
 	RouteStage, RouteBuilds, RouteBuildByID, RouteBuildVersions, RouteBuildFile, RouteHealth,
 	RouteRDCRequirements, RouteRDCRequirementByKey, RouteRDCRequirementAttachment,
+	RouteRDCDevTasks, RouteRDCDevTaskByID, RouteRDCDevSubtaskTransition, RouteRDCDevSubtaskSkip,
+	RouteRDCDevSubtaskResubmit,
+	RouteRDCReviewTasks, RouteRDCReviewTaskByID, RouteRDCReviewApprove, RouteRDCReviewReject, RouteRDCReviewCommit,
+	RouteRDCDeliveryRecords, RouteRDCDeliveryByReq, RouteRDCDeliveryGitRefresh, RouteRDCDeliveryTest, RouteRDCDeliveryAccept, RouteRDCDeliveryArchive, RouteSettingsGitRepo,
+	RouteRDCInteractionDiffReview, RouteRDCInteractionDiffSubmit, RouteRDCInteractionHunkDecision,
+	RouteRDCInteractionPlanGet, RouteRDCInteractionPlanConfirm, RouteRDCInteractionCheckpoints,
+	RouteRDCInteractionRollback, RouteRDCInteractionApprovalGet, RouteRDCInteractionApprovalDec,
+	RouteRDCModels, RouteRDCModelUsage, RouteRDCModelQuota,
+	RouteRDCModelByID, RouteRDCModelDefault, RouteRDCModelStatus, RouteRDCModelTest,
 }
 
 // Webhook 可推送字段的键：与 api/openapi.yaml 的 x-webhook-fields 键集合一致。
@@ -441,6 +503,7 @@ type Settings struct {
 	Webhook          WebhookConfig        `json:"webhook"`
 	APIKeyConfigured bool                 `json:"apiKeyConfigured"`
 	AvailableFields  []WebhookFieldOption `json:"availableFields"`
+	GitRepo          GitRepoConfig        `json:"gitRepo"`
 }
 
 // WebhookTestResult 是测试投递结果；目标不可达也返回 200，用 Delivered 表达。
@@ -682,6 +745,8 @@ var Permissions = []Permission{
 	{Key: PermissionRDCDevRead, Group: "研发中心", Label: "查看 AI 研发中心"},
 	{Key: PermissionRDCReviewRead, Group: "研发中心", Label: "查看人工审核中心"},
 	{Key: PermissionRDCDeliveryRead, Group: "研发中心", Label: "查看需求交付中心"},
+	{Key: PermissionRDCModelRead, Group: "研发中心", Label: "查看 AI 模型"},
+	{Key: PermissionRDCModelWrite, Group: "研发中心", Label: "配置模型 / Key / 实测"},
 }
 
 // 管理类权限点的 key。
@@ -709,7 +774,7 @@ const (
 	// "只读账号列表"就必须同时给出管人管账号的权力。拆开后各管一件事。
 	PermissionAccountRead = "account.read"
 
-	// 研发中心权限点：4 个查看点 + 1 个写点。
+	// 研发中心权限点：4 个查看点 + 1 个写点，另有 AI 模型的读写分离两点（见下）。
 	// 与 build.read / build.write 的分离惯例一致，写点独立于查看点，
 	// 勾选菜单只自动授予查看点，写点必须在菜单树里单独勾选。
 	PermissionRDCRequirementRead  = "rdc.requirement.read"
@@ -717,6 +782,9 @@ const (
 	PermissionRDCDevRead          = "rdc.dev.read"
 	PermissionRDCReviewRead       = "rdc.review.read"
 	PermissionRDCDeliveryRead     = "rdc.delivery.read"
+	// AI 模型是高敏感配置：读点守菜单 / 列表 / 详情，写点守全部写操作与实测。
+	PermissionRDCModelRead  = "rdc.model.read"
+	PermissionRDCModelWrite = "rdc.model.write"
 )
 
 // IsValidPermission 判断权限点是否在**可勾选**目录里，写入角色时用它挡住拼错/伪造的值。
@@ -872,6 +940,11 @@ var Menus = []Menu{
 	{Key: "/rdc/dev", Label: "AI研发中心", Group: "研发中心", ViewPermission: PermissionRDCDevRead},
 	{Key: "/rdc/review", Label: "人工审核中心", Group: "研发中心", ViewPermission: PermissionRDCReviewRead},
 	{Key: "/rdc/delivery", Label: "需求交付中心", Group: "研发中心", ViewPermission: PermissionRDCDeliveryRead},
+	// AI模型：读点进菜单，写点单独勾选；AutoGrantBuiltin 留零值 false，与其它 RDC 菜单一致。
+	{
+		Key: "/rdc/models", Label: "AI模型", Group: "研发中心", ViewPermission: PermissionRDCModelRead,
+		Actions: []MenuAction{{Key: PermissionRDCModelWrite, Label: "配置模型 / Key / 实测"}},
+	},
 	// 刻意不含「平台管理 / 公司管理」（/admin/tenants）：它是超管专属，
 	// 而超管始终全量、不靠角色授权；列进来只会误导（勾了也仍被 RequireSuperAdmin 拦）。
 }
@@ -1510,4 +1583,757 @@ type RequirementQuery struct {
 type RequirementList struct {
 	Items []Requirement `json:"items"`
 	Page
+}
+
+// ── 研发任务编排层：状态机唯一来源的 Go 镜像 + DTO ──────────────────────────
+// 枚举与合法边的 SSOT 是 api/openapi.yaml 的 x-rdc-dev-statuses /
+// x-rdc-dev-transitions；contract_test.go 逐项比对，任一漂移即测试失败。
+
+// 九个子任务状态：顺序即进度序，skipped 位列末尾且不参与序比较。
+const (
+	DevStatusPending       = "pending"
+	DevStatusAIRunning     = "ai_running"
+	DevStatusAICompleted   = "ai_completed"
+	DevStatusReviewing     = "reviewing"
+	DevStatusWaitingCommit = "waiting_commit"
+	DevStatusCommitted     = "committed"
+	DevStatusValidated     = "validated"
+	DevStatusCompleted     = "completed"
+	// DevStatusRejected 是人工审核驳回的阻断态：不在前进链、不占进度序号（ordinal=-1），
+	// 聚合时优先级最高（任一子任务被驳回，整体即 rejected）；唯一出口是 DevService.Resubmit。
+	DevStatusRejected = "rejected"
+	DevStatusSkipped  = "skipped"
+)
+
+// 子任务类型、资源名与字段上限；枚举值由 openapi 的 DevSubtaskKind 锁定。
+const (
+	DevKindFrontend = "frontend"
+	DevKindBackend  = "backend"
+
+	MaxDevTitleLen = 100
+	MaxDevNoteLen  = 500
+)
+
+// DevSubtaskStatuses 与契约 x-rdc-dev-statuses 同序，供前端筛选项与状态机比对。
+var DevSubtaskStatuses = []string{
+	DevStatusPending, DevStatusAIRunning, DevStatusAICompleted, DevStatusReviewing,
+	DevStatusWaitingCommit, DevStatusCommitted, DevStatusValidated, DevStatusCompleted,
+	DevStatusRejected, DevStatusSkipped,
+}
+
+// DevAdvance 与契约 x-rdc-dev-transitions 相等；终态（completed / skipped）不是 key。
+var DevAdvance = map[string]string{
+	DevStatusPending:       DevStatusAIRunning,
+	DevStatusAIRunning:     DevStatusAICompleted,
+	DevStatusAICompleted:   DevStatusReviewing,
+	DevStatusReviewing:     DevStatusWaitingCommit,
+	DevStatusWaitingCommit: DevStatusCommitted,
+	DevStatusCommitted:     DevStatusValidated,
+	DevStatusValidated:     DevStatusCompleted,
+}
+
+// DevNextStatus 返回合法前进一态；终态 / skipped / rejected / 未知状态一律 ok=false。
+// 只有 service.DevService.Advance 调用本函数——它是状态写入的唯一校验入口。
+func DevNextStatus(from string) (string, bool) {
+	to, ok := DevAdvance[from]
+	return to, ok
+}
+
+// ── 人工审核动作：与 openapi 的 x-rdc-review-actions 一一对应 ──────────────
+// 审核动作与前进链分开：approve/reject/commit 由审核中心触发，resubmit 由研发中心触发。
+// 每个函数返回目标态与是否合法；service 层据此决定能否写状态，非法一律 400。
+var devReviewActions = map[string]struct{ from, to string }{
+	"approve":  {DevStatusReviewing, DevStatusWaitingCommit},
+	"reject":   {DevStatusReviewing, DevStatusRejected},
+	"commit":   {DevStatusWaitingCommit, DevStatusCommitted},
+	"resubmit": {DevStatusRejected, DevStatusAICompleted},
+}
+
+// ReviewActionTarget 返回某审核动作在给定当前状态下是否合法及其目标态。
+// action 必须是 approve/reject/commit/resubmit 之一；from 必须是该动作声明的源态。
+func ReviewActionTarget(action, from string) (to string, ok bool) {
+	edge, exists := devReviewActions[action]
+	if !exists || edge.from != from {
+		return "", false
+	}
+	return edge.to, true
+}
+
+// IsValidReviewAction 判断动作名是否在审核动作目录里。
+func IsValidReviewAction(action string) bool {
+	_, exists := devReviewActions[action]
+	return exists
+}
+
+// CanSkipDevStatus 判断当前状态能否标记 SKIPPED：仅序 0..6（未完成态）允许。
+func CanSkipDevStatus(from string) bool {
+	for _, status := range DevSubtaskStatuses[:7] {
+		if from == status {
+			return true
+		}
+	}
+	return false
+}
+
+// IsDevTerminal 判断是否为终态；SKIPPED 与 COMPLETED 都不可再推进 / 再跳过。
+func IsDevTerminal(status string) bool {
+	return status == DevStatusCompleted || status == DevStatusSkipped
+}
+
+// DevStatusOrdinal 返回 0..7 的进度序号；skipped 与未知状态返回 -1。
+// repository 的 MIN(CASE status ...) 筛选口径与本函数等价。
+func DevStatusOrdinal(status string) int {
+	for ordinal, item := range DevSubtaskStatuses[:8] {
+		if item == status {
+			return ordinal
+		}
+	}
+	return -1
+}
+
+// AggregateDevStatus 由两条子任务聚合出任务整体状态（展示唯一来源）：
+// 排除 skipped；两条都排除时视为 completed；否则取序号最小的一条（瓶颈语义）。
+// 未知状态同样不参与比较，避免出现没有契约定义的状态值。
+func AggregateDevStatus(statuses []string) string {
+	// rejected 是阻断态：任一子任务被驳回，整体立即显示 rejected，不再比较进度序。
+	// 它不占 ordinal（DevStatusOrdinal 返回 -1），所以必须在此单独优先判断。
+	for _, status := range statuses {
+		if status == DevStatusRejected {
+			return DevStatusRejected
+		}
+	}
+	minOrdinal := -1
+	result := DevStatusCompleted
+	for _, status := range statuses {
+		if status == DevStatusSkipped {
+			continue
+		}
+		ordinal := DevStatusOrdinal(status)
+		if ordinal < 0 {
+			continue
+		}
+		if minOrdinal < 0 || ordinal < minOrdinal {
+			minOrdinal = ordinal
+			result = status
+		}
+	}
+	return result
+}
+
+// DevSubtask 是子任务的对外投影；status 字段只允许状态机写入。
+type DevSubtask struct {
+	ID        string `json:"id"`
+	Kind      string `json:"kind"`
+	Status    string `json:"status"`
+	Note      string `json:"note"`
+	CreatedAt string `json:"createdAt"`
+	UpdatedAt string `json:"updatedAt"`
+}
+
+// DevTask 是任务列表项：三条 JOIN 投影 + 两子任务状态 + 聚合出的整体状态。
+// tenant_id 不进 DTO，只参与仓储过滤。
+type DevTask struct {
+	ID               string `json:"id"`
+	Title            string `json:"title"`
+	RequirementID    string `json:"requirementId"`
+	ReqKey           string `json:"reqKey"`
+	RequirementTitle string `json:"requirementTitle"`
+	ProjectName      string `json:"projectName"`
+	OverallStatus    string `json:"overallStatus"`
+	FrontendStatus   string `json:"frontendStatus"`
+	BackendStatus    string `json:"backendStatus"`
+	CreatorUserID    string `json:"creatorUserId"`
+	CreatorName      string `json:"creatorName"`
+	CreatedAt        string `json:"createdAt"`
+	UpdatedAt        string `json:"updatedAt"`
+}
+
+// DevTaskDetail 是详情投影；Subtasks 恰好两条，恒非 nil。
+type DevTaskDetail struct {
+	DevTask
+	Subtasks []DevSubtask `json:"subtasks"`
+}
+
+// DevTaskList 是分页响应体：items 与分页元信息平铺。
+type DevTaskList struct {
+	Items []DevTask `json:"items"`
+	Page
+}
+
+// DevTaskInput 是新建任务请求体：归属字段由服务端从身份与 scope 推导。
+type DevTaskInput struct {
+	Title         string `json:"title"`
+	RequirementID string `json:"requirementId"`
+}
+
+// DevSubtaskNoteUpdate 只含非状态属性；**没有 status 字段**。
+type DevSubtaskNoteUpdate struct {
+	ID   string `json:"id"`
+	Note string `json:"note"`
+}
+
+// DevTaskUpdate 是编辑请求体；**顶层与嵌套都没有 status 字段**。
+// handler 的白名单与 DisallowUnknownFields 拒绝任意层级的 status → 400。
+type DevTaskUpdate struct {
+	Title         string                 `json:"title"`
+	RequirementID string                 `json:"requirementId"`
+	Subtasks      []DevSubtaskNoteUpdate `json:"subtasks"`
+}
+
+// DevTaskQuery 是列表筛选条件；Page 已归一化，ReqKey 精确匹配，Status 为整体态。
+type DevTaskQuery struct {
+	Page   PageQuery
+	ReqKey string
+	Status string
+}
+
+// ── 交付中心快照与输入 ──────────────────────────────────────────────────────
+const (
+	TestNotRegistered           = "not_registered"
+	TestPassed                  = "passed"
+	TestFailed                  = "failed"
+	AcceptPending               = "pending"
+	AcceptPassed                = "passed"
+	AcceptFailed                = "failed"
+	GitOK                       = "ok"
+	GitNotConfigured            = "not_configured"
+	GitPathForbidden            = "path_forbidden"
+	GitNotRepo                  = "not_repo"
+	GitTimeout                  = "timeout"
+	GitError                    = "error"
+	RDCDefaultGitTimeoutSeconds = 5
+	RDCMaxGitTimeoutSeconds     = 30
+	RDCGitMaxCommits            = 10
+	MaxTestSummaryLen           = 2000
+	MaxTestReportRefLen         = 500
+	MaxAcceptanceNoteLen        = 2000
+	MaxAcceptanceItems          = 500
+)
+
+var TestResults = []string{TestNotRegistered, TestPassed, TestFailed}
+var AcceptanceStatuses = []string{AcceptPending, AcceptPassed, AcceptFailed}
+var GitStatuses = []string{GitOK, GitNotConfigured, GitPathForbidden, GitNotRepo, GitTimeout, GitError}
+
+type DeliveryRecord struct {
+	ID                string `json:"id"`
+	Seq               int64  `json:"seq"`
+	RequirementID     string `json:"requirementId"`
+	ReqKey            string `json:"reqKey"`
+	RequirementTitle  string `json:"requirementTitle"`
+	ProjectName       string `json:"projectName"`
+	RequirementStatus string `json:"requirementStatus"`
+	TestResult        string `json:"testResult"`
+	TestSummary       string `json:"testSummary"`
+	TestReportRef     string `json:"testReportRef"`
+	TestRegisteredBy  string `json:"testRegisteredBy"`
+	TestRegisteredAt  string `json:"testRegisteredAt"`
+	AcceptanceStatus  string `json:"acceptanceStatus"`
+	AcceptanceItems   string `json:"acceptanceItems"`
+	AcceptanceNote    string `json:"acceptanceNote"`
+	AcceptedBy        string `json:"acceptedBy"`
+	AcceptedAt        string `json:"acceptedAt"`
+	Archived          bool   `json:"archived"`
+	ArchivedBy        string `json:"archivedBy"`
+	ArchivedAt        string `json:"archivedAt"`
+	CreatorName       string `json:"creatorName"`
+	CreatedAt         string `json:"createdAt"`
+}
+type DeliveryDetail struct {
+	RequirementID      string           `json:"requirementId"`
+	ReqKey             string           `json:"reqKey"`
+	Title              string           `json:"title"`
+	Description        string           `json:"description"`
+	AcceptanceCriteria string           `json:"acceptanceCriteria"`
+	RequirementStatus  string           `json:"requirementStatus"`
+	ProjectName        string           `json:"projectName"`
+	Current            DeliveryRecord   `json:"current"`
+	History            []DeliveryRecord `json:"history"`
+}
+type DeliveryCommit struct {
+	Sha      string `json:"sha"`
+	ShortSha string `json:"shortSha"`
+	Author   string `json:"author"`
+	Time     string `json:"time"`
+	Subject  string `json:"subject"`
+}
+type GitSnapshot struct {
+	Status           string           `json:"status"`
+	Message          string           `json:"message"`
+	Branch           string           `json:"branch"`
+	WorkspaceClean   bool             `json:"workspaceClean"`
+	ChangedFileCount int              `json:"changedFileCount"`
+	Commits          []DeliveryCommit `json:"commits"`
+	ReadAt           string           `json:"readAt"`
+}
+type AcceptanceItemResult struct {
+	Index  int    `json:"index"`
+	Result string `json:"result"`
+}
+type TestRegisterInput struct {
+	Result    string `json:"result"`
+	Summary   string `json:"summary"`
+	ReportRef string `json:"reportRef"`
+}
+type DeliveryAcceptInput struct {
+	Result string                 `json:"result"`
+	Note   string                 `json:"note"`
+	Items  []AcceptanceItemResult `json:"items"`
+}
+type GitRepoConfig struct {
+	GitRepoPath  string   `json:"gitRepoPath"`
+	AllowedRoots []string `json:"allowedRoots"`
+	Configured   bool     `json:"configured"`
+}
+type GitRepoInput struct {
+	GitRepoPath string `json:"gitRepoPath"`
+}
+type DeliveryQuery struct {
+	Page             PageQuery
+	Keyword          string
+	AcceptanceStatus string
+	Archived         string
+}
+type DeliveryRecordList struct {
+	Items []DeliveryRecord `json:"items"`
+	Page
+}
+
+// ── 人工审核中心 DTO ────────────────────────────────────────────────────────
+
+// ReviewTask 是待审任务列表项；reviewableCount 统计处于待审/待提交/驳回态的子任务数。
+type ReviewTask struct {
+	ID               string `json:"id"`
+	Title            string `json:"title"`
+	ReqKey           string `json:"reqKey"`
+	RequirementTitle string `json:"requirementTitle"`
+	ProjectName      string `json:"projectName"`
+	OverallStatus    string `json:"overallStatus"`
+	ReviewableCount  int    `json:"reviewableCount"`
+	FrontendStatus   string `json:"frontendStatus"`
+	BackendStatus    string `json:"backendStatus"`
+	CreatedAt        string `json:"createdAt"`
+}
+
+// ReviewTaskList 是待审任务分页响应。
+type ReviewTaskList struct {
+	Items []ReviewTask `json:"items"`
+	Page
+}
+
+// ReviewRecord 是一次审核动作的事实记录（只追加，无更新/删除）。
+type ReviewRecord struct {
+	ID             string `json:"id"`
+	TaskID         string `json:"taskId"`
+	SubtaskID      string `json:"subtaskId"`
+	Action         string `json:"action"`
+	Reason         string `json:"reason"`
+	CommitSha      string `json:"commitSha"`
+	ReviewerUserID string `json:"reviewerUserId"`
+	// Detail 是交互动作的结构化证据；既有 approve/reject/commit/resubmit 为空对象。
+	// 扩展的是同一张 rdc_review_record 表，不建第二套审核历史。
+	Detail    map[string]any `json:"detail"`
+	CreatedAt string         `json:"createdAt"`
+}
+
+// ReviewDetail 是审核详情：任务、子任务与审核历史。
+type ReviewDetail struct {
+	Task     ReviewTask     `json:"task"`
+	Subtasks []DevSubtask   `json:"subtasks"`
+	Records  []ReviewRecord `json:"records"`
+}
+
+// ReviewRejectInput 是驳回请求体；原因必填，≤500 字。
+type ReviewRejectInput struct {
+	Reason string `json:"reason"`
+}
+
+// ReviewCommitInput 是提交确认请求体；commit SHA 必填，≤64 字。
+type ReviewCommitInput struct {
+	CommitSha string `json:"commitSha"`
+}
+
+// ReviewTaskQuery 是待审列表筛选条件。
+type ReviewTaskQuery struct {
+	Page   PageQuery
+	ReqKey string
+}
+
+// 审核记录动作常量，与 openapi 的 ReviewAction 枚举一致。
+const (
+	ReviewActionApprove  = "approve"
+	ReviewActionReject   = "reject"
+	ReviewActionCommit   = "commit"
+	ReviewActionResubmit = "resubmit" // 研发中心重新研发：rejected → ai_completed
+)
+
+// 审核记录字段上限，与 openapi 的 maxLength 对齐。
+const (
+	MaxReviewReasonLen    = 500
+	MaxReviewCommitShaLen = 64
+)
+
+// ── AI 人机交互层：枚举镜像 / 风险矩阵 / DTO ──────────────────────────────
+//
+// 全部取值镜像 api/openapi.yaml 的 x-rdc-interaction-* 扩展，由 contract_test.go
+// 逐项锁死；DDL 不加 CHECK，避免同一枚举出现第二处事实来源。
+// 交互层只写决策 / 证据 / 门禁 / 检查点状态，绝不写 rdc_dev_subtask.status。
+
+// hunk 三态决策：与 x-rdc-interaction-review-decisions 同序。
+const (
+	DecisionPending  = "pending"
+	DecisionAccepted = "accepted"
+	DecisionRejected = "rejected"
+)
+
+// ReviewDecisions 是三态决策的有序列表，供契约测试与前端标签逐项比对。
+var ReviewDecisions = []string{DecisionPending, DecisionAccepted, DecisionRejected}
+
+// 文件变更类型 / 来源 / 提交态 / 题目类型 / 门禁 / 检查点状态。
+const (
+	FileAdded            = "added"
+	FileModified         = "modified"
+	FileDeleted          = "deleted"
+	FileRenamed          = "renamed"
+	ArtifactSourceAgent  = "agent_executor" // 唯一合法来源，不接受 manual
+	SubmitPending        = "pending"
+	SubmitSubmitted      = "submitted"
+	QuestionSingle       = "single"
+	QuestionMultiple     = "multiple"
+	QuestionText         = "text"
+	GateBlocked          = "blocked"
+	GateConfirmed        = "confirmed"
+	CheckpointActive     = "active"
+	CheckpointRolledBack = "rolled_back"
+	CheckpointPartial    = "partially_rolled_back"
+)
+
+var InteractionFileStatuses = []string{FileAdded, FileModified, FileDeleted, FileRenamed}
+var InteractionSources = []string{ArtifactSourceAgent}
+var SubmitStatuses = []string{SubmitPending, SubmitSubmitted}
+var QuestionTypes = []string{QuestionSingle, QuestionMultiple, QuestionText}
+var GateStatuses = []string{GateBlocked, GateConfirmed}
+var CheckpointStatuses = []string{CheckpointActive, CheckpointRolledBack, CheckpointPartial}
+
+// 风险等级与介入强度；未知操作类型按"就高不就低"兜底 medium。
+const (
+	RiskLow    = "low"
+	RiskMedium = "medium"
+	RiskHigh   = "high"
+
+	InterventionExempt = "exempt"
+	InterventionSample = "sample"
+	InterventionStrict = "strict"
+
+	DefaultRisk = RiskMedium
+)
+
+var RiskLevels = []string{RiskLow, RiskMedium, RiskHigh}
+var Interventions = []string{InterventionExempt, InterventionSample, InterventionStrict}
+
+// 交互证据 action：前 4 个追加 rdc_review_record，rollback_blocked 仅写审计。
+// 这 5 个值都不在 devReviewActions 里，任何一条都不会触发子任务状态流转。
+const (
+	EvidenceDiffSubmitted      = "diff_submitted"
+	EvidencePlanConfirmed      = "plan_confirmed"
+	EvidenceCheckpointRollback = "checkpoint_rolled_back"
+	EvidenceApprovalDecided    = "approval_decided"
+	EvidenceRollbackBlocked    = "rollback_blocked"
+)
+
+var InteractionEvidenceActions = []string{
+	EvidenceDiffSubmitted, EvidencePlanConfirmed, EvidenceCheckpointRollback,
+	EvidenceApprovalDecided, EvidenceRollbackBlocked,
+}
+
+// IsInteractionEvidenceAction 判断 action 是否是交互层证据动作（含仅审计的 rollback_blocked）。
+func IsInteractionEvidenceAction(action string) bool {
+	for _, item := range InteractionEvidenceActions {
+		if item == action {
+			return true
+		}
+	}
+	return false
+}
+
+// IsValidReviewDecision 判断 hunk 三态取值是否合法；空串不是合法值。
+func IsValidReviewDecision(decision string) bool {
+	for _, item := range ReviewDecisions {
+		if item == decision {
+			return true
+		}
+	}
+	return false
+}
+
+// OperationTypes 是风险矩阵的完整操作类型目录（other 为未知兜底），与契约枚举同序。
+var OperationTypes = []string{
+	"delete_file", "config_change", "dependency_change", "schema_migration", "permission_change",
+	"api_change", "model_change", "code_edit", "format", "comment", "doc", "add_test", "style",
+	"add_file", "other",
+}
+
+// OperationRisk 是操作类型 → 风险等级的内置矩阵（Q7）。
+var OperationRisk = map[string]string{
+	"delete_file": RiskHigh, "config_change": RiskHigh, "dependency_change": RiskHigh,
+	"schema_migration": RiskHigh, "permission_change": RiskHigh,
+	"api_change": RiskMedium, "model_change": RiskMedium, "code_edit": RiskMedium,
+	"format": RiskLow, "comment": RiskLow, "doc": RiskLow, "add_test": RiskLow,
+	"style": RiskLow, "add_file": RiskLow, "other": DefaultRisk,
+}
+
+// RiskIntervention 是风险等级 → 人工介入强度的唯一映射。
+var RiskIntervention = map[string]string{
+	RiskLow: InterventionExempt, RiskMedium: InterventionSample, RiskHigh: InterventionStrict,
+}
+
+// RiskOfOperation 返回操作类型的风险等级；未知 / 空值一律保守归 medium。
+func RiskOfOperation(operation string) string {
+	if risk, ok := OperationRisk[operation]; ok {
+		return risk
+	}
+	return DefaultRisk
+}
+
+// InterventionOf 返回风险等级对应的介入强度；未知风险同样按 medium 处理。
+func InterventionOf(risk string) string {
+	if intervention, ok := RiskIntervention[risk]; ok {
+		return intervention
+	}
+	return RiskIntervention[DefaultRisk]
+}
+
+// OverallRiskLevel 取所有 hunk 风险的最大值（low < medium < high）；空集合按 medium 保守兜底。
+// 注意：不能直接用 DefaultRisk 作为初值，否则「全是 low」会被错误抬成 medium。
+func OverallRiskLevel(operations []string) string {
+	if len(operations) == 0 {
+		return DefaultRisk
+	}
+	result := RiskLow
+	for _, operation := range operations {
+		risk := RiskOfOperation(operation)
+		if risk == RiskHigh {
+			return RiskHigh
+		}
+		if risk == RiskMedium {
+			result = RiskMedium
+		}
+	}
+	return result
+}
+
+// 交互字段长度上限，与 openapi 的 maxLength / maxItems 对齐。
+const (
+	MaxAIActionLen    = 200
+	MaxFilePathLen    = 500
+	MaxHunkIDLen      = 128
+	MaxHashLen        = 128
+	MaxHunksPerReview = 2000
+)
+
+// 回滚粒度：单 hunk / 单文件 / 整检查点。
+const (
+	RollbackHunk       = "hunk"
+	RollbackFile       = "file"
+	RollbackCheckpoint = "checkpoint"
+)
+
+var RollbackScopes = []string{RollbackHunk, RollbackFile, RollbackCheckpoint}
+
+// IsValidRollbackScope 判断回滚粒度是否合法。
+func IsValidRollbackScope(scope string) bool {
+	for _, item := range RollbackScopes {
+		if item == scope {
+			return true
+		}
+	}
+	return false
+}
+
+// ── 产物结构（来自 AgentArtifactProvider，不可变快照）────────────────────
+
+// Hunk 是一个 diff 块；oldStart / newStart 均 1-based，上下文仅中栏展示、不参与右栏计算。
+type Hunk struct {
+	HunkID        string   `json:"hunkId"`
+	OldStart      int      `json:"oldStart"`
+	OldLines      int      `json:"oldLines"`
+	NewStart      int      `json:"newStart"`
+	NewLines      int      `json:"newLines"`
+	OldContent    []string `json:"oldContent"`
+	NewContent    []string `json:"newContent"`
+	ContextBefore []string `json:"contextBefore"`
+	ContextAfter  []string `json:"contextAfter"`
+	RiskLabel     string   `json:"riskLabel"`
+}
+
+// FileDiff 是一个文件的不可变 diff 快照；filePath 是脱敏后的仓库相对路径。
+type FileDiff struct {
+	FilePath   string `json:"filePath"`
+	FileStatus string `json:"fileStatus"`
+	OldPath    string `json:"oldPath"`
+	Hunks      []Hunk `json:"hunks"`
+}
+
+// HunkDecision 是单 hunk 的三态决策留痕。
+type HunkDecision struct {
+	ReviewID  string `json:"reviewId"`
+	HunkID    string `json:"hunkId"`
+	Decision  string `json:"decision"`
+	DecidedBy string `json:"decidedBy"`
+	DecidedAt string `json:"decidedAt"`
+}
+
+// DiffReview 是 Diff 审查对象；decisions 与 files 内 hunk 对齐供前端 merge。
+type DiffReview struct {
+	ID           string         `json:"id"`
+	TaskID       string         `json:"taskId"`
+	SubtaskID    string         `json:"subtaskId"`
+	CheckpointID string         `json:"checkpointId"`
+	Source       string         `json:"source"`
+	SubmitStatus string         `json:"submitStatus"`
+	Files        []FileDiff     `json:"files"`
+	Decisions    []HunkDecision `json:"decisions"`
+	CreatedAt    string         `json:"createdAt"`
+}
+
+// DiffReviewInput 是提交整份决策的请求体；task/subtask 由路径决定，不在请求体里。
+type DiffReviewInput struct {
+	Decisions []HunkDecision `json:"decisions"`
+}
+
+// HunkDecisionInput 是单 hunk 三态决策请求体；只有 decision 一个可写字段。
+type HunkDecisionInput struct {
+	Decision string `json:"decision"`
+}
+
+// QuestionOption 是单选题 / 多选题的一个选项。
+type QuestionOption struct {
+	OptionID string `json:"optionId"`
+	Label    string `json:"label"`
+}
+
+// Question 是生成前结构化问卷的一题；Answer 为选项 id / id[] / 文本。
+type Question struct {
+	QuestionID string           `json:"questionId"`
+	Prompt     string           `json:"prompt"`
+	Type       string           `json:"type"`
+	Required   bool             `json:"required"`
+	Options    []QuestionOption `json:"options"`
+	Answer     any              `json:"answer,omitempty"`
+}
+
+// PlanTask 是可确认计划任务列表中的一步。
+type PlanTask struct {
+	StepID        string `json:"stepId"`
+	Title         string `json:"title"`
+	Description   string `json:"description"`
+	Confirmed     bool   `json:"confirmed"`
+	EstimatedRisk string `json:"estimatedRisk"`
+}
+
+// PlanConfirmation 是计划确认对象；gateStatus=confirmed 只表示意图对齐完成。
+type PlanConfirmation struct {
+	ID            string     `json:"id"`
+	TaskID        string     `json:"taskId"`
+	SubtaskID     string     `json:"subtaskId"`
+	Questionnaire []Question `json:"questionnaire"`
+	PlanTasks     []PlanTask `json:"planTasks"`
+	GateStatus    string     `json:"gateStatus"`
+	ConfirmedBy   string     `json:"confirmedBy"`
+	ConfirmedAt   string     `json:"confirmedAt"`
+}
+
+// PlanConfirmInput 携带答案与已确认步骤，服务端按 questionId / stepId 合并，不新增题目。
+type PlanConfirmInput struct {
+	Answers []Question `json:"answers"`
+	StepIDs []string   `json:"stepIds"`
+}
+
+// FileSnapshot 是一次 AI 动作中某文件的 before/after 内容快照与哈希。
+type FileSnapshot struct {
+	FilePath      string `json:"filePath"`
+	FileStatus    string `json:"fileStatus"`
+	BeforeContent string `json:"beforeContent"`
+	AfterContent  string `json:"afterContent"`
+	BeforeHash    string `json:"beforeHash"`
+	AfterHash     string `json:"afterHash"`
+}
+
+// Checkpoint 是一次 AI 动作的检查点；rollbackToken 服务端签发且 UNIQUE。
+type Checkpoint struct {
+	ID            string         `json:"id"`
+	TaskID        string         `json:"taskId"`
+	SubtaskID     string         `json:"subtaskId"`
+	AIAction      string         `json:"aiAction"`
+	Files         []FileSnapshot `json:"files"`
+	RollbackToken string         `json:"rollbackToken"`
+	Status        string         `json:"status"`
+	CreatedBy     string         `json:"createdBy"`
+	CreatedAt     string         `json:"createdAt"`
+}
+
+// RollbackTarget 是 file / hunk 粒度回滚的定位键；整检查点回滚时为空数组。
+type RollbackTarget struct {
+	FilePath string `json:"filePath"`
+	HunkID   string `json:"hunkId"`
+}
+
+// RollbackInput 是回滚请求；currentHashes 由请求方提供，服务端不读真实文件。
+type RollbackInput struct {
+	RollbackToken string            `json:"rollbackToken"`
+	Scope         string            `json:"scope"`
+	Targets       []RollbackTarget  `json:"targets"`
+	CurrentHashes map[string]string `json:"currentHashes"`
+}
+
+// ApprovalView 是风险 → 介入强度的徽标；Decided 由是否已有 approval_decided 证据决定。
+type ApprovalView struct {
+	OverallRisk  string `json:"overallRisk"`
+	Intervention string `json:"intervention"`
+	Decided      bool   `json:"decided"`
+	Decision     string `json:"decision"`
+}
+
+// ApprovalDecideInput 记录审批结论；checkpointId 必填，决定只写证据不写状态。
+type ApprovalDecideInput struct {
+	CheckpointID string `json:"checkpointId"`
+	Decision     string `json:"decision"`
+}
+
+// ApprovalDecisionApprove / ApprovalDecisionReject 是审批结论的两个合法值。
+const (
+	ApprovalDecisionApprove = "approve"
+	ApprovalDecisionReject  = "reject"
+)
+
+// IsValidApprovalDecision 判断审批结论是否合法。
+func IsValidApprovalDecision(decision string) bool {
+	return decision == ApprovalDecisionApprove || decision == ApprovalDecisionReject
+}
+
+// InteractionAudit 是交互层交给 handler 写审计的最小数据；service 只组装、不落审计。
+type InteractionAudit struct {
+	Action     string
+	ObjectType string
+	ObjectID   string
+	Detail     map[string]any
+}
+
+// InteractionConflictError 表示回滚被内容冲突阻断（409），携带需上屏的冲突文件清单。
+// 它是业务拒绝而非系统错误；handler 据此返回 409 且不提供强制覆盖入口。
+type InteractionConflictError struct {
+	Message string
+	Files   []string
+}
+
+// Error 返回可直接上屏的中文文案，并把冲突文件列出来供前端提示。
+func (e *InteractionConflictError) Error() string {
+	if len(e.Files) == 0 {
+		return e.Message
+	}
+	return e.Message + "；冲突文件：" + strings.Join(e.Files, "、")
+}
+
+// ConflictFiles 返回冲突文件路径副本；nil 表示无文件级冲突（如令牌无效）。
+func (e *InteractionConflictError) ConflictFiles() []string {
+	return append([]string(nil), e.Files...)
 }

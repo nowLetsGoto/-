@@ -1,0 +1,98 @@
+sequenceDiagram
+    actor U as 管理员(team 模式)
+    participant FE as ModelFormPage / ModelTestPanel / api/rdcModel.ts
+    participant MW as chi 中间件链
+    participant H as handler/rdc.AIModelHandler
+    participant S as service/rdc.AIModelService
+    participant K as modelkey.Codec
+    participant R as repository/rdc.AIModelRepository
+    participant DB as PostgreSQL(team schema)
+    participant C as service/rdc.ModelChatService.chatOnce
+    participant SC as scnet /chat/completions
+    participant A as service/audit.Record
+    participant Caller as 内部模块(如 AI 交互层)
+    participant CS as service/rdc.ModelChatService
+    participant CR as repository/rdc.AIModelRepository
+    participant CK as modelkey.Codec
+    participant CC as chatOnce
+
+    rect rgb(240,253,244)
+    Note over U,DB: ① 录入新 Key 并保存（Key 明文只出现在 FE→H 请求体与 codec 内）
+    U->>FE: 填表单（粘贴轮换后的新 Key）+ 思考/上下文/扩展配置，保存
+    FE->>MW: POST/PUT /api/v1/rdc/models{ /{id}} {..., apiKey}
+    MW->>MW: RequireAuth → InjectScope → RequireTeamMode → RequirePermission(rdc.model.write)
+    MW->>H: Wrap 调用 handler
+    H->>H: DecodeJSON 严格白名单（无 tenantId/isDefault/enabled；apiKey 显式允许）
+    H->>S: Create/Update(ctx, caller, scope, tenantId, in)
+    S->>S: resolveModelScope：超管须带 tenantId，否则 400；非超管忽略
+    S->>S: validateModel：name/base_url/context/extra_config 白名单校验
+    alt in.apiKey 非空
+        S->>K: Seal(plainKey) → cipher, nonce
+        K-->>S: base64 密文 + nonce
+        S->>K: Mask(plainKey) → mask
+        K-->>S: sk-****wxyz
+        S->>R: UpdateKey/Create(..., cipher, nonce, mask, scope)
+    else in.apiKey 留空（编辑）
+        Note over S,R: 三列保持原值，绝不回写掩码串
+        S->>R: Update(..., 不含 Key 三列, scope)
+    end
+    R->>DB: INSERT/UPDATE（ScopeFilter + 事务）
+    DB-->>R: row
+    R-->>S: AIModelRow（仅密文/掩码，无明文）
+    S-->>H: AIModel（apiKeyMask）
+    H->>A: Record('rdc.ai_model.created/updated', ..., {apiKeyUpdated:bool})
+    H-->>FE: 201/200 {code:0,data:AIModel}
+    FE->>U: 显示掩码 sk-****wxyz（明文已不可见）
+    end
+
+    rect rgb(239,246,255)
+    Note over U,SC: ② 实测（与 ModelService.Chat 共用 chatOnce；Key 不出服务边界）
+    U->>FE: 点「实测」→ 二次确认（消耗少量 token）
+    FE->>H: POST /api/v1/rdc/models/{id}/test
+    H->>S: chat.Test(ctx, scope, modelID, probe)
+    S->>R: FindByID(id, scope) → row(密文/nonce/思考/上下文/扩展)
+    Note over R,S: repository 只返回密文；明文不出 service/rdc 边界
+    S->>K: Open(cipher, nonce) → plainKey（仅内存）
+    K-->>S: plainKey
+    S->>C: chatOnce(cfg, plainKey, probe)
+    C->>C: AIModelRequestParams：reasoning_effort / max_tokens / temperature / top_p
+    C->>SC: POST {base_url}/chat/completions<br/>Authorization: Bearer <plainKey>
+    Note over C,SC: 明文 Key 只在此 HTTP 请求头出现，绝不写日志/响应
+    SC-->>C: 200 JSON 或 4xx/5xx
+    C->>C: 解析最小结构 + classify(status) + 计时
+    C->>K: Redact(plainKey, responsePreview)
+    K-->>C: 脱敏摘要
+    C-->>S: AIModelTestResult（无 Key，含 category/耗时/摘要）
+    S-->>H: AIModelTestResult
+    H->>A: Record('rdc.ai_model.tested', ..., {category,statusCode,latencyMs})
+    H-->>FE: 200 {code:0,data:AIModelTestResult}
+    FE->>U: 展示分类中文提示 / 状态码 / 耗时 / 脱敏摘要
+    end
+
+    rect rgb(255,247,237)
+    Note over Caller,SC: ③ 其他模块通过 ModelService.Chat 统一调用（无 HTTP 路由）
+    Caller->>CS: Chat(ctx, ChatRequest{TenantID, Scene, Messages})
+    Note over Caller,CS: 调用方不传 Key/base_url/思考/上下文，无法绕过公司配置
+    CS->>CR: FindDefaultOrFirstEnabled(ctx, scope{TenantID})
+    alt 无模型 / 无启用 / 未配 Key
+        CR-->>CS: nil / 空密文
+        CS-->>Caller: ChatError{config_missing}「请前往 AI 模型页配置」
+    else 取到配置（默认或首个启用）
+        CR-->>CS: cfg{cipher, nonce, thinking, context, extra, base_url, model_id}
+        CS->>CK: Open(cfg.cipher, cfg.nonce) → plainKey（内存）
+        CK-->>CS: plainKey
+        CS->>CC: chatOnce(cfg, plainKey, in.Messages)
+        CC->>CC: 注入 reasoning_effort / max_tokens / temperature / top_p
+        CC->>SC: POST /chat/completions + Bearer plainKey（client 120s 硬超时 + per-call context 超时）
+        alt 2xx 且解析成功
+            SC-->>CC: choices[0].message.content (+reasoning_content)
+            CC-->>CS: ChatResult{Content, ModelID, UsedFallback, LatencyMS, usage}
+            CS-->>Caller: ChatResult
+        else 4xx/5xx/超时/坏响应
+            SC-->>CC: error
+            CC->>CK: Redact(plainKey, errSample)
+            CC-->>CS: ChatError{category, 中文 Message, StatusCode}
+            CS-->>Caller: ChatError（分类错误，无 Key）
+        end
+    end
+    end

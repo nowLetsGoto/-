@@ -1,0 +1,180 @@
+classDiagram
+    %% 提取自 ai-interaction-design.md §3.9
+    %% ===== 契约层（SSOT 镜像）=====
+    class ContractEnums {
+        <<contract>>
+        +string[] ReviewDecisions
+        +map OperationRisk
+        +map RiskIntervention
+        +RiskOfOperation(op) string
+        +InterventionOf(risk) string
+        +OverallRiskLevel(ops) string
+        +IsInteractionEvidenceAction(a) bool
+    }
+    %% ===== 产物 / DTO =====
+    class Hunk {
+        +string HunkID
+        +int OldStart
+        +int OldLines
+        +int NewStart
+        +int NewLines
+        +string[] OldContent
+        +string[] NewContent
+        +string[] ContextBefore
+        +string[] ContextAfter
+        +string RiskLabel
+    }
+    class FileDiff {
+        +string FilePath
+        +string FileStatus
+        +string OldPath
+        +Hunk[] Hunks
+    }
+    class HunkDecision {
+        +string ReviewID
+        +string HunkID
+        +string Decision
+        +string DecidedBy
+        +string DecidedAt
+    }
+    class DiffReview {
+        +string ID
+        +string TaskID
+        +string SubtaskID
+        +string CheckpointID
+        +string Source
+        +string SubmitStatus
+        +FileDiff[] Files
+        +HunkDecision[] Decisions
+        +string CreatedAt
+    }
+    class Question { +string QuestionID; +string Prompt; +string Type; +bool Required; +QuestionOption[] Options; +any Answer }
+    class QuestionOption { +string OptionID; +string Label }
+    class PlanTask { +string StepID; +string Title; +string Description; +bool Confirmed; +string EstimatedRisk }
+    class PlanConfirmation {
+        +string ID
+        +string TaskID
+        +string SubtaskID
+        +Question[] Questionnaire
+        +PlanTask[] PlanTasks
+        +string GateStatus
+        +string ConfirmedBy
+        +string ConfirmedAt
+    }
+    class FileSnapshot {
+        +string FilePath
+        +string FileStatus
+        +string BeforeContent
+        +string AfterContent
+        +string BeforeHash
+        +string AfterHash
+    }
+    class Checkpoint {
+        +string ID
+        +string TaskID
+        +string SubtaskID
+        +string AIAction
+        +FileSnapshot[] Files
+        +string RollbackToken
+        +string Status
+        +string CreatedBy
+        +string CreatedAt
+    }
+    class ApprovalView { +string OverallRisk; +string Intervention; +bool Decided; +string Decision }
+    class ReviewRecord { +string ID; +string TaskID; +string SubtaskID; +string Action; +string Reason; +string CommitSha; +string ReviewerUserID; +string CreatedAt; +any Detail }
+    DiffReview "1" *-- "many" FileDiff
+    FileDiff "1" *-- "many" Hunk
+    DiffReview "1" *-- "many" HunkDecision
+    PlanConfirmation "1" *-- "many" Question
+    Question "1" *-- "many" QuestionOption
+    PlanConfirmation "1" *-- "many" PlanTask
+    Checkpoint "1" *-- "many" FileSnapshot
+
+    %% ===== 数据源接口（Group A 定义 + unavailable；Group B 真实现）=====
+    class AgentArtifactProvider {
+        <<interface>>
+        +LatestDiffReview(ctx, taskID, subtaskID, scope) FileDiff[], error
+        +LatestPlan(ctx, taskID, subtaskID, scope) Question[], PlanTask[], error
+        +Checkpoints(ctx, taskID, subtaskID, scope) FileSnapshot[], string, error
+        +ApplyRollback(ctx, checkpoint, scope) error
+    }
+    class unavailableProvider {
+        <<Group A 生产实现>>
+        +LatestDiffReview() error
+        +LatestPlan() error
+        +Checkpoints() error
+        +ApplyRollback() error
+    }
+    class realProvider {
+        <<Group B 待解锁>>
+        +LatestDiffReview() FileDiff[], error
+        +LatestPlan() Question[], PlanTask[], error
+        +Checkpoints() FileSnapshot[], string, error
+        +ApplyRollback() error
+    }
+    unavailableProvider ..|> AgentArtifactProvider
+    realProvider ..|> AgentArtifactProvider
+
+    %% ===== 后端分层 =====
+    class InteractionRepository {
+        -sql.DB db
+        +FindLatestReview(ctx, taskID, subtaskID, scope) DiffReview
+        +UpsertDecision(ctx, reviewID, hunkID, decision, scope) error
+        +SaveDecisionsTx(ctx, reviewID, decisions, scope) error
+        +FindPlan(ctx, taskID, subtaskID, scope) PlanConfirmation
+        +ConfirmPlanTx(ctx, planID, in, scope) PlanConfirmation
+        +ListCheckpoints(ctx, taskID, subtaskID, scope) Checkpoint[]
+        +FindCheckpoint(ctx, id, scope) Checkpoint
+        +MarkRollbackTx(ctx, cp, status, scope) Checkpoint
+        +AppendEvidence(ctx, taskID, subtaskID, action, detail, scope) ReviewRecord
+    }
+    class InteractionService {
+        -InteractionRepository repo
+        -AgentArtifactProvider provider
+        +GetDiffReview(ctx, scope, taskID, subtaskID) DiffReview
+        +SubmitDiffReview(ctx, scope, reviewID, in) DiffReview
+        +SetHunkDecision(ctx, scope, reviewID, hunkID, decision) DiffReview
+        +GetPlan(ctx, scope, taskID, subtaskID) PlanConfirmation
+        +ConfirmPlan(ctx, scope, planID, in) PlanConfirmation
+        +ListCheckpoints(ctx, scope, taskID, subtaskID) Checkpoint[]
+        +Rollback(ctx, scope, cpID, in) Checkpoint
+        +GetApproval(ctx, scope, taskID, subtaskID) ApprovalView
+        -checkGate(decisions) error
+        -verifyHashes(cp, currentHashes) string[]
+        -checkPlanGate(plan, in) error
+    }
+    class InteractionHandler {
+        -InteractionService svc
+        -AuditService audit
+        +GetDiffReview(w, r) error
+        +SubmitDiffReview(w, r) error
+        +SetHunkDecision(w, r) error
+        +GetPlan(w, r) error
+        +ConfirmPlan(w, r) error
+        +ListCheckpoints(w, r) error
+        +Rollback(w, r) error
+        +GetApproval(w, r) error
+        +DecideApproval(w, r) error
+    }
+    class ReviewRepository {
+        +Append(ctx, taskID, subtaskID, action, reason, sha, userID, scope) ReviewRecord
+    }
+    class DevService {
+        <<状态唯一写入口·本方案不改>>
+        +Advance(ctx, scope, taskID, subtaskID) DevSubtask
+        +ApplyReviewAction(ctx, action, taskID, subtaskID, scope) DevSubtask
+    }
+    class AuditService { +Record(ctx, actor, action, objectType, objectID, detail, ip) void }
+    class Identity { +string UserID; +string TenantID; +SessionMode Mode }
+    class Scope { +bool All; +string TenantID; +bool TeamScoped }
+
+    InteractionService --> InteractionRepository : depends
+    InteractionService --> AgentArtifactProvider : 唯一数据源
+    InteractionService ..> ContractEnums : 风险/门禁/证据校验
+    InteractionService ..> DevService : 只依赖不写状态（禁止调用写状态方法）
+    InteractionHandler --> InteractionService : calls
+    InteractionHandler --> AuditService : 5 events
+    InteractionRepository ..> ReviewRecord : 追加到既有审核表
+    InteractionRepository ..|> ReviewRepository : 复用追加语义(同键+detail)
+    InteractionService ..> Identity : 操作人
+    InteractionService ..> Scope : 隔离

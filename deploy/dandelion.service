@@ -1,6 +1,7 @@
 # deploy/dandelion.service · 单机/内网 systemd 单元。
 # 职责：以单二进制托管 API + 静态 + SPA fallback，崩溃自动拉起。
-# 输入：/opt/dandelion/.env（含 PUBLIC_BASE_URL 与 DATABASE_URL）、/opt/dandelion/bin/dandelion。
+# 输入：/opt/dandelion/.env（含 PUBLIC_BASE_URL、DATABASE_URL 与 RDC_MODEL_ENCRYPTION_KEY）、
+#       /opt/dandelion/bin/dandelion；主密钥由 EnvironmentFile 注入，缺失 / 非法时启动失败。
 # 输出：常驻的 8080 服务。
 # 边界：WorkingDirectory 必须是仓库部署根，保证 ./storage 相对路径可解析；
 #       DDL 已 //go:embed 进二进制，启动时幂等执行，不再依赖 schema.sql 的文件位置。

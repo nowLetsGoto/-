@@ -34,6 +34,12 @@ services:
       HOST: 0.0.0.0
       PORT: "8080"
       GO_ENV: production
+      # 使用容器内绝对路径；需由运维另行将只读仓库根卷挂载到容器。
+      RDC_GIT_ROOTS: ${RDC_GIT_ROOTS:-}
+      RDC_GIT_TIMEOUT_SECONDS: ${RDC_GIT_TIMEOUT_SECONDS:-5}
+      # AI 模型 Key 的主密钥：由 .env 注入，缺失 / 非法时容器启动即失败。
+      # 这里只引用变量，绝不写明文；生成方式见 README（openssl rand -base64 32）。
+      RDC_MODEL_ENCRYPTION_KEY: ${RDC_MODEL_ENCRYPTION_KEY:-}
     volumes:
       - ../storage:/app/storage
     ports:

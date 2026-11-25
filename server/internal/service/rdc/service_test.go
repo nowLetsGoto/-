@@ -210,9 +210,9 @@ func TestValidateImagesRejectsInvalid(t *testing.T) {
 	badMIME.ContentType = "image/svg+xml"
 
 	for name, images := range map[string][]contract.StagedImage{
-		"超过 9 张": tooMany,
-		"单张超限":  {tooLarge},
-		"扩展名不在白名单": {badExt},
+		"超过 9 张":     tooMany,
+		"单张超限":       {tooLarge},
+		"扩展名不在白名单":   {badExt},
 		"MIME 不在白名单": {badMIME},
 	} {
 		t.Run(name, func(t *testing.T) {

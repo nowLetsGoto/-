@@ -29,11 +29,11 @@ import (
 // Repository 固定绑定 team 分区的需求仓储。
 // 表名只来自 repository.PartitionTeam.Table，禁止手写字符串拼接。
 type Repository struct {
-	db              *sql.DB
-	table           string // team.rdc_requirements
-	seqTable        string // team.rdc_req_key_sequences
+	db               *sql.DB
+	table            string // team.rdc_requirements
+	seqTable         string // team.rdc_req_key_sequences
 	attachmentsTable string // team.rdc_requirement_attachment
-	projectJoin     string // LEFT JOIN team.projects ... 投影项目名
+	projectJoin      string // LEFT JOIN team.projects ... 投影项目名
 }
 
 // NewRepository 构造唯一一个 team 分区的需求仓储。
@@ -183,6 +183,16 @@ func (r *Repository) List(ctx context.Context, query contract.RequirementQuery, 
 			Page: query.Page.Page, PageSize: query.Page.PageSize, Total: total,
 		},
 	}, nil
+}
+
+// ExistsVisibleByID 判断一条需求是否存在且在当前 scope 内可见。
+// 供研发任务新建 / 换绑时校验归属；跨公司、不存在的 id 都返回 false，不泄漏存在性细节。
+func (r *Repository) ExistsVisibleByID(ctx context.Context, id string, scope contract.Scope) bool {
+	filter := repository.ScopeFilter(0, "r", scope).Add(`r.id::text = ?`, id)
+	var exists int
+	err := r.db.QueryRowContext(ctx,
+		`SELECT 1 FROM `+r.table+` r`+filter.Where()+` LIMIT 1`, filter.Args()...).Scan(&exists)
+	return err == nil
 }
 
 // FindByReqKey 按需求编号查详情（含附件）；必须先 ScopeFilter 再追加编号条件。

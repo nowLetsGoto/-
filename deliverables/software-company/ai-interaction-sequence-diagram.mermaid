@@ -1,0 +1,94 @@
+%% 提取自 ai-interaction-design.md §4（含失败路径与状态写入边界）
+
+%% ===== 图 1：逐 hunk 审查 + 右栏实时应用 =====
+sequenceDiagram
+    actor U as 用户(team)
+    participant FE as ReviewDetailDrawer / applyHunks.ts
+    participant API as api/rdcInteraction.ts
+    participant H as handler.InteractionHandler
+    participant S as service.InteractionService
+    participant P as AgentArtifactProvider
+    participant R as repository.InteractionRepository
+    participant DB as PostgreSQL(team)
+    participant A as audit.Record
+
+    U->>FE: 打开审核详情抽屉,选中子任务
+    FE->>API: getDiffReview(taskId, subtaskId)
+    API->>H: GET .../diff-review
+    H->>S: GetDiffReview(ctx, scope, taskID, subtaskID)
+    S->>R: FindLatestReview(...)
+    R->>DB: SELECT (ScopeFilter + task_id + subtask_id)
+    DB-->>R: review(files JSONB) + decisions
+    R-->>S: DiffReviewDetail
+    S-->>H: DiffReviewDetail
+    H-->>FE: {code:0, data}
+    Note over S,P: 产物来自 provider;若 unavailableProvider 返回未就绪→空态 data:null,不造假 diff
+    FE->>FE: applyHunks(base, hunks, decisions) 纯前端逐段重算 → 右栏应用后文件完整内容
+    Note over FE: 只算文本:不改真实文件/不发请求/不渲染运行效果(拍板3)
+
+    U->>FE: 逐 hunk 点接受/拒绝/重置
+    FE->>FE: 更新本地 decisions,实时重算右栏(无后端请求)
+    U->>FE: 点提交审查(仅全非 pending 可用)
+    FE->>API: submitDiffReview(reviewId, decisions)
+    API->>H: POST .../diff-review/submit
+    H->>S: SubmitDiffReview(ctx, scope, reviewID, in)
+    S->>S: checkGate: 任一 pending → 400「还有 n 个 hunk 未处理」
+    S->>R: SaveDecisionsTx + AppendEvidence(diff_submitted)
+    R->>DB: BEGIN → UPSERT hunk_decision → INSERT rdc_review_record(detail) → COMMIT
+    rect rgb(255,247,237)
+    Note over S,DB: 状态写入边界:本流程只写决策/证据,绝不 UPDATE rdc_dev_subtask.status
+    end
+    S-->>H: DiffReview(submitStatus=submitted)
+    H->>A: Record('rdc.interaction.diff_submitted', reviewId, detail{taskId,subtaskId,accepted,rejected})
+    Note over A,DB: 写 team.audit_logs;失败只记日志不回滚
+    H-->>FE: 200
+    FE->>U: 提示「审查已提交,等待执行器应用」
+
+%% ===== 图 2：检查点回滚（哈希校验 + 禁止回滚路径）=====
+sequenceDiagram
+    actor U as 用户(team)
+    participant FE as ReviewDetailDrawer / CheckpointTimeline
+    participant API as api/rdcInteraction.ts
+    participant H as handler.InteractionHandler
+    participant S as service.InteractionService
+    participant R as repository.InteractionRepository
+    participant DB as PostgreSQL(team)
+    participant P as AgentArtifactProvider
+    participant A as audit.Record
+
+    U->>FE: 点回滚(选 hunk/文件/整体) → 二次确认(写清影响面)
+    FE->>API: rollbackCheckpoint(checkpointId, {rollbackToken, scope, targets, currentHashes})
+    API->>H: POST .../checkpoints/{id}/rollback
+    H->>S: Rollback(ctx, scope, cpID, in)
+    S->>R: FindCheckpoint(cpID, scope)
+    R->>DB: SELECT (ScopeFilter + id)
+    DB-->>R: checkpoint(files before/after/hash, token, status)
+    R-->>S: Checkpoint（越界→404）
+
+    alt rollback_token 不匹配 或 status 非 active
+        S-->>H: 409「回滚令牌无效或该检查点已回滚」
+        H-->>FE: {code:409, data:null, message}
+    else token 合法
+        S->>S: verifyHashes = 逐目标比对 in.currentHash[filePath] == file.after_hash
+        alt 任一哈希不匹配(文件已被后续动作改动)
+            S->>A: Record('rdc.interaction.rollback_blocked', cpID, detail{hashMismatch:[...]})
+            Note over A,DB: 失败只记日志;不回滚/不覆盖(拍板Q3)
+            S-->>H: 409「内容已变化,禁止回滚,请人工核对」
+            H-->>FE: {code:409, data:null}
+            FE->>U: 列出冲突文件,不提供强制覆盖入口
+        else 哈希全部匹配
+            S->>R: MarkRollbackTx(cp, status, AppendEvidence(checkpoint_rolled_back))
+            R->>DB: BEGIN → UPDATE checkpoint.status → INSERT review_record(detail) → COMMIT
+            rect rgb(240,253,244)
+            Note over S,DB: 只撤销内容快照记录与检查点状态;绝不回退子任务状态(拍板Q4,状态机只前进)
+            end
+            opt Group B 执行器就绪
+                S->>P: ApplyRollback(cp, scope) 把 before_content 写回真实文件
+                P-->>S: ok（本版 unavailableProvider 直接返回未就绪,不写真实文件）
+            end
+            S-->>H: Checkpoint(status=rolled_back/partially_rolled_back)
+            H->>A: Record('rdc.interaction.checkpoint_rolled_back', cpID, detail{taskId,subtaskId,scope,files})
+            H-->>FE: 200
+            FE->>U: 提示回滚已记录
+        end
+    end

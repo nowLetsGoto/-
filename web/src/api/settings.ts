@@ -10,6 +10,7 @@ import { get, postJSON, putJSON } from './client';
 type Schemas = components['schemas'];
 
 export type Settings = Schemas['Settings'];
+export type GitRepoConfig = Schemas['GitRepoConfig'];
 export type WebhookConfig = Schemas['WebhookConfig'];
 export type WebhookField = Schemas['WebhookField'];
 export type WebhookTestResult = Schemas['WebhookTestResult'];
@@ -17,9 +18,17 @@ export type WebhookTestResult = Schemas['WebhookTestResult'];
 /** 契约路径的前端唯一镜像。 */
 const ROUTES = {
   settings: '/api/v1/settings',
+  gitRepo: '/api/v1/settings/git-repo',
   testWebhook: '/api/v1/settings/webhook/test',
   rotateApiKey: '/api/v1/settings/api-key/rotate',
 } as const;
+
+export function getGitRepo(): Promise<GitRepoConfig> {
+  return get<GitRepoConfig>(ROUTES.gitRepo);
+}
+export function updateGitRepo(gitRepoPath: string): Promise<GitRepoConfig> {
+  return putJSON<GitRepoConfig>(ROUTES.gitRepo, { gitRepoPath });
+}
 
 export function getSettings(): Promise<Settings> {
   return get<Settings>(ROUTES.settings);

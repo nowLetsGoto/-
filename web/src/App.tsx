@@ -93,11 +93,26 @@ const RequirementFormPage = lazy(() =>
 const DevCenterPage = lazy(() =>
   import('./pages/rdc/DevCenterPage').then((m) => ({ default: m.DevCenterPage })),
 );
+const DevTaskFormPage = lazy(() =>
+  import('./pages/rdc/DevTaskFormPage').then((m) => ({ default: m.DevTaskFormPage })),
+);
+const DevTaskEditPage = lazy(() =>
+  import('./pages/rdc/DevTaskEditPage').then((m) => ({ default: m.DevTaskEditPage })),
+);
 const ReviewCenterPage = lazy(() =>
   import('./pages/rdc/ReviewCenterPage').then((m) => ({ default: m.ReviewCenterPage })),
 );
 const DeliveryCenterPage = lazy(() =>
   import('./pages/rdc/DeliveryCenterPage').then((m) => ({ default: m.DeliveryCenterPage })),
+);
+const ModelListPage = lazy(() =>
+  import('./pages/rdc/ModelListPage').then((m) => ({ default: m.ModelListPage })),
+);
+const ModelFormPage = lazy(() =>
+  import('./pages/rdc/ModelFormPage').then((m) => ({ default: m.ModelFormPage })),
+);
+const ModelUsagePage = lazy(() =>
+  import('./pages/rdc/ModelUsagePage').then((m) => ({ default: m.ModelUsagePage })),
 );
 
 /**
@@ -377,12 +392,34 @@ export function App(): JSX.Element {
               </TeamModeGate>
             }
           />
+          {/* AI研发中心：列表 / 新建 / 编辑三个路由共用读点 rdc.dev.read（有意不设写点）。
+              详情走抽屉，没有独立路由。 */}
           <Route
             path="/rdc/dev"
             element={
               <TeamModeGate>
                 <PermissionGate permission="rdc.dev.read">
                   <DevCenterPage />
+                </PermissionGate>
+              </TeamModeGate>
+            }
+          />
+          <Route
+            path="/rdc/dev/new"
+            element={
+              <TeamModeGate>
+                <PermissionGate permission="rdc.dev.read">
+                  <DevTaskFormPage />
+                </PermissionGate>
+              </TeamModeGate>
+            }
+          />
+          <Route
+            path="/rdc/dev/:id/edit"
+            element={
+              <TeamModeGate>
+                <PermissionGate permission="rdc.dev.read">
+                  <DevTaskEditPage />
                 </PermissionGate>
               </TeamModeGate>
             }
@@ -403,6 +440,48 @@ export function App(): JSX.Element {
               <TeamModeGate>
                 <PermissionGate permission="rdc.delivery.read">
                   <DeliveryCenterPage />
+                </PermissionGate>
+              </TeamModeGate>
+            }
+          />
+          {/* AI模型：列表按读点进入，新建 / 编辑按写点进入；两者都只在团队模式可达。 */}
+          <Route
+            path="/rdc/models"
+            element={
+              <TeamModeGate>
+                <PermissionGate permission="rdc.model.read">
+                  <ModelListPage />
+                </PermissionGate>
+              </TeamModeGate>
+            }
+          />
+          {/* 统计页：与列表同读点；静态段路由必须排在 :id 之前（react-router 同序匹配）。 */}
+          <Route
+            path="/rdc/models/usage"
+            element={
+              <TeamModeGate>
+                <PermissionGate permission="rdc.model.read">
+                  <ModelUsagePage />
+                </PermissionGate>
+              </TeamModeGate>
+            }
+          />
+          <Route
+            path="/rdc/models/new"
+            element={
+              <TeamModeGate>
+                <PermissionGate permission="rdc.model.write">
+                  <ModelFormPage />
+                </PermissionGate>
+              </TeamModeGate>
+            }
+          />
+          <Route
+            path="/rdc/models/:id/edit"
+            element={
+              <TeamModeGate>
+                <PermissionGate permission="rdc.model.write">
+                  <ModelFormPage />
                 </PermissionGate>
               </TeamModeGate>
             }

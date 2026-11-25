@@ -1,0 +1,186 @@
+classDiagram
+    class AIModel {
+        +string ID
+        +string Name
+        +string Provider
+        +string Protocol
+        +string BaseURL
+        +string ModelID
+        +string APIKeyMask
+        +bool IsDefault
+        +bool ThinkingEnabled
+        +int ContextTokens
+        +json.RawMessage ExtraConfig
+        +string[] Capabilities
+        +bool Enabled
+        +string CreatedAt
+        +string UpdatedAt
+        note "无完整 Key 字段，仅 apiKeyMask"
+    }
+    class AIModelInput {
+        +string Name
+        +string Provider
+        +string Protocol
+        +string BaseURL
+        +string ModelID
+        +string APIKey
+        +bool ThinkingEnabled
+        +int ContextTokens
+        +json.RawMessage ExtraConfig
+        +string[] Capabilities
+        note "无 tenantId/isDefault/enabled；APIKey 留空=不更新"
+    }
+    class AIModelStatusInput {
+        +bool Enabled
+    }
+    class AIModelTestResult {
+        +bool OK
+        +string Category
+        +string Message
+        +int StatusCode
+        +int64 LatencyMS
+        +string ModelID
+        +bool UsedFallback
+        +string RequestSummary
+        +string ResponsePreview
+        +int PromptTokens
+        +int CompletionTokens
+        note "摘要均经 Redact，无 Key"
+    }
+    class ChatMessage {
+        +string Role
+        +string Content
+    }
+    class ChatRequest {
+        +string TenantID
+        +string Scene
+        +ChatMessage[] Messages
+        note "调用方不传 Key/base_url/thinking/context"
+    }
+    class ChatResult {
+        +string Content
+        +string ReasoningContent
+        +string ModelID
+        +bool UsedDefault
+        +bool UsedFallback
+        +int64 LatencyMS
+        +int PromptTokens
+        +int CompletionTokens
+    }
+    class ChatError {
+        +AIChatCategory Category
+        +string Message
+        +int StatusCode
+        +error Cause
+        +Error() string
+    }
+    class AIContract {
+        <<contract>>
+        +string[] AIProviders
+        +string[] AIProtocols
+        +string[] AIReasoningEfforts
+        +string[] AICapabilities
+        +int AIMinContextTokens
+        +int AIMaxContextTokens
+        +string[] AIExtraConfigKeys
+        +ValidateAIExtraConfig(raw) json.RawMessage, error
+        +NormalizeAIExtraConfig(raw) json.RawMessage
+        +AIModelRequestParams(model) RequestParams
+        +SCTemplate() AIModelInput
+    }
+    class Codec {
+        <<modelkey · 唯一明文接触点>>
+        -byte[] key
+        +New(masterKey) Codec, error
+        +Seal(plain) cipher, nonce, error
+        +Open(cipher, nonce) plain, error
+        +Mask(plain) string
+        +Redact(plain, text) string
+    }
+    class Config {
+        <<config>>
+        +byte[] ModelEncryptionKey
+        +Load() Config, error
+    }
+    class AIModelRepository {
+        -DB db
+        -string table
+        +List(ctx, query, scope) AIModelList
+        +FindByID(ctx, id, scope) AIModelRow
+        +Create(ctx, in, tenantID) AIModelRow
+        +Update(ctx, id, in, scope) AIModelRow
+        +UpdateKey(ctx, id, cipher, nonce, mask, scope) void
+        +SetDefault(ctx, id, scope) AIModelRow
+        +SetEnabled(ctx, id, enabled, scope) AIModelRow
+        +SoftDelete(ctx, id, scope) void
+        +FindDefaultOrFirstEnabled(ctx, scope) AIModelRow
+        +HasOtherEnabled(ctx, id, scope) bool
+    }
+    class AIModelService {
+        -AIModelRepository repo
+        -Codec codec
+        +Create(ctx, caller, scope, tenantId, in) AIModel
+        +List(ctx, scope, tenantId, query) AIModelList
+        +Get(ctx, id, scope, tenantId) AIModel
+        +Update(ctx, id, scope, tenantId, in) AIModel
+        +SetDefault(ctx, id, scope, tenantId) AIModel
+        +SetEnabled(ctx, id, enabled, scope, tenantId) AIModel
+        +SoftDelete(ctx, id, scope, tenantId) void
+        -resolveModelScope(scope, tenantId) Scope, bool
+        -validateModel(in) error
+    }
+    class ModelChatService {
+        -AIModelRepository repo
+        -Codec codec
+        -http.Client client
+        +New(repo, codec, client) ModelChatService
+        +Chat(ctx, in) ChatResult, error
+        +Test(ctx, scope, modelID, probe) AIModelTestResult, error
+        -chatOnce(cfg, plainKey, messages) ChatResult, error
+        -classify(status, body) AIChatCategory
+    }
+    class AIModelHandler {
+        -AIModelService svc
+        -ModelChatService chat
+        -AuditService audit
+        +List(w, r) error
+        +Create(w, r) error
+        +Get(w, r) error
+        +Update(w, r) error
+        +SetDefault(w, r) error
+        +SetEnabled(w, r) error
+        +Delete(w, r) error
+        +Test(w, r) error
+    }
+    class AuditService {
+        +Record(ctx, actor, action, objectType, objectID, detail, ip) void
+    }
+    class Scope {
+        +bool All
+        +string TenantID
+        +bool TeamScoped
+    }
+    class Identity {
+        +string UserID
+        +string TenantID
+        +bool IsSuperAdmin
+        +SessionMode Mode
+    }
+
+    Config ..> Codec : master key via main
+    Codec ..> AIModelService : Seal / Mask / Redact
+    Codec ..> ModelChatService : Open / Redact
+    AIModelService --> AIModelRepository : depends
+    ModelChatService --> AIModelRepository : depends
+    AIModelService ..> AIContract : validation / params
+    ModelChatService ..> AIContract : params / categories
+    AIModelHandler --> AIModelService : calls
+    AIModelHandler --> ModelChatService : test only
+    AIModelHandler --> AuditService : 7 events
+    AIModelRepository ..> AIModel : maps rows (no key)
+    AIModelService ..> Scope : isolation
+    AIModelService ..> Identity : caller
+    AIModel ..> AIModelInput : created from
+    ModelChatService ..> ChatRequest : consumes
+    ModelChatService ..> ChatResult : produces
+    ModelChatService ..> ChatError : on failure

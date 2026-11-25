@@ -8,15 +8,27 @@
  *       设置页是平台级的，这里不因"当前项目"改变任何行为，只是把 key 抄进示例。
  */
 import { useEffect, useState } from 'react';
-import type { Settings, WebhookConfig, WebhookField, WebhookTestResult } from '../../api/settings';
-import { getSettings, rotateApiKey, testWebhook, updateWebhook } from '../../api/settings';
+import type {
+  Settings,
+  GitRepoConfig,
+  WebhookConfig,
+  WebhookField,
+  WebhookTestResult,
+} from '../../api/settings';
+import {
+  getSettings,
+  rotateApiKey,
+  testWebhook,
+  updateWebhook,
+  updateGitRepo,
+} from '../../api/settings';
 import { errorMessage } from '../../api/client';
 import { useCurrentProject } from '../../hooks/useProjects';
 import { Button, Checkbox, Input, Segmented } from '../../components/Controls';
 import { ConfirmDialog } from '../../components/ConfirmDialog';
 import { ErrorState, Loading } from '../../components/States';
 
-type Tab = 'webhook' | 'api';
+type Tab = 'webhook' | 'api' | 'git';
 
 export function SettingsPage(): JSX.Element {
   // 示例里的 project 必须取**真实解析出来的项目**：useCurrentProject().key 可能来自 URL 或
@@ -158,6 +170,7 @@ export function SettingsPage(): JSX.Element {
           options={[
             { value: 'webhook', label: 'Webhook' },
             { value: 'api', label: '外部 API' },
+            { value: 'git', label: 'Git 仓库' },
           ]}
           onChange={setTab}
         />
@@ -176,6 +189,13 @@ export function SettingsPage(): JSX.Element {
           onSave={() => void save()}
           onTest={() => void runTest()}
         />
+      ) : tab === 'git' ? (
+        <GitRepoPanel
+          config={data.gitRepo}
+          onSaved={(gitRepo) =>
+            setData((previous) => (previous ? { ...previous, gitRepo } : previous))
+          }
+        />
       ) : (
         <ApiPanel
           configured={data.apiKeyConfigured}
@@ -184,6 +204,73 @@ export function SettingsPage(): JSX.Element {
         />
       )}
     </section>
+  );
+}
+
+function GitRepoPanel({
+  config,
+  onSaved,
+}: {
+  config: GitRepoConfig;
+  onSaved: (value: GitRepoConfig) => void;
+}): JSX.Element {
+  const [path, setPath] = useState(config.gitRepoPath);
+  const [saving, setSaving] = useState(false);
+  const [notice, setNotice] = useState('');
+  const save = async (): Promise<void> => {
+    setSaving(true);
+    setNotice('');
+    try {
+      const result = await updateGitRepo(path.trim());
+      onSaved(result);
+      setPath(result.gitRepoPath);
+      setNotice('仓库配置已保存');
+    } catch (err) {
+      setNotice(errorMessage(err));
+    } finally {
+      setSaving(false);
+    }
+  };
+  return (
+    <div className="card settings-card">
+      <div className="settings-block">
+        <h2>本公司 Git 仓库</h2>
+        <p className="settings-hint">
+          Git 安全隔离尚未就绪，仓库读取暂未开放。此处仅预配置本公司仓库路径；保存路径不会启用 Git
+          读取。
+        </p>
+        <label className="settings-field">
+          <span>仓库绝对路径</span>
+          <Input
+            className="text-input mono"
+            value={path}
+            onChange={(event) => {
+              setPath(event.target.value);
+              setNotice('');
+            }}
+            placeholder="/srv/repos/project"
+          />
+        </label>
+        <p className="settings-hint">
+          允许根目录：
+          {config.allowedRoots.length ? config.allowedRoots.join('、') : '未配置，请联系运维'}
+        </p>
+        <div className="settings-actions">
+          <Button
+            type="button"
+            className="button button-primary"
+            disabled={saving}
+            onClick={() => void save()}
+          >
+            {saving ? '保存中…' : '保存'}
+          </Button>
+          {notice ? <span className="settings-notice">{notice}</span> : null}
+        </div>
+        <p className="settings-hint">
+          清空路径并保存可移除预配置；Git 读取在安全隔离完成前始终禁用。
+        </p>
+      </div>
+    </div>
   );
 }
 

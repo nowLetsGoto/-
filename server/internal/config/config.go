@@ -6,6 +6,7 @@
 package config
 
 import (
+	"encoding/base64"
 	"fmt"
 	"net"
 	"net/url"
@@ -42,6 +43,8 @@ type Config struct {
 	// PublicBaseReachable 表示基址能否被其它设备访问；dev 放宽时为 false，前端据此给出中文提示。
 	PublicBaseReachable bool
 	StorageRoot         string
+	GitAllowedRoots     []string
+	GitTimeoutSeconds   int
 	MaxUploadMB         int64
 	Port                string
 	Host                string
@@ -53,6 +56,9 @@ type Config struct {
 	AdminPassword string
 	// AuthSecret 是登录令牌的 HMAC 密钥：只在内存中使用，不进日志、不进响应。
 	AuthSecret string
+	// ModelEncryptionKey 是 AI 模型 Key 的 AES-256 主密钥：base64 解码后必须恰好 32 字节。
+	// 缺失或非法直接 fail-fast；明文不进日志、不进响应，只在装配阶段交给 modelkey.Codec。
+	ModelEncryptionKey []byte
 }
 
 // get 是全仓唯一读取环境变量的函数；空值回落到默认值。
@@ -82,6 +88,25 @@ func Load() (Config, error) {
 		return Config{}, fmt.Errorf("解析存储根目录失败: %w", err)
 	}
 	cfg.StorageRoot = root
+	for _, candidate := range strings.Split(get("RDC_GIT_ROOTS", ""), ",") {
+		candidate = strings.TrimSpace(candidate)
+		if candidate == "" {
+			continue
+		}
+		if !filepath.IsAbs(candidate) {
+			return Config{}, fmt.Errorf("RDC_GIT_ROOTS 必须是绝对路径")
+		}
+		resolved, err := filepath.EvalSymlinks(filepath.Clean(candidate))
+		if err != nil {
+			return Config{}, fmt.Errorf("RDC_GIT_ROOTS 不可访问")
+		}
+		cfg.GitAllowedRoots = append(cfg.GitAllowedRoots, resolved)
+	}
+	gitTimeout, err := strconv.Atoi(get("RDC_GIT_TIMEOUT_SECONDS", "5"))
+	if err != nil || gitTimeout < 1 || gitTimeout > 30 {
+		return Config{}, fmt.Errorf("RDC_GIT_TIMEOUT_SECONDS 必须在 1-30 秒之间")
+	}
+	cfg.GitTimeoutSeconds = gitTimeout
 
 	rawLimit := get("MAX_UPLOAD_MB", strconv.Itoa(DefaultMaxUploadMB))
 	limit, err := strconv.ParseInt(rawLimit, 10, 64)
@@ -106,6 +131,19 @@ func Load() (Config, error) {
 	if cfg.DatabaseURL == "" {
 		return Config{}, fmt.Errorf("DATABASE_URL 不能为空")
 	}
+
+	// AI 模型 Key 的主密钥没有默认值：缺失、非法 base64、长度不是 32 字节都拒绝启动。
+	// 错误文案只讲规则，不回显环境变量内容，避免主密钥进了日志。
+	rawModelKey := get("RDC_MODEL_ENCRYPTION_KEY", "")
+	if rawModelKey == "" {
+		return Config{}, fmt.Errorf("RDC_MODEL_ENCRYPTION_KEY 未配置：请用 openssl rand -base64 32 生成")
+	}
+	modelKey, err := base64.StdEncoding.DecodeString(rawModelKey)
+	if err != nil || len(modelKey) != 32 {
+		return Config{}, fmt.Errorf("RDC_MODEL_ENCRYPTION_KEY 必须是 base64 编码的 32 字节")
+	}
+	cfg.ModelEncryptionKey = modelKey
+
 	// 默认密钥是公开写在仓库里的，生产环境继续使用等于没有签名校验，直接拒绝启动。
 	if cfg.IsProduction && cfg.AuthSecret == defaultAuthSecret {
 		return Config{}, fmt.Errorf("AUTH_SECRET 必须配置为随机长串（例如 openssl rand -hex 32），不得使用默认值")

@@ -1,0 +1,121 @@
+%% 图 1 · 创建研发任务（自动拆两子任务）+ 审计
+sequenceDiagram
+    actor U as 用户(team 模式)
+    participant FE as DevTaskFormPage / api/rdcDev.ts
+    participant MW as chi 中间件链
+    participant H as handler/rdc.DevHandler.Create
+    participant S as service/rdc.DevService.Create
+    participant RV as repository/rdc.RequirementValidator
+    participant R as repository/rdc.DevRepository
+    participant DB as PostgreSQL(team schema)
+    participant A as service/audit.Record
+
+    U->>FE: 选来源需求 + 填任务名，点创建
+    FE->>MW: POST /api/v1/rdc/dev/tasks {title,requirementId}
+    MW->>MW: RequireAuth → InjectScope → RequireTeamMode → RequirePermission(rdc.dev.read)
+    MW->>H: middleware.Wrap 调用 handler
+    H->>H: DecodeJSON 严格 2 字段（未知字段 400）
+    H->>S: Create(ctx, caller, scope, in)
+    S->>S: 校验标题必填≤100；requirementId 非空且 UUID 合法
+    S->>RV: ExistsVisibleByID(requirementId, scope)
+    alt 需求不存在 或 不属于当前公司
+        RV-->>S: false
+        S-->>H: ValidationError 400「来源需求无效」
+        H-->>FE: {code:400,data:null,message:...}
+    else 需求合法
+        RV-->>S: true
+        S->>R: CreateWithSubtasks(ctx, in, caller.UserID, scope.TenantID)
+        R->>DB: BEGIN
+        R->>DB: INSERT rdc_dev_task(requirement_id,title,creator_user_id,tenant_id) RETURNING id
+        R->>DB: INSERT rdc_dev_subtask ×2 (frontend, backend) status='pending'
+        R->>DB: JOIN rdc_requirements/projects/users/people 回读完整任务
+        R->>DB: COMMIT
+        R-->>S: DevTaskDetail（subtasks 各一，overall=pending）
+        S->>S: AggregateDevStatus([pending,pending]) → overall
+        S-->>H: DevTaskDetail
+        H->>A: Record(ctx, caller,'rdc.dev_task.created','rdc_dev_task',taskID,{title,requirementId,reqKey},ip)
+        Note over A,DB: 写 team.audit_logs；失败只记日志不回滚
+        H-->>FE: 201 {code:0,data:DevTaskDetail,message:'ok'}
+        FE->>U: 回列表并提示已创建（可自动开详情抽屉）
+    end
+
+%% 图 2 · 推进 / 跳过 / 编辑（含状态机校验、审计与失败路径）
+sequenceDiagram
+    actor U as 用户(team 模式)
+    participant FE as 详情抽屉 / 编辑页
+    participant H as handler/rdc.DevHandler
+    participant S as service/rdc.DevService
+    participant SM as contract 状态机
+    participant RV as RequirementValidator
+    participant R as repository/rdc.DevRepository
+    participant DB as PostgreSQL(team schema)
+    participant A as service/audit.Record
+
+    rect rgb(239,246,255)
+    Note over U,DB: ① 推进状态（transition）
+    U->>FE: 点「推进状态到 X」
+    FE->>H: POST .../subtasks/{subtaskId}/transition
+    H->>S: Advance(ctx, scope, taskID, subtaskID)
+    S->>R: FindSubtask(ctx, taskID, subtaskID, scope)
+    R-->>S: DevSubtask{status:from}（越界/不存在 → 404）
+    S->>SM: DevNextStatus(from)
+    alt from 非终态且是合法边
+        SM-->>S: to
+        S->>R: UpdateStatusIf(ctx, taskID, subtaskID, from, to, scope)
+        R->>DB: UPDATE ... WHERE id=? AND task_id=? AND status=from AND scope
+        alt 影响 1 行
+            DB-->>R: ok
+            R-->>S: true
+            S-->>H: DevSubtask{status:to}
+            H->>A: Record('rdc.dev_subtask.transitioned',subtaskID,{taskId,kind,from,to})
+            H-->>FE: 200 {code:0,data:DevSubtask}
+            FE->>U: 刷新卡片（整体状态随聚合变化）
+        else 影响 0 行（并发/陈旧 from）
+            DB-->>R: 0
+            S-->>H: ValidationError 400「状态已变化，请刷新后重试」
+            H-->>FE: {code:400,data:null,message:...}
+        end
+    else from 终态 / skipped / 想跳级回退
+        SM-->>S: ok=false
+        S-->>H: ValidationError 400「只能推进到下一状态」
+        H-->>FE: {code:400,data:null,message:...}
+    end
+    end
+
+    rect rgb(255,247,237)
+    Note over U,DB: ② 标 SKIPPED（不可恢复 + 二次确认）
+    U->>FE: 点「标为跳过」→ 二次确认（写清不可恢复）
+    FE->>H: POST .../subtasks/{subtaskId}/skip
+    H->>S: Skip(ctx, scope, taskID, subtaskID)
+    S->>R: FindSubtask(ctx, taskID, subtaskID, scope)
+    S->>SM: CanSkipDevStatus(from)
+    alt from ∈ 序0..6
+        SM-->>S: true
+        S->>R: UpdateStatusIf(..., from, skipped, scope)
+        R->>DB: UPDATE ... SET status='skipped' WHERE status=from
+        S-->>H: DevSubtask{status:skipped}
+        H->>A: Record('rdc.dev_subtask.skipped',subtaskID,{taskId,kind,from,to:'skipped'})
+        H-->>FE: 200
+    else from=completed / skipped
+        SM-->>S: false
+        H-->>FE: 400（终态不可再标跳过；skipped 无恢复路径）
+    end
+    end
+
+    rect rgb(240,253,244)
+    Note over U,DB: ③ 编辑（绝不写状态）
+    U->>FE: 编辑页改任务名/换绑需求/改子任务备注，保存
+    FE->>H: PUT .../tasks/{id} {title,requirementId,subtasks:[{id,note}]}
+    H->>H: DecodeJSON 白名单 title/requirementId/subtasks（含嵌套）status → 400
+    H->>S: Update(ctx, scope, id, in)
+    S->>RV: ExistsVisibleByID(newRequirementId, scope)
+    alt 新需求越界
+        RV-->>S: false → 400「来源需求无效」
+    else 合法
+        S->>R: UpdateTask + UpdateSubtaskNote（SQL 无 status 列）
+        R->>DB: BEGIN → UPDATE → 回读 → COMMIT
+        S-->>H: DevTaskDetail
+        H->>A: Record('rdc.dev_task.updated',taskID,{title,requirementId,reqKey,subtaskIds})
+        H-->>FE: 200
+    end
+    end

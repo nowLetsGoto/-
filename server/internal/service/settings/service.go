@@ -11,16 +11,18 @@ import (
 	"strings"
 
 	"dandelion/server/internal/contract"
+	"dandelion/server/internal/gitreader"
 	settingsrepo "dandelion/server/internal/repository/settings"
 )
 
 // Service 是设置页的唯一业务入口。
 type Service struct {
-	repo *settingsrepo.Repository
+	repo         *settingsrepo.Repository
+	allowedRoots []string
 }
 
-func NewService(repo *settingsrepo.Repository) *Service {
-	return &Service{repo: repo}
+func NewService(repo *settingsrepo.Repository, roots ...string) *Service {
+	return &Service{repo: repo, allowedRoots: append([]string(nil), roots...)}
 }
 
 // settingsTenant 从 scope 解析「这次操作哪家公司的配置」。
@@ -65,6 +67,7 @@ func (s *Service) Get(ctx context.Context, scope contract.Scope) (contract.Setti
 		// 要拿明文只能走轮换（一次性）。
 		APIKeyConfigured: cfg.APIKey != "",
 		AvailableFields:  fieldOptions(),
+		GitRepo:          contract.GitRepoConfig{GitRepoPath: cfg.GitRepoPath, AllowedRoots: append([]string{}, s.allowedRoots...), Configured: cfg.GitRepoPath != ""},
 	}, nil
 }
 
@@ -98,6 +101,41 @@ func (s *Service) UpdateWebhook(ctx context.Context, scope contract.Scope, in co
 		return contract.Settings{}, err
 	}
 	return s.Get(ctx, scope)
+}
+
+// GetGitRepo 读取精确公司行，空配置不回退平台行。
+func (s *Service) GetGitRepo(ctx context.Context, scope contract.Scope) (contract.GitRepoConfig, error) {
+	tenant, err := settingsTenant(scope)
+	if err != nil {
+		return contract.GitRepoConfig{}, err
+	}
+	path, err := s.repo.GitRepoPath(ctx, tenant)
+	if err != nil {
+		return contract.GitRepoConfig{}, err
+	}
+	return contract.GitRepoConfig{GitRepoPath: path, AllowedRoots: append([]string{}, s.allowedRoots...), Configured: path != ""}, nil
+}
+
+// UpdateGitRepo 写入前用读取器同一校验入口限制根目录；空值清除配置。
+func (s *Service) UpdateGitRepo(ctx context.Context, scope contract.Scope, in contract.GitRepoInput) (contract.GitRepoConfig, error) {
+	tenant, err := settingsTenant(scope)
+	if err != nil {
+		return contract.GitRepoConfig{}, err
+	}
+	path := strings.TrimSpace(in.GitRepoPath)
+	if path != "" {
+		path, err = gitreader.ResolveRepoPath(path, s.allowedRoots)
+		if err != nil {
+			return contract.GitRepoConfig{}, &contract.ValidationError{Message: "配置的仓库路径不在允许范围内。"}
+		}
+		if err = gitreader.ValidateGitDir(path, s.allowedRoots); err != nil {
+			return contract.GitRepoConfig{}, &contract.ValidationError{Message: "配置的路径不是允许的 Git 仓库。"}
+		}
+	}
+	if err = s.repo.SaveGitRepoPath(ctx, tenant, path); err != nil {
+		return contract.GitRepoConfig{}, err
+	}
+	return s.GetGitRepo(ctx, scope)
 }
 
 // normalize 把请求值收敛成可入库的配置；校验失败一律返回 ValidationError（映射 400）。

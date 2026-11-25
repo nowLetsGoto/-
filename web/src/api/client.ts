@@ -34,7 +34,12 @@ interface Envelope<T> {
   message: string;
 }
 
-async function request<T>(path: string, init?: RequestInit, binary = false): Promise<T> {
+async function request<T>(
+  path: string,
+  init?: RequestInit,
+  binary = false,
+  timeoutMs: number = REQUEST_TIMEOUT_MS,
+): Promise<T> {
   // 已登录就带上 Bearer；new Headers 兼容 init.headers 的三种写法（对象 / 元组数组 / Headers）。
   const headers = new Headers(init?.headers);
   const session = readSession();
@@ -57,10 +62,13 @@ async function request<T>(path: string, init?: RequestInit, binary = false): Pro
   }
 
   let timedOut = false;
-  const timer = setTimeout(() => {
-    timedOut = true;
-    controller.abort();
-  }, REQUEST_TIMEOUT_MS);
+  const timer = setTimeout(
+    () => {
+      timedOut = true;
+      controller.abort();
+    },
+    timeoutMs > 0 ? timeoutMs : REQUEST_TIMEOUT_MS,
+  );
 
   try {
     let response: Response;
@@ -159,12 +167,25 @@ export function getBlob(path: string): Promise<Blob> {
   return request<Blob>(path, { method: 'GET' }, true);
 }
 
-export function postJSON<T>(path: string, body: unknown): Promise<T> {
-  return request<T>(path, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  });
+/**
+ * postJSON 的 timeoutMs 只给"模型实测"这类长调用使用：后端单次调用最长 120 秒，
+ * 默认 15 秒会误把仍在执行的实测判成超时。普通业务请求保持默认，不传即可。
+ */
+export function postJSON<T>(
+  path: string,
+  body: unknown,
+  timeoutMs: number = REQUEST_TIMEOUT_MS,
+): Promise<T> {
+  return request<T>(
+    path,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    },
+    false,
+    timeoutMs,
+  );
 }
 
 export function putJSON<T>(path: string, body: unknown): Promise<T> {

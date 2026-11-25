@@ -20,6 +20,8 @@ x-constants:
   parseReadLimitMB: 5
   downloadButtonCooldownSeconds: 3
   authTokenTTLSeconds: 43200
+  rdcGitTimeoutSeconds: 5
+  rdcGitMaxCommits: 10
   limits:
     appName: 100
     packageId: 100
@@ -47,6 +49,121 @@ x-rdc-image-exts:
   jpeg: image/jpeg
   webp: image/webp
   gif: image/gif
+
+# 研发子任务状态机唯一事实来源：顺序即进度序，skipped 列末尾且不参与序比较。
+# 后端 contract.DevSubtaskStatuses / DevAdvance 由 contract_test.go 逐项锁死；
+# 前端 utils/format.ts 的标签与下一态映射镜像本表，DDL 不加 CHECK。
+x-rdc-dev-statuses:
+  - pending
+  - ai_running
+  - ai_completed
+  - reviewing
+  - waiting_commit
+  - committed
+  - validated
+  - completed
+  - rejected
+  - skipped
+# 前进链（研发中心手动推进）：仍只含原 8 态的相邻边，rejected 不在前进链上。
+x-rdc-dev-transitions:
+  pending: ai_running
+  ai_running: ai_completed
+  ai_completed: reviewing
+  reviewing: waiting_commit
+  waiting_commit: committed
+  committed: validated
+  validated: completed
+# 人工审核动作边：审核中心触发，与前进链分开声明，各自有专用端点。
+# approve=审核通过(reviewing→waiting_commit)、reject=驳回(reviewing→rejected)、
+# commit=提交确认(waiting_commit→committed)、resubmit=重新研发(rejected→ai_completed)。
+# 后端用 contract.Can* 函数校验；rejected 为阻断态，需研发中心 resubmit 才能回到链路。
+x-rdc-review-actions:
+  approve: {from: reviewing, to: waiting_commit}
+  reject: {from: reviewing, to: rejected}
+  commit: {from: waiting_commit, to: committed}
+  resubmit: {from: rejected, to: ai_completed}
+
+# AI 人工交互层枚举唯一事实来源（后端 contract 镜像 + contract_test 逐项锁死，DDL 不加 CHECK）。
+# 数据源边界 AgentArtifactProvider：Group A 生产注入 unavailableProvider，真实空态、零模拟数据。
+x-rdc-interaction-review-decisions: [pending, accepted, rejected]
+x-rdc-interaction-file-status: [added, modified, deleted, renamed]
+x-rdc-interaction-source: [agent_executor]
+x-rdc-interaction-submit-status: [pending, submitted]
+x-rdc-interaction-question-type: [single, multiple, text]
+x-rdc-interaction-gate-status: [blocked, confirmed]
+x-rdc-interaction-checkpoint-status: [active, rolled_back, partially_rolled_back]
+x-rdc-interaction-risk-level: [low, medium, high]
+x-rdc-interaction-intervention: [exempt, sample, strict]
+x-rdc-interaction-operation-type: [delete_file, config_change, dependency_change, schema_migration, permission_change, api_change, model_change, code_edit, format, comment, doc, add_test, style, add_file, other]
+x-rdc-interaction-evidence-actions: [diff_submitted, plan_confirmed, checkpoint_rolled_back, approval_decided, rollback_blocked]
+# 风险矩阵内置于契约（Q7）：未知 / other 就高不就低归 medium，整体风险取所有 hunk 的最大值。
+x-rdc-interaction-risk-matrix:
+  delete_file: high
+  config_change: high
+  dependency_change: high
+  schema_migration: high
+  permission_change: high
+  api_change: medium
+  model_change: medium
+  code_edit: medium
+  format: low
+  comment: low
+  doc: low
+  add_test: low
+  style: low
+  add_file: low
+  other: medium
+x-rdc-interaction-interventions:
+  low: exempt
+  medium: sample
+  high: strict
+
+# ── 第 5 菜单「AI模型」枚举与边界（后端 contract/ai_model.go 镜像，契约测试逐项锁死）──
+# 只列真实支持的值；新协议接入只改 AIProtocol enum + x-rdc-ai-protocols + 一个 protocol_xxx.go。
+x-rdc-ai-providers: [scnet]
+x-rdc-ai-protocols: [openai, anthropic, openai_responses]
+x-rdc-ai-capabilities: [文本生成, 深度思考, 视觉理解]
+x-rdc-ai-reasoning-efforts: [none, low, high, max]
+x-rdc-ai-context-range: {min: 1024, max: 393216, default: 8192}
+# temperature 上限按协议不同（anthropic 只接 0–1），配置期就该拒，别等调用期被上游 400。
+x-rdc-ai-extra-config:
+  temperature:      {type: number, minimum: 0, maximum: 2, default: 1}
+  topP:             {type: number, minimum: 0, exclusiveMin: true, maximum: 1, default: 1}
+  reasoningEffort:  {type: string, enum: [none, low, high, max], default: high}
+  timeoutMs:        {type: integer, minimum: 1000, maximum: 120000, default: 30000}
+x-rdc-ai-protocol-temperature:
+  openai: {minimum: 0, maximum: 2}
+  anthropic: {minimum: 0, maximum: 1}
+  openai_responses: {minimum: 0, maximum: 2}
+# 7 类：P0 六类 + capability_mismatch（有启用模型但无一条满足声明条件，绝不静默降级）。
+x-rdc-ai-test-categories: [config_missing, auth_failed, parameter_error, rate_limited, network_error, response_error, capability_mismatch]
+# 阈值默认值唯一来源（后端 contract.AIQuotaDefaults 镜像）；默认关闭，升级不改存量行为。
+x-rdc-ai-quota:
+  defaults: {enabled: false, maxCalls: 1000, windowMinutes: 60, action: warn}
+  actions: [warn, reject]
+  maxCallsRange: {min: 1, max: 1000000}
+  windowMinutesRange: {min: 1, max: 10080}
+  # extra_config 扩展口子：未知键原样保留，已知键只有 retentionDays（默认 90，区间 [7,365]）。
+  retentionDaysDefault: 90
+  retentionDaysRange: {min: 7, max: 365}
+x-rdc-ai-usage:
+  groupBy: [model, protocol, scene, day]
+  defaultRangeDays: 7
+# 只做「表单只读提示」展示，不参与任何调用逻辑（端点拼装在各 protocol_xxx.go）。
+x-rdc-ai-protocol-endpoints:
+  openai: {suffix: /chat/completions, auth: 'Authorization: Bearer'}
+  anthropic: {suffix: /messages, auth: 'x-api-key + anthropic-version'}
+  openai_responses: {suffix: /responses, auth: 'Authorization: Bearer'}
+# 可选模板：用户点按钮填入表单，永不自动插库、不含任何 Key 字段。
+x-rdc-ai-template:
+  name: DeepSeek-V4.1-Flash-1017
+  provider: scnet
+  protocol: openai
+  baseUrl: https://api.scnet.cn/api/llm/v1
+  modelId: DeepSeek-V4.1-Flash-1017
+  contextTokens: 8192
+  thinkingEnabled: true
+  capabilities: [文本生成, 深度思考, 视觉理解]
 
 # Webhook 可推送字段的唯一产品定义处：key 固定，value 是设置页展示的中文名。
 # 后端 contract.WebhookFieldLabels 镜像本表，由契约测试逐项比对；前端标签从接口返回，不再抄一份。
@@ -1053,6 +1170,22 @@ paths:
         '500':
           $ref: '#/components/responses/InternalError'
 
+  /settings/git-repo:
+    get:
+      operationId: getGitRepo
+      summary: 读取本公司 Git 仓库配置
+      security: [{bearerAuth: []}]
+      responses:
+        '200': {description: 配置, content: {application/json: {schema: {$ref: '#/components/schemas/GitRepoConfigResponse'}}}}
+    put:
+      operationId: updateGitRepo
+      summary: 保存本公司 Git 仓库路径
+      security: [{bearerAuth: []}]
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/GitRepoInput'}}}}
+      responses:
+        '200': {description: 配置, content: {application/json: {schema: {$ref: '#/components/schemas/GitRepoConfigResponse'}}}}
+        '400': {$ref: '#/components/responses/BadRequest'}
+
   /settings/webhook/test:
     post:
       operationId: testWebhook
@@ -1537,6 +1670,838 @@ paths:
         '500':
           $ref: '#/components/responses/InternalError'
 
+  /rdc/dev/tasks:
+    get:
+      operationId: listDevTasks
+      summary: 研发任务列表（仅团队模式）
+      description: >
+        数据范围由登录身份推导的 scope 决定。reqKey 按关联需求的编号精确匹配；
+        status 按两条子任务聚合出的整体状态筛选（skipped 子任务不参与，两条都跳过视为 completed）。
+        服务端分页（默认 10、上限 200、0 全量）。
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/PageParam'
+        - $ref: '#/components/parameters/PageSizeParam'
+        - name: reqKey
+          in: query
+          required: false
+          description: 关联需求编号，完整编号精确匹配；留空表示不筛
+          schema:
+            type: string
+        - name: status
+          in: query
+          required: false
+          description: 整体状态筛选；八值之一，skipped 不作为整体态
+          schema:
+            $ref: '#/components/schemas/DevSubtaskStatus'
+      responses:
+        '200':
+          description: 研发任务分页列表
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DevTaskListResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    post:
+      operationId: createDevTask
+      summary: 新建研发任务（仅团队模式）
+      description: >
+        任务必须绑定一条本公司需求；创建时在同一事务内自动拆分 frontend / backend
+        两条 pending 子任务。整体状态不落列，由子任务聚合推导。写 created 审计。
+        全程只要求 rdc.dev.read，不新增写权限点。
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DevTaskInput'
+      responses:
+        '201':
+          description: 创建成功（含两条子任务）
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DevTaskDetailResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /rdc/dev/tasks/{id}:
+    get:
+      operationId: getDevTask
+      summary: 研发任务详情（仅团队模式）
+      description: 越界或不存在的任务一律 404，不泄漏存在性。
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: 研发任务 id（UUID）
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: 任务详情（含两条子任务与需求投影）
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DevTaskDetailResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    put:
+      operationId: updateDevTask
+      summary: 编辑研发任务资料（仅团队模式）
+      description: >
+        只改任务名、绑定需求与子任务备注。请求体任意层级出现 status 字段一律 400：
+        编辑绝不写状态，状态只能经 transition / skip 两条专用路径变更。
+        换绑的需求必须存在且属于当前 scope，越界 400。写 updated 审计。
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: 研发任务 id（UUID）
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DevTaskUpdate'
+      responses:
+        '200':
+          description: 编辑后的任务详情
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DevTaskDetailResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    delete:
+      operationId: deleteDevTask
+      summary: 删除研发任务（仅团队模式）
+      description: 任务与两条子任务一并删除（外键级联），不可恢复；写 deleted 审计。
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: 研发任务 id（UUID）
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: 删除成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /rdc/dev/tasks/{id}/subtasks/{subtaskId}/transition:
+    post:
+      operationId: advanceDevSubtask
+      summary: 手动推进子任务到下一状态（仅团队模式）
+      description: >
+        纯平台编排：只按 x-rdc-dev-transitions 前进一态，不接 Agent、不触发任何真实研发动作。
+        终态 / skipped / 跳级 / 回退一律 400；并发点击时条件更新影响 0 行也返回 400，
+        提示刷新后重试。写 transitioned 审计。
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: 研发任务 id（UUID）
+          schema:
+            type: string
+            format: uuid
+        - name: subtaskId
+          in: path
+          required: true
+          description: 子任务 id（UUID）
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: 推进后的子任务
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DevSubtaskResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /rdc/dev/tasks/{id}/subtasks/{subtaskId}/skip:
+    post:
+      operationId: skipDevSubtask
+      summary: 将子任务标记为已跳过（仅团队模式）
+      description: >
+        仅序 0..6 的未完成态可标记；completed / skipped 为终态不可再标。
+        标记后永久不可恢复：没有 unskip 接口、编辑 DTO 也不可达。写 skipped 审计。
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: 研发任务 id（UUID）
+          schema:
+            type: string
+            format: uuid
+        - name: subtaskId
+          in: path
+          required: true
+          description: 子任务 id（UUID）
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: 标记后的子任务
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DevSubtaskResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /rdc/dev/tasks/{id}/subtasks/{subtaskId}/resubmit:
+    post:
+      operationId: resubmitDevSubtask
+      summary: 驳回后重新研发（rejected → ai_completed，仅团队模式）
+      description: >
+        研发中心触发：仅 rejected 态可重新研发，回到 ai_completed 等待再次提交审核。
+        这是 rejected 阻断态回到链路的唯一出口；其它状态一律 400。
+        状态写入复用与手动推进相同的条件更新，审计 from/to 同源。写 transitioned 审计。
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: 研发任务 id（UUID）
+          schema:
+            type: string
+            format: uuid
+        - name: subtaskId
+          in: path
+          required: true
+          description: 子任务 id（UUID）
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: 重新研发后的子任务
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DevSubtaskResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /rdc/reviews/tasks:
+    get:
+      operationId: listReviewTasks
+      summary: 待审研发任务列表（仅团队模式）
+      description: >
+        列出含「待审核(reviewing) / 待提交(waiting_commit) / 已驳回(rejected)」子任务的任务。
+        服务端分页，支持按 reqKey 筛选。数据范围由 scope 决定，仅本公司可见。
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: page
+          in: query
+          schema: {type: integer, default: 1}
+        - name: pageSize
+          in: query
+          schema: {type: integer, default: 10}
+        - name: reqKey
+          in: query
+          description: 需求编号精确筛选
+          schema: {type: string}
+      responses:
+        '200':
+          description: 待审任务分页列表
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReviewTaskListResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /rdc/reviews/tasks/{id}:
+    get:
+      operationId: getReviewTask
+      summary: 审核详情：任务、子任务与审核历史（仅团队模式）
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: 研发任务 id（UUID）
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: 审核详情
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReviewDetailResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /rdc/reviews/tasks/{id}/subtasks/{subtaskId}/approve:
+    post:
+      operationId: approveDevSubtask
+      summary: 审核通过（reviewing → waiting_commit，仅团队模式）
+      description: 仅 reviewing 态可审核通过；写 approve 审核记录与 transitioned 审计。
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+        - name: subtaskId
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+      responses:
+        '200':
+          description: 通过后的子任务
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DevSubtaskResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /rdc/reviews/tasks/{id}/subtasks/{subtaskId}/reject:
+    post:
+      operationId: rejectDevSubtask
+      summary: 审核驳回（reviewing → rejected，仅团队模式）
+      description: >
+        仅 reviewing 态可驳回，驳回原因必填。驳回后子任务进入 rejected 阻断态，
+        需研发中心「重新研发」才能回到链路。写 reject 审核记录与审计。
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+        - name: subtaskId
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReviewRejectInput'
+      responses:
+        '200':
+          description: 驳回后的子任务
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DevSubtaskResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /rdc/reviews/tasks/{id}/subtasks/{subtaskId}/commit:
+    post:
+      operationId: commitDevSubtask
+      summary: 人工提交确认（waiting_commit → committed，仅团队模式）
+      description: >
+        仅 waiting_commit 态可确认提交，commit SHA 必填。纯平台记录，不触发真实 Git 操作。
+        写 commit 审核记录与审计。
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+        - name: subtaskId
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReviewCommitInput'
+      responses:
+        '200':
+          description: 提交确认后的子任务
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DevSubtaskResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /rdc/delivery/records:
+    get:
+      operationId: listDeliveryRecords
+      summary: 按需求列出最新交付快照
+      security: [{bearerAuth: []}]
+      parameters:
+        - {$ref: '#/components/parameters/PageParam'}
+        - {$ref: '#/components/parameters/PageSizeParam'}
+        - {name: keyword, in: query, schema: {type: string}}
+        - {name: acceptanceStatus, in: query, schema: {$ref: '#/components/schemas/AcceptanceStatus'}}
+        - {name: archived, in: query, schema: {type: boolean}}
+      responses:
+        '200': {description: 交付列表, content: {application/json: {schema: {$ref: '#/components/schemas/DeliveryRecordListResponse'}}}}
+  /rdc/delivery/records/{requirementId}:
+    get:
+      operationId: getDeliveryDetail
+      summary: 读取需求交付详情与历史
+      security: [{bearerAuth: []}]
+      parameters: [{name: requirementId, in: path, required: true, schema: {type: string, format: uuid}}]
+      responses:
+        '200': {description: 交付详情, content: {application/json: {schema: {$ref: '#/components/schemas/DeliveryDetailResponse'}}}}
+  /rdc/delivery/records/{requirementId}/git/refresh:
+    post:
+      operationId: refreshDeliveryGit
+      summary: 只读刷新本机 Git 记录
+      security: [{bearerAuth: []}]
+      parameters: [{name: requirementId, in: path, required: true, schema: {type: string, format: uuid}}]
+      responses:
+        '200': {description: 读取结果, content: {application/json: {schema: {$ref: '#/components/schemas/GitSnapshotResponse'}}}}
+  /rdc/delivery/records/{requirementId}/test:
+    post:
+      operationId: registerDeliveryTest
+      summary: 人工登记外部测试报告摘要
+      security: [{bearerAuth: []}]
+      parameters: [{name: requirementId, in: path, required: true, schema: {type: string, format: uuid}}]
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/TestRegisterInput'}}}}
+      responses:
+        '200': {description: 当前快照, content: {application/json: {schema: {$ref: '#/components/schemas/DeliveryRecordResponse'}}}}
+  /rdc/delivery/records/{requirementId}/accept:
+    post:
+      operationId: acceptDelivery
+      summary: 逐条确认当前验收标准
+      security: [{bearerAuth: []}]
+      parameters: [{name: requirementId, in: path, required: true, schema: {type: string, format: uuid}}]
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/DeliveryAcceptInput'}}}}
+      responses:
+        '200': {description: 当前快照, content: {application/json: {schema: {$ref: '#/components/schemas/DeliveryRecordResponse'}}}}
+  /rdc/delivery/records/{requirementId}/archive:
+    post:
+      operationId: archiveDelivery
+      summary: 原子归档需求与交付快照
+      security: [{bearerAuth: []}]
+      parameters: [{name: requirementId, in: path, required: true, schema: {type: string, format: uuid}}]
+      responses:
+        '200': {description: 归档快照, content: {application/json: {schema: {$ref: '#/components/schemas/DeliveryRecordResponse'}}}}
+
+  # ── AI 人机交互层（team 专属，挂 03 人工审核中心，只写证据不改子任务状态）──
+  /rdc/interactions/tasks/{id}/subtasks/{subtaskId}/diff-review:
+    get:
+      operationId: getRDCInteractionDiffReview
+      summary: 读取子任务最新 Diff 审查对象（仅团队模式）
+      description: >
+        产物只来自 AgentArtifactProvider。执行器未就绪时返回真实空态 data:null，
+        不返回任何模拟 diff；只读，不改变研发子任务状态。
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: string, format: uuid}}
+        - {name: subtaskId, in: path, required: true, schema: {type: string, format: uuid}}
+      responses:
+        '200': {description: Diff 审查对象或空态 null, content: {application/json: {schema: {$ref: '#/components/schemas/DiffReviewResponse'}}}}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+
+  /rdc/interactions/tasks/{id}/subtasks/{subtaskId}/diff-review/submit:
+    post:
+      operationId: submitRDCInteractionDiffReview
+      summary: 提交 hunk 三态决策并留痕（仅团队模式）
+      description: >
+        存在 pending hunk 时 400；全非 pending 才写决策 + diff_submitted 审核记录 + 审计。
+        本操作绝不更新 rdc_dev_subtask.status。
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: string, format: uuid}}
+        - {name: subtaskId, in: path, required: true, schema: {type: string, format: uuid}}
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/DiffReviewInput'}}}}
+      responses:
+        '200': {description: 已提交的 Diff 审查对象, content: {application/json: {schema: {$ref: '#/components/schemas/DiffReviewResponse'}}}}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+
+  /rdc/interactions/diff-reviews/{reviewId}/hunks/{hunkId}/decision:
+    put:
+      operationId: setRDCInteractionHunkDecision
+      summary: 单 hunk 三态决策（仅团队模式）
+      description: 只 UPSERT 决策表，不写审核记录；提交审查时统一留一条 diff_submitted 证据。
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: reviewId, in: path, required: true, schema: {type: string, format: uuid}}
+        - {name: hunkId, in: path, required: true, schema: {type: string, maxLength: 128}}
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/HunkDecisionInput'}}}}
+      responses:
+        '200': {description: 更新后的 Diff 审查对象, content: {application/json: {schema: {$ref: '#/components/schemas/DiffReviewResponse'}}}}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+
+  /rdc/interactions/tasks/{id}/subtasks/{subtaskId}/plan-confirmation:
+    get:
+      operationId: getRDCInteractionPlan
+      summary: 读取子任务计划确认对象（仅团队模式）
+      description: 无真实产物时返回真实空态 data:null；只读。
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: string, format: uuid}}
+        - {name: subtaskId, in: path, required: true, schema: {type: string, format: uuid}}
+      responses:
+        '200': {description: 计划确认对象或空态 null, content: {application/json: {schema: {$ref: '#/components/schemas/PlanConfirmationResponse'}}}}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+
+  /rdc/interactions/plan-confirmations/{planId}/confirm:
+    post:
+      operationId: confirmRDCInteractionPlan
+      summary: 确认计划门禁（仅团队模式）
+      description: >
+        必答题已答 + 所有计划任务已确认才放行；写 gate_status/confirmed_by/at + plan_confirmed 证据与审计。
+        只表达意图对齐完成，不推进子任务状态、不触发生成。
+      security: [{bearerAuth: []}]
+      parameters: [{name: planId, in: path, required: true, schema: {type: string, format: uuid}}]
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/PlanConfirmInput'}}}}
+      responses:
+        '200': {description: 已确认的计划对象, content: {application/json: {schema: {$ref: '#/components/schemas/PlanConfirmationResponse'}}}}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+
+  /rdc/interactions/tasks/{id}/subtasks/{subtaskId}/checkpoints:
+    get:
+      operationId: listRDCInteractionCheckpoints
+      summary: 读取子任务检查点时间线（仅团队模式）
+      description: 只读；无真实产物时返回空数组，绝不伪造快照。
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: string, format: uuid}}
+        - {name: subtaskId, in: path, required: true, schema: {type: string, format: uuid}}
+      responses:
+        '200': {description: 检查点时间线, content: {application/json: {schema: {$ref: '#/components/schemas/CheckpointListResponse'}}}}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+
+  /rdc/interactions/checkpoints/{checkpointId}/rollback:
+    post:
+      operationId: rollbackRDCInteractionCheckpoint
+      summary: 检查点回滚（仅团队模式）
+      description: >
+        必须携带服务端 rollback_token；逐文件比对 currentHashes 与 afterHash。
+        任一不匹配 → 409 列出冲突文件 + rollback_blocked 失败审计，绝不强制覆盖；
+        匹配 → 写 checkpoint_rolled_back 证据并更新检查点状态，不回退子任务状态。
+        本版只做证据层，不写真实文件。
+      security: [{bearerAuth: []}]
+      parameters: [{name: checkpointId, in: path, required: true, schema: {type: string, format: uuid}}]
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/RollbackInput'}}}}
+      responses:
+        '200': {description: 已记录的检查点, content: {application/json: {schema: {$ref: '#/components/schemas/CheckpointResponse'}}}}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+
+  /rdc/interactions/tasks/{id}/subtasks/{subtaskId}/approval:
+    get:
+      operationId: getRDCInteractionApproval
+      summary: 读取分级审批徽标（仅团队模式）
+      description: 整体风险取该子任务全部 hunk 风险最大值；低免审 / 中抽查 / 高强审批。
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: string, format: uuid}}
+        - {name: subtaskId, in: path, required: true, schema: {type: string, format: uuid}}
+      responses:
+        '200': {description: 审批徽标, content: {application/json: {schema: {$ref: '#/components/schemas/ApprovalResponse'}}}}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+
+  /rdc/interactions/tasks/{id}/subtasks/{subtaskId}/approval/decide:
+    post:
+      operationId: decideRDCInteractionApproval
+      summary: 记录分级审批决定（仅团队模式）
+      description: 写 approval_decided 证据 + 审计；是业务介入强度证据，不是新权限点、不是状态边。
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: string, format: uuid}}
+        - {name: subtaskId, in: path, required: true, schema: {type: string, format: uuid}}
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/ApprovalDecideInput'}}}}
+      responses:
+        '200': {description: 审批徽标与决定, content: {application/json: {schema: {$ref: '#/components/schemas/ApprovalResponse'}}}}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+
+  # ── 第 5 菜单「AI模型」（team 专属；Key 只显示掩码，无前端可直调的 Chat 路由）──
+  /rdc/models:
+    get:
+      operationId: listAIModels
+      summary: 按公司列出模型配置（仅团队模式）
+      description: 普通账号只看本公司；超管必须带 tenantId，未指定时返回空列表。
+      security: [{bearerAuth: []}]
+      parameters:
+        - {$ref: '#/components/parameters/PageParam'}
+        - {$ref: '#/components/parameters/PageSizeParam'}
+        - {name: enabled, in: query, schema: {type: boolean}}
+        - {name: protocol, in: query, schema: {$ref: '#/components/schemas/AIProtocol'}, description: 按报文协议筛选（三协议并存后用于快速定位同一公司的协议分布）}
+        - {name: tenantId, in: query, schema: {type: string, format: uuid}}
+      responses:
+        '200': {description: 模型列表, content: {application/json: {schema: {$ref: '#/components/schemas/AIModelListResponse'}}}}
+        '403': {$ref: '#/components/responses/Forbidden'}
+    post:
+      operationId: createAIModel
+      summary: 新建模型配置（仅团队模式）
+      description: Key 经 AES-GCM 加密入库，响应只返回末 4 位掩码；tenantId 由服务端从身份推导。
+      security: [{bearerAuth: []}]
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/AIModelInput'}}}}
+      responses:
+        '201': {description: 新建的模型, content: {application/json: {schema: {$ref: '#/components/schemas/AIModelResponse'}}}}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+  # 静态段必须先于 /rdc/models/{id} 声明（chi 静态优先，注册顺序同样如此），否则会被参数段吞掉。
+  /rdc/models/usage:
+    get:
+      operationId: getAIModelUsage
+      summary: 按公司统计模型调用（仅团队模式）
+      description: >
+        半开区间 [start, end)，缺省最近 7 天。平均耗时只算「成功且已出站」，
+        token 只对上报了 usage 的记录求和（未上报返回 null，不是 0）。
+        超管未指定 tenantId 时返回空统计，不做跨公司聚合。
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: start, in: query, schema: {type: string, format: date-time}, description: 区间起点（含），缺省 end-7d}
+        - {name: end, in: query, schema: {type: string, format: date-time}, description: 区间终点（不含），缺省当前整点}
+        - {name: groupBy, in: query, schema: {type: string}, description: 逗号分隔，可组合：model,protocol,scene,day}
+        - {name: includeLocal, in: query, schema: {type: boolean, default: false}, description: 是否含本地拒绝（未出站）记录}
+        - {name: tenantId, in: query, schema: {type: string, format: uuid}}
+      responses:
+        '200': {description: 统计结果, content: {application/json: {schema: {$ref: '#/components/schemas/AIModelUsageResponse'}}}}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+  /rdc/models/quota:
+    get:
+      operationId: getAIModelQuota
+      summary: 读取本公司调用阈值（仅团队模式）
+      description: 每公司一行；无配置行时返回默认值（enabled=false / 1000 / 60 / warn），不返回零值。
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: tenantId, in: query, schema: {type: string, format: uuid}}
+      responses:
+        '200': {description: 阈值配置, content: {application/json: {schema: {$ref: '#/components/schemas/AIQuotaResponse'}}}}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+    put:
+      operationId: updateAIModelQuota
+      summary: 整行覆盖本公司调用阈值（仅团队模式）
+      description: 请求体不接受 tenantId（超管用 ?tenantId=）；写入成功后记一条 rdc.ai_model.quota_updated 审计。
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: tenantId, in: query, schema: {type: string, format: uuid}}
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/AIQuotaInput'}}}}
+      responses:
+        '200': {description: 更新后的阈值, content: {application/json: {schema: {$ref: '#/components/schemas/AIQuotaResponse'}}}}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+  /rdc/models/{id}:
+    get:
+      operationId: getAIModel
+      summary: 读取模型详情（仅团队模式）
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: string, format: uuid}}
+        - {name: tenantId, in: query, schema: {type: string, format: uuid}}
+      responses:
+        '200': {description: 模型详情, content: {application/json: {schema: {$ref: '#/components/schemas/AIModelResponse'}}}}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+    put:
+      operationId: updateAIModel
+      summary: 编辑模型资料（仅团队模式）
+      description: apiKey 留空表示不更新；请求体不接受 tenantId / isDefault / enabled / apiKeyMask。
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: string, format: uuid}}
+        - {name: tenantId, in: query, schema: {type: string, format: uuid}}
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/AIModelInput'}}}}
+      responses:
+        '200': {description: 更新后的模型, content: {application/json: {schema: {$ref: '#/components/schemas/AIModelResponse'}}}}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+    delete:
+      operationId: deleteAIModel
+      summary: 软删模型（enabled=false，仅团队模式）
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: string, format: uuid}}
+        - {name: tenantId, in: query, schema: {type: string, format: uuid}}
+      responses:
+        '200': {description: 软删完成, content: {application/json: {schema: {$ref: '#/components/schemas/AIModelResponse'}}}}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+  /rdc/models/{id}/default:
+    post:
+      operationId: setAIModelDefault
+      summary: 设为本公司默认模型（事务互斥，仅团队模式）
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: string, format: uuid}}
+        - {name: tenantId, in: query, schema: {type: string, format: uuid}}
+      responses:
+        '200': {description: 新的默认模型, content: {application/json: {schema: {$ref: '#/components/schemas/AIModelResponse'}}}}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+  /rdc/models/{id}/status:
+    post:
+      operationId: setAIModelStatus
+      summary: 启用 / 停用模型（仅团队模式）
+      description: 停用默认模型时若本公司另有启用模型，须先指定新默认；禁用行的 isDefault 恒为 false。
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: string, format: uuid}}
+        - {name: tenantId, in: query, schema: {type: string, format: uuid}}
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/AIModelStatusInput'}}}}
+      responses:
+        '200': {description: 更新后的模型, content: {application/json: {schema: {$ref: '#/components/schemas/AIModelResponse'}}}}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+  /rdc/models/{id}/test:
+    post:
+      operationId: testAIModel
+      summary: 用该模型已存 Key 实测一次（仅团队模式）
+      description: 与内部 ModelService.Chat 共用 chatOnce；上游错误按六类返回脱敏结果，不回显 Key 与原报文。
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: string, format: uuid}}
+        - {name: tenantId, in: query, schema: {type: string, format: uuid}}
+      responses:
+        '200': {description: 实测结果（成功与失败均在此表达）, content: {application/json: {schema: {$ref: '#/components/schemas/AIModelTestResultResponse'}}}}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+
   /healthz:
     get:
       operationId: health
@@ -1620,6 +2585,12 @@ components:
         application/json:
           schema:
             $ref: '#/components/schemas/ErrorResponse'
+    Conflict:
+      description: 冲突：检查点回滚哈希不匹配 / rollback_token 无效或已回滚（禁止强制覆盖）
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
     MethodNotAllowed:
       description: 请求方法不支持
       content:
@@ -1682,7 +2653,7 @@ components:
 
     Settings:
       type: object
-      required: [webhook, apiKeyConfigured, availableFields]
+      required: [webhook, apiKeyConfigured, availableFields, gitRepo]
       properties:
         webhook:
           $ref: '#/components/schemas/WebhookConfig'
@@ -1695,6 +2666,8 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/WebhookFieldOption'
+        gitRepo:
+          $ref: '#/components/schemas/GitRepoConfig'
 
     WebhookTestResult:
       type: object
@@ -3168,3 +4141,905 @@ components:
                 pageSize:
                   type: integer
                   description: 每页条数；0 表示不分页（全量）
+
+    # ── 研发中心 · 研发任务编排层 ───────────────────────────────────────────
+    DevSubtaskStatus:
+      type: string
+      description: 子任务状态；十值与顺序的唯一来源是 x-rdc-dev-statuses
+      enum:
+        - pending
+        - ai_running
+        - ai_completed
+        - reviewing
+        - waiting_commit
+        - committed
+        - validated
+        - completed
+        - rejected
+        - skipped
+
+    DevSubtaskKind:
+      type: string
+      description: 子任务类型；一个任务固定 frontend / backend 各一条
+      enum:
+        - frontend
+        - backend
+
+    DevSubtask:
+      type: object
+      description: 研发子任务；status 只能经 transition / skip 变更，编辑接口不可达
+      required: [id, kind, status, note, createdAt, updatedAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        kind:
+          $ref: '#/components/schemas/DevSubtaskKind'
+        status:
+          $ref: '#/components/schemas/DevSubtaskStatus'
+        note:
+          type: string
+          maxLength: 500
+          description: 可编辑的非状态备注
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    DevTask:
+      type: object
+      description: >
+        研发任务列表项；整体状态不落列，由两条子任务聚合推导。
+        reqKey / requirementTitle / projectName / frontendStatus / backendStatus
+        均为 JOIN 投影，不可编辑；tenantId 只参与服务端过滤，不进响应。
+      required: [id, title, requirementId, reqKey, requirementTitle, projectName, overallStatus,
+        frontendStatus, backendStatus, creatorUserId, creatorName, createdAt, updatedAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        title:
+          type: string
+          maxLength: 100
+        requirementId:
+          type: string
+          format: uuid
+          description: 绑定真相（一对多），换绑时须校验在 scope 内可见
+        reqKey:
+          type: string
+          description: 关联需求的编号投影，仅展示与筛选
+        requirementTitle:
+          type: string
+          description: 关联需求的标题投影
+        projectName:
+          type: string
+          description: 需求所属项目名投影；空串表示未归属项目
+        overallStatus:
+          $ref: '#/components/schemas/DevSubtaskStatus'
+          description: 两条子任务聚合出的整体状态；skipped 两条都命中时为 completed
+        frontendStatus:
+          $ref: '#/components/schemas/DevSubtaskStatus'
+        backendStatus:
+          $ref: '#/components/schemas/DevSubtaskStatus'
+        creatorUserId:
+          type: string
+          description: 创建人账号 id（裸文本）
+        creatorName:
+          type: string
+          description: people.name 优先，回落 users.username
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    DevTaskDetail:
+      allOf:
+        - $ref: '#/components/schemas/DevTask'
+        - type: object
+          required: [subtasks]
+          properties:
+            subtasks:
+              type: array
+              description: 恰好两条（frontend / backend），始终非 nil
+              items:
+                $ref: '#/components/schemas/DevSubtask'
+
+    DevTaskInput:
+      type: object
+      description: 新建研发任务的请求体；未知字段一律 400，归属字段由服务端推导
+      additionalProperties: false
+      required: [title, requirementId]
+      properties:
+        title:
+          type: string
+          maxLength: 100
+          description: 必填，1-100 字
+        requirementId:
+          type: string
+          format: uuid
+          description: 必填，来源需求 id，须存在且在当前 scope 内可见
+
+    DevSubtaskNoteUpdate:
+      type: object
+      description: 子任务的非状态属性更新；刻意没有 status 字段，任意层级出现 status 一律 400
+      additionalProperties: false
+      required: [id, note]
+      properties:
+        id:
+          type: string
+          format: uuid
+        note:
+          type: string
+          maxLength: 500
+          description: 备注，≤500 字
+
+    DevTaskUpdate:
+      type: object
+      description: >
+        编辑任务资料的请求体；只允许任务名 / 换绑需求 / 子任务备注，
+        没有 status 字段。状态只能经 transition / skip 变更，SKIPPED 永久不可恢复。
+      additionalProperties: false
+      required: [title, requirementId]
+      properties:
+        title:
+          type: string
+          maxLength: 100
+        requirementId:
+          type: string
+          format: uuid
+          description: 换绑后的需求 id，须存在且在当前 scope 内可见
+        subtasks:
+          type: array
+          description: 可选；只更新出现的子任务备注，绝不写状态
+          items:
+            $ref: '#/components/schemas/DevSubtaskNoteUpdate'
+
+    DevTaskResponse:
+      allOf:
+        - $ref: '#/components/schemas/ApiResponse'
+        - type: object
+          required: [data]
+          properties:
+            data:
+              $ref: '#/components/schemas/DevTask'
+
+    DevTaskDetailResponse:
+      allOf:
+        - $ref: '#/components/schemas/ApiResponse'
+        - type: object
+          required: [data]
+          properties:
+            data:
+              $ref: '#/components/schemas/DevTaskDetail'
+
+    DevTaskListResponse:
+      allOf:
+        - $ref: '#/components/schemas/ApiResponse'
+        - type: object
+          required: [data]
+          properties:
+            data:
+              type: object
+              required: [items, total, page, pageSize]
+              properties:
+                items:
+                  type: array
+                  items:
+                    $ref: '#/components/schemas/DevTask'
+                total:
+                  type: integer
+                  description: 总条数
+                page:
+                  type: integer
+                  description: 当前页，从 1 开始
+                pageSize:
+                  type: integer
+                  description: 每页条数；0 表示不分页（全量）
+
+    DevSubtaskResponse:
+      allOf:
+        - $ref: '#/components/schemas/ApiResponse'
+        - type: object
+          required: [data]
+          properties:
+            data:
+              $ref: '#/components/schemas/DevSubtask'
+
+    # ── 人工审核中心 ──────────────────────────────────────────────
+    ReviewAction:
+      type: string
+      description: >
+        审核动作枚举。前 4 值是既有状态动作（resubmit 由研发中心触发）；
+        后 5 值是 AI 交互证据动作，其中 rollback_blocked 只写审计、不写审核记录；
+        证据动作绝不触发子任务状态流转。
+      enum: [approve, reject, commit, resubmit, diff_submitted, plan_confirmed, checkpoint_rolled_back, approval_decided, rollback_blocked]
+
+    ReviewRejectInput:
+      type: object
+      description: 驳回请求体；原因必填
+      additionalProperties: false
+      required: [reason]
+      properties:
+        reason:
+          type: string
+          minLength: 1
+          maxLength: 500
+          description: 驳回原因，1-500 字，必填
+
+    ReviewCommitInput:
+      type: object
+      description: 提交确认请求体；commit SHA 必填
+      additionalProperties: false
+      required: [commitSha]
+      properties:
+        commitSha:
+          type: string
+          minLength: 1
+          maxLength: 64
+          description: 人工提交的 commit SHA，1-64 字，必填
+
+    ReviewRecord:
+      type: object
+      description: 一次审核动作的事实记录（只追加）
+      required: [id, taskId, subtaskId, action, reason, commitSha, reviewerUserId, detail, createdAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        taskId:
+          type: string
+          format: uuid
+        subtaskId:
+          type: string
+          format: uuid
+        action:
+          $ref: '#/components/schemas/ReviewAction'
+        reason:
+          type: string
+          description: 驳回原因；其它动作为空串
+        commitSha:
+          type: string
+          description: 提交 SHA；其它动作为空串
+        reviewerUserId:
+          type: string
+        detail:
+          type: object
+          additionalProperties: true
+          description: AI 交互证据的结构化 detail；既有审核动作为空对象
+        createdAt:
+          type: string
+          format: date-time
+
+    ReviewTask:
+      type: object
+      description: 待审任务列表项；含处于待审态的子任务信息
+      required: [id, title, reqKey, requirementTitle, projectName, overallStatus, reviewableCount, frontendStatus, backendStatus, createdAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        title:
+          type: string
+        reqKey:
+          type: string
+        requirementTitle:
+          type: string
+        projectName:
+          type: string
+        overallStatus:
+          type: string
+          description: 任务整体状态（含 rejected）
+        reviewableCount:
+          type: integer
+          description: 处于待审/待提交/已驳回的子任务数
+        frontendStatus:
+          type: string
+        backendStatus:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+
+    ReviewTaskListResponse:
+      allOf:
+        - $ref: '#/components/schemas/ApiResponse'
+        - type: object
+          required: [data]
+          properties:
+            data:
+              type: object
+              required: [items, total, page, pageSize]
+              properties:
+                items:
+                  type: array
+                  items:
+                    $ref: '#/components/schemas/ReviewTask'
+                total:
+                  type: integer
+                page:
+                  type: integer
+                pageSize:
+                  type: integer
+
+    ReviewDetail:
+      type: object
+      description: 审核详情：任务、子任务与审核历史
+      required: [task, subtasks, records]
+      properties:
+        task:
+          $ref: '#/components/schemas/ReviewTask'
+        subtasks:
+          type: array
+          items:
+            $ref: '#/components/schemas/DevSubtask'
+        records:
+          type: array
+          description: 该任务全部审核记录，按时间正序
+          items:
+            $ref: '#/components/schemas/ReviewRecord'
+
+    TestResult: {type: string, enum: [not_registered, passed, failed]}
+    AcceptanceStatus: {type: string, enum: [pending, passed, failed]}
+    GitStatus: {type: string, enum: [ok, not_configured, path_forbidden, not_repo, timeout, error]}
+    GitRepoInput:
+      type: object
+      additionalProperties: false
+      required: [gitRepoPath]
+      properties:
+        gitRepoPath: {type: string}
+    GitRepoConfig:
+      type: object
+      required: [gitRepoPath, allowedRoots, configured]
+      properties:
+        gitRepoPath: {type: string}
+        allowedRoots: {type: array, items: {type: string}}
+        configured: {type: boolean}
+    GitRepoConfigResponse:
+      allOf:
+        - {$ref: '#/components/schemas/ApiResponse'}
+        - {type: object, required: [data], properties: {data: {$ref: '#/components/schemas/GitRepoConfig'}}}
+    AcceptanceItemResult:
+      type: object
+      additionalProperties: false
+      required: [index, result]
+      properties:
+        index: {type: integer, minimum: 0}
+        result: {type: string, enum: [passed, failed]}
+    TestRegisterInput:
+      type: object
+      additionalProperties: false
+      required: [result, summary]
+      properties:
+        result: {type: string, enum: [passed, failed]}
+        summary: {type: string, maxLength: 2000}
+        reportRef: {type: string, maxLength: 500}
+    DeliveryAcceptInput:
+      type: object
+      additionalProperties: false
+      required: [result, note, items]
+      properties:
+        result: {type: string, enum: [passed, failed]}
+        note: {type: string, maxLength: 2000}
+        items: {type: array, maxItems: 500, items: {$ref: '#/components/schemas/AcceptanceItemResult'}}
+    DeliveryRecord:
+      type: object
+      required: [id, seq, requirementId, reqKey, requirementTitle, projectName, requirementStatus, testResult, testSummary, testReportRef, testRegisteredBy, testRegisteredAt, acceptanceStatus, acceptanceItems, acceptanceNote, acceptedBy, acceptedAt, archived, archivedBy, archivedAt, creatorName, createdAt]
+      properties:
+        id: {type: string}
+        seq: {type: integer}
+        requirementId: {type: string}
+        reqKey: {type: string}
+        requirementTitle: {type: string}
+        projectName: {type: string}
+        requirementStatus: {type: string}
+        testResult: {$ref: '#/components/schemas/TestResult'}
+        testSummary: {type: string}
+        testReportRef: {type: string}
+        testRegisteredBy: {type: string}
+        testRegisteredAt: {type: string}
+        acceptanceStatus: {$ref: '#/components/schemas/AcceptanceStatus'}
+        acceptanceItems: {type: string}
+        acceptanceNote: {type: string}
+        acceptedBy: {type: string}
+        acceptedAt: {type: string}
+        archived: {type: boolean}
+        archivedBy: {type: string}
+        archivedAt: {type: string}
+        creatorName: {type: string}
+        createdAt: {type: string}
+    DeliveryDetail:
+      type: object
+      required: [requirementId, reqKey, title, description, acceptanceCriteria, requirementStatus, projectName, current, history]
+      properties:
+        requirementId: {type: string}
+        reqKey: {type: string}
+        title: {type: string}
+        description: {type: string}
+        acceptanceCriteria: {type: string}
+        requirementStatus: {type: string}
+        projectName: {type: string}
+        current: {$ref: '#/components/schemas/DeliveryRecord'}
+        history: {type: array, items: {$ref: '#/components/schemas/DeliveryRecord'}}
+    DeliveryCommit:
+      type: object
+      required: [sha, shortSha, author, time, subject]
+      properties:
+        sha: {type: string}
+        shortSha: {type: string}
+        author: {type: string}
+        time: {type: string}
+        subject: {type: string}
+    GitSnapshot:
+      type: object
+      required: [status, message, branch, workspaceClean, changedFileCount, commits, readAt]
+      properties:
+        status: {$ref: '#/components/schemas/GitStatus'}
+        message: {type: string}
+        branch: {type: string}
+        workspaceClean: {type: boolean}
+        changedFileCount: {type: integer}
+        commits: {type: array, items: {$ref: '#/components/schemas/DeliveryCommit'}}
+        readAt: {type: string}
+    DeliveryRecordResponse:
+      allOf:
+        - {$ref: '#/components/schemas/ApiResponse'}
+        - {type: object, required: [data], properties: {data: {$ref: '#/components/schemas/DeliveryRecord'}}}
+    DeliveryDetailResponse:
+      allOf:
+        - {$ref: '#/components/schemas/ApiResponse'}
+        - {type: object, required: [data], properties: {data: {$ref: '#/components/schemas/DeliveryDetail'}}}
+    GitSnapshotResponse:
+      allOf:
+        - {$ref: '#/components/schemas/ApiResponse'}
+        - {type: object, required: [data], properties: {data: {$ref: '#/components/schemas/GitSnapshot'}}}
+    DeliveryRecordListResponse:
+      allOf:
+        - {$ref: '#/components/schemas/ApiResponse'}
+        - type: object
+          required: [data]
+          properties:
+            data:
+              type: object
+              required: [items, total, page, pageSize]
+              properties:
+                items: {type: array, items: {$ref: '#/components/schemas/DeliveryRecord'}}
+                total: {type: integer}
+                page: {type: integer}
+                pageSize: {type: integer}
+
+    ReviewDetailResponse:
+      allOf:
+        - $ref: '#/components/schemas/ApiResponse'
+        - type: object
+          required: [data]
+          properties:
+            data:
+              $ref: '#/components/schemas/ReviewDetail'
+
+    # ── AI 人机交互层 · 枚举 ──────────────────────────────────────
+    ReviewDecision: {type: string, enum: [pending, accepted, rejected]}
+    InteractionFileStatus: {type: string, enum: [added, modified, deleted, renamed]}
+    InteractionSource: {type: string, enum: [agent_executor]}
+    SubmitStatus: {type: string, enum: [pending, submitted]}
+    QuestionType: {type: string, enum: [single, multiple, text]}
+    GateStatus: {type: string, enum: [blocked, confirmed]}
+    CheckpointStatus: {type: string, enum: [active, rolled_back, partially_rolled_back]}
+    RiskLevel: {type: string, enum: [low, medium, high]}
+    Intervention: {type: string, enum: [exempt, sample, strict]}
+    OperationType: {type: string, enum: [delete_file, config_change, dependency_change, schema_migration, permission_change, api_change, model_change, code_edit, format, comment, doc, add_test, style, add_file, other]}
+    RollbackScope: {type: string, enum: [hunk, file, checkpoint]}
+    ApprovalDecision: {type: string, enum: [approve, reject]}
+
+    # ── AI 人机交互层 · 产物结构（来自 AgentArtifactProvider，不可变快照）──
+    Hunk:
+      type: object
+      description: 单个 diff 块；oldStart/newStart 均 1-based，上下文为独立字段仅中栏展示
+      required: [hunkId, oldStart, oldLines, newStart, newLines, oldContent, newContent, contextBefore, contextAfter, riskLabel]
+      properties:
+        hunkId: {type: string, maxLength: 128}
+        oldStart: {type: integer, minimum: 1}
+        oldLines: {type: integer, minimum: 0}
+        newStart: {type: integer, minimum: 1}
+        newLines: {type: integer, minimum: 0}
+        oldContent: {type: array, items: {type: string}}
+        newContent: {type: array, items: {type: string}}
+        contextBefore: {type: array, items: {type: string}}
+        contextAfter: {type: array, items: {type: string}}
+        riskLabel: {$ref: '#/components/schemas/OperationType'}
+    FileDiff:
+      type: object
+      required: [filePath, fileStatus, oldPath, hunks]
+      properties:
+        filePath: {type: string, maxLength: 500, description: 仓库相对路径，已脱敏}
+        fileStatus: {$ref: '#/components/schemas/InteractionFileStatus'}
+        oldPath: {type: string, maxLength: 500, description: 仅 renamed 时有值}
+        hunks: {type: array, maxItems: 2000, items: {$ref: '#/components/schemas/Hunk'}}
+    HunkDecision:
+      type: object
+      required: [reviewId, hunkId, decision, decidedBy, decidedAt]
+      properties:
+        reviewId: {type: string, format: uuid}
+        hunkId: {type: string, maxLength: 128}
+        decision: {$ref: '#/components/schemas/ReviewDecision'}
+        decidedBy: {type: string}
+        decidedAt: {type: string}
+    HunkDecisionInput:
+      type: object
+      additionalProperties: false
+      required: [decision]
+      properties:
+        decision: {$ref: '#/components/schemas/ReviewDecision'}
+
+    # ── Diff 审查 ────────────────────────────────────────────────
+    DiffReview:
+      type: object
+      required: [id, taskId, subtaskId, checkpointId, source, submitStatus, files, decisions, createdAt]
+      properties:
+        id: {type: string, format: uuid}
+        taskId: {type: string, format: uuid}
+        subtaskId: {type: string, format: uuid}
+        checkpointId: {type: string}
+        source: {$ref: '#/components/schemas/InteractionSource'}
+        submitStatus: {$ref: '#/components/schemas/SubmitStatus'}
+        files: {type: array, items: {$ref: '#/components/schemas/FileDiff'}}
+        decisions: {type: array, items: {$ref: '#/components/schemas/HunkDecision'}}
+        createdAt: {type: string, format: date-time}
+    DiffReviewInput:
+      type: object
+      additionalProperties: false
+      required: [decisions]
+      properties:
+        decisions: {type: array, items: {$ref: '#/components/schemas/HunkDecision'}}
+    DiffReviewResponse:
+      allOf:
+        - {$ref: '#/components/schemas/ApiResponse'}
+        - type: object
+          properties:
+            data:
+              anyOf:
+                - {$ref: '#/components/schemas/DiffReview'}
+                - {type: 'null'}
+
+    # ── 计划确认 ────────────────────────────────────────────────
+    QuestionOption:
+      type: object
+      additionalProperties: false
+      required: [optionId, label]
+      properties:
+        optionId: {type: string}
+        label: {type: string}
+    Question:
+      type: object
+      additionalProperties: false
+      required: [questionId, prompt, type, required, options]
+      properties:
+        questionId: {type: string}
+        prompt: {type: string}
+        type: {$ref: '#/components/schemas/QuestionType'}
+        required: {type: boolean}
+        options: {type: array, items: {$ref: '#/components/schemas/QuestionOption'}}
+        answer: {}
+    PlanTask:
+      type: object
+      additionalProperties: false
+      required: [stepId, title, description, confirmed, estimatedRisk]
+      properties:
+        stepId: {type: string}
+        title: {type: string}
+        description: {type: string}
+        confirmed: {type: boolean}
+        estimatedRisk: {$ref: '#/components/schemas/RiskLevel'}
+    PlanConfirmation:
+      type: object
+      required: [id, taskId, subtaskId, questionnaire, planTasks, gateStatus, confirmedBy, confirmedAt]
+      properties:
+        id: {type: string, format: uuid}
+        taskId: {type: string, format: uuid}
+        subtaskId: {type: string, format: uuid}
+        questionnaire: {type: array, items: {$ref: '#/components/schemas/Question'}}
+        planTasks: {type: array, items: {$ref: '#/components/schemas/PlanTask'}}
+        gateStatus: {$ref: '#/components/schemas/GateStatus'}
+        confirmedBy: {type: string}
+        confirmedAt: {type: string}
+    PlanConfirmInput:
+      type: object
+      additionalProperties: false
+      required: [answers, stepIds]
+      properties:
+        answers: {type: array, items: {$ref: '#/components/schemas/Question'}}
+        stepIds: {type: array, items: {type: string}}
+    PlanConfirmationResponse:
+      allOf:
+        - {$ref: '#/components/schemas/ApiResponse'}
+        - type: object
+          properties:
+            data:
+              anyOf:
+                - {$ref: '#/components/schemas/PlanConfirmation'}
+                - {type: 'null'}
+
+    # ── 检查点回滚 ──────────────────────────────────────────────
+    FileSnapshot:
+      type: object
+      required: [filePath, fileStatus, beforeContent, afterContent, beforeHash, afterHash]
+      properties:
+        filePath: {type: string, maxLength: 500}
+        fileStatus: {$ref: '#/components/schemas/InteractionFileStatus'}
+        beforeContent: {type: string}
+        afterContent: {type: string}
+        beforeHash: {type: string, maxLength: 128}
+        afterHash: {type: string, maxLength: 128}
+    Checkpoint:
+      type: object
+      required: [id, taskId, subtaskId, aiAction, files, rollbackToken, status, createdBy, createdAt]
+      properties:
+        id: {type: string, format: uuid}
+        taskId: {type: string, format: uuid}
+        subtaskId: {type: string, format: uuid}
+        aiAction: {type: string, maxLength: 200}
+        files: {type: array, items: {$ref: '#/components/schemas/FileSnapshot'}}
+        rollbackToken: {type: string}
+        status: {$ref: '#/components/schemas/CheckpointStatus'}
+        createdBy: {type: string}
+        createdAt: {type: string, format: date-time}
+    RollbackTarget:
+      type: object
+      additionalProperties: false
+      required: [filePath, hunkId]
+      properties:
+        filePath: {type: string, maxLength: 500}
+        hunkId: {type: string, maxLength: 128}
+    RollbackInput:
+      type: object
+      additionalProperties: false
+      required: [rollbackToken, scope, targets, currentHashes]
+      properties:
+        rollbackToken: {type: string}
+        scope: {$ref: '#/components/schemas/RollbackScope'}
+        targets: {type: array, items: {$ref: '#/components/schemas/RollbackTarget'}}
+        currentHashes: {type: object, additionalProperties: {type: string}}
+    CheckpointResponse:
+      allOf:
+        - {$ref: '#/components/schemas/ApiResponse'}
+        - type: object
+          properties:
+            data:
+              anyOf:
+                - {$ref: '#/components/schemas/Checkpoint'}
+                - {type: 'null'}
+    CheckpointListResponse:
+      allOf:
+        - {$ref: '#/components/schemas/ApiResponse'}
+        - type: object
+          properties:
+            data: {type: array, items: {$ref: '#/components/schemas/Checkpoint'}}
+
+    # ── 分级审批 ────────────────────────────────────────────────
+    ApprovalView:
+      type: object
+      required: [overallRisk, intervention, decided, decision]
+      properties:
+        overallRisk: {$ref: '#/components/schemas/RiskLevel'}
+        intervention: {$ref: '#/components/schemas/Intervention'}
+        decided: {type: boolean}
+        decision: {$ref: '#/components/schemas/ApprovalDecision'}
+    ApprovalDecideInput:
+      type: object
+      additionalProperties: false
+      required: [checkpointId, decision]
+      properties:
+        checkpointId: {type: string, format: uuid}
+        decision: {$ref: '#/components/schemas/ApprovalDecision'}
+    ApprovalResponse:
+      allOf:
+        - {$ref: '#/components/schemas/ApiResponse'}
+        - type: object
+          properties:
+            data:
+              anyOf:
+                - {$ref: '#/components/schemas/ApprovalView'}
+                - {type: 'null'}
+
+    # ── 第 5 菜单「AI模型」：响应 schema 刻意没有完整 Key 字段 ──────────────
+    AIProvider:
+      type: string
+      enum: [scnet]
+    AIProtocol:
+      type: string
+      description: 三种上游报文协议；差异只收在各 protocol_xxx.go 的 build/parse 两处。
+      enum: [openai, anthropic, openai_responses]
+    AIReasoningEffort:
+      type: string
+      enum: [none, low, high, max]
+    AICapability:
+      type: string
+      enum: [文本生成, 深度思考, 视觉理解]
+    AITestCategory:
+      type: string
+      description: 七类错误分类；ok 仅用于成功结果（不是错误类别）。
+      enum: [ok, config_missing, auth_failed, parameter_error, rate_limited, network_error, response_error, capability_mismatch]
+    AIExtraConfig:
+      type: object
+      description: 首版四个具体字段；写入时未知键 400，读取时忽略未知键并补默认值。
+      additionalProperties: false
+      properties:
+        temperature: {type: number, minimum: 0, maximum: 2, default: 1}
+        topP: {type: number, exclusiveMinimum: true, minimum: 0, maximum: 1, default: 1}
+        reasoningEffort: {$ref: '#/components/schemas/AIReasoningEffort'}
+        timeoutMs: {type: integer, minimum: 1000, maximum: 120000, default: 30000}
+    AIModel:
+      type: object
+      description: 模型配置投影；apiKeyMask 是唯一可回显的 Key 相关信息。
+      additionalProperties: false
+      required: [id, name, provider, protocol, baseUrl, modelId, apiKeyMask, isDefault, thinkingEnabled, contextTokens, extraConfig, capabilities, enabled, createdAt, updatedAt]
+      properties:
+        id: {type: string, format: uuid}
+        name: {type: string, maxLength: 100}
+        provider: {$ref: '#/components/schemas/AIProvider'}
+        protocol: {$ref: '#/components/schemas/AIProtocol'}
+        baseUrl: {type: string, maxLength: 500}
+        modelId: {type: string, maxLength: 100}
+        apiKeyMask: {type: string, description: 仅末 4 位掩码，例如 sk-****wxyz}
+        isDefault: {type: boolean}
+        thinkingEnabled: {type: boolean}
+        contextTokens: {type: integer, minimum: 1024, maximum: 393216}
+        extraConfig: {$ref: '#/components/schemas/AIExtraConfig'}
+        capabilities: {type: array, maxItems: 16, items: {$ref: '#/components/schemas/AICapability'}}
+        enabled: {type: boolean}
+        createdAt: {type: string, format: date-time}
+        updatedAt: {type: string, format: date-time}
+    AIModelInput:
+      type: object
+      description: 新建 / 编辑请求体；apiKey 留空=不更新；无 tenantId / isDefault / enabled / apiKeyMask。
+      additionalProperties: false
+      required: [name, provider, protocol, baseUrl, modelId, thinkingEnabled, contextTokens, extraConfig, capabilities]
+      properties:
+        name: {type: string, maxLength: 100}
+        provider: {$ref: '#/components/schemas/AIProvider'}
+        protocol: {$ref: '#/components/schemas/AIProtocol'}
+        baseUrl: {type: string, maxLength: 500}
+        modelId: {type: string, maxLength: 100}
+        apiKey: {type: string, description: 明文仅入站；留空表示不更新}
+        thinkingEnabled: {type: boolean}
+        contextTokens: {type: integer, minimum: 1024, maximum: 393216, default: 8192}
+        extraConfig: {$ref: '#/components/schemas/AIExtraConfig'}
+        capabilities: {type: array, maxItems: 16, items: {$ref: '#/components/schemas/AICapability'}}
+    AIModelStatusInput:
+      type: object
+      additionalProperties: false
+      required: [enabled]
+      properties:
+        enabled: {type: boolean}
+    AIModelTestResult:
+      type: object
+      description: 实测结果摘要；请求 / 响应预览均经 Redact，无 Key、密文与上游原文。
+      additionalProperties: false
+      required: [ok, category, message, statusCode, latencyMs, modelId, usedFallback, requestSummary, responsePreview, promptTokens, completionTokens]
+      properties:
+        ok: {type: boolean}
+        category: {$ref: '#/components/schemas/AITestCategory'}
+        message: {type: string}
+        statusCode: {type: integer}
+        latencyMs: {type: integer, format: int64}
+        modelId: {type: string}
+        usedFallback: {type: boolean}
+        requestSummary: {type: string}
+        responsePreview: {type: string}
+        promptTokens: {type: integer}
+        completionTokens: {type: integer}
+    AIModelResponse:
+      allOf:
+        - {$ref: '#/components/schemas/ApiResponse'}
+        - type: object
+          properties:
+            data: {$ref: '#/components/schemas/AIModel'}
+    AIModelListResponse:
+      allOf:
+        - {$ref: '#/components/schemas/ApiResponse'}
+        - type: object
+          properties:
+            data:
+              type: object
+              required: [items, total, page, pageSize]
+              properties:
+                items: {type: array, items: {$ref: '#/components/schemas/AIModel'}}
+                total: {type: integer}
+                page: {type: integer}
+                pageSize: {type: integer}
+    AIModelTestResultResponse:
+      allOf:
+        - {$ref: '#/components/schemas/ApiResponse'}
+        - type: object
+          properties:
+            data: {$ref: '#/components/schemas/AIModelTestResult'}
+
+    # ── 第 5 菜单 P1：统计与软限流 ─────────────────────────────────────────
+    AIQuotaAction:
+      type: string
+      description: 超阈值时的动作：warn 只告警照常调用，reject 拒绝且上游零请求。
+      enum: [warn, reject]
+    AIQuotaConfig:
+      type: object
+      description: 阈值读取投影；无配置行时补默认值，不返回零值。
+      additionalProperties: false
+      required: [enabled, maxCalls, windowMinutes, action, updatedAt]
+      properties:
+        enabled: {type: boolean, default: false}
+        maxCalls: {type: integer, minimum: 1, maximum: 1000000, default: 1000}
+        windowMinutes: {type: integer, minimum: 1, maximum: 10080, default: 60}
+        action: {$ref: '#/components/schemas/AIQuotaAction'}
+        updatedAt:
+          type: string
+          description: 从未配置过时为空串（表示"用的默认值"，不是"刚刚更新"）
+    AIQuotaInput:
+      type: object
+      description: 整行覆盖请求体；无 tenantId（超管用 ?tenantId=）。
+      additionalProperties: false
+      required: [enabled, maxCalls, windowMinutes, action]
+      properties:
+        enabled: {type: boolean}
+        maxCalls: {type: integer, minimum: 1, maximum: 1000000}
+        windowMinutes: {type: integer, minimum: 1, maximum: 10080}
+        action: {$ref: '#/components/schemas/AIQuotaAction'}
+    AIQuotaResponse:
+      allOf:
+        - {$ref: '#/components/schemas/ApiResponse'}
+        - type: object
+          properties:
+            data: {$ref: '#/components/schemas/AIQuotaConfig'}
+    AIModelCallGroup:
+      type: object
+      description: 分组明细；维度由请求的 groupBy 决定，未选中的维度为空串。
+      additionalProperties: false
+      required: [modelId, modelName, protocol, scene, day, totalCalls, successCalls, failedCalls, promptTokens, completionTokens, avgSuccessLatencyMs]
+      properties:
+        modelId: {type: string}
+        modelName: {type: string}
+        protocol: {type: string}
+        scene: {type: string}
+        day: {type: string, description: 分组维度含 day 时为 YYYY-MM-DD，否则空串}
+        totalCalls: {type: integer}
+        successCalls: {type: integer}
+        failedCalls: {type: integer}
+        promptTokens: {type: integer, format: int64, description: 缺数据为 null（不是 0）}
+        completionTokens: {type: integer, format: int64}
+        avgSuccessLatencyMs: {type: integer, format: int64, description: 仅成功且已出站；无数据为 null}
+    AIModelCallStats:
+      type: object
+      description: 统计总量 + 分组明细；口径见设计 §4.4（平均耗时只算成功且已出站）。
+      additionalProperties: false
+      required: [totalCalls, successCalls, failedCalls, localRejected, promptTokens, completionTokens, tokensUnreported, avgSuccessLatencyMs, failureCategories, groups, quota, quotaState]
+      properties:
+        totalCalls: {type: integer}
+        successCalls: {type: integer}
+        failedCalls: {type: integer}
+        localRejected: {type: integer, description: 未出站条数；默认口径已排除，includeLocal=true 时单列}
+        promptTokens: {type: integer, format: int64, description: null 表示没有任何上报 usage 的记录}
+        completionTokens: {type: integer, format: int64}
+        tokensUnreported: {type: integer, description: tokens_reported=false 的条数}
+        avgSuccessLatencyMs: {type: integer, format: int64}
+        failureCategories:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [category, count]
+            properties:
+              category: {$ref: '#/components/schemas/AITestCategory'}
+              count: {type: integer}
+        groups: {type: array, items: {$ref: '#/components/schemas/AIModelCallGroup'}}
+        quota: {$ref: '#/components/schemas/AIQuotaConfig'}
+        quotaState:
+          type: string
+          description: ok 未超阈值；exceeded 已达上限（warn 模式下前端提示条）
+          enum: [ok, exceeded]
+    AIModelUsageResponse:
+      allOf:
+        - {$ref: '#/components/schemas/ApiResponse'}
+        - type: object
+          properties:
+            data: {$ref: '#/components/schemas/AIModelCallStats'}

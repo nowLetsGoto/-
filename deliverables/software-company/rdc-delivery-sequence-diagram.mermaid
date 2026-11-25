@@ -1,0 +1,143 @@
+%% 交付中心两张关键时序图：Git 刷新（含安全校验点与失败路径）、归档联动需求状态（含事务边界）
+%% 图一：Git 刷新（只读，不写库、不写审计）
+sequenceDiagram
+    actor U as 用户(team 模式)
+    participant FE as DeliveryDetailDrawer / api/rdcDelivery.ts
+    participant MW as chi 中间件链
+    participant H as handler.DeliveryHandler.RefreshGit
+    participant S as service.DeliveryService.RefreshGit
+    participant SR as repository/settings(取公司仓库路径)
+    participant RV as repository/rdc.RequirementValidator
+    participant GR as gitreader.Reader(安全核心)
+    participant PR as gitreader.PathResolver / CommandWhitelist / Sanitizer
+
+    U->>FE: 打开详情(自动读一次) 或 点「刷新 Git 记录」
+    FE->>MW: POST /api/v1/rdc/delivery/records/{requirementId}/git/refresh
+    MW->>MW: RequireAuth → InjectScope → RequireTeamMode → RequirePermission(rdc.delivery.read)
+    alt 中间件任一失败
+        MW-->>FE: 403 / 401（统一外壳 data=null）
+    else 通过守卫
+        MW->>H: middleware.Wrap 调用 handler
+        H->>S: RefreshGit(ctx, requirementID, scope)
+        S->>RV: RequirementVisible(requirementID, scope)
+        alt 需求不存在 / 跨公司
+            RV-->>S: false
+            S-->>H: NotFound → 404（不回显路径）
+            H-->>FE: {code:404,data:null,message:...}
+        else 需求可见
+            RV-->>S: true
+            S->>SR: GitRepoPath(ctx, scope.TenantID)
+            SR-->>S: configuredPath（空串=未配置）
+            alt 未配置路径
+                S-->>H: GitSnapshot{status:not_configured,message:"尚未配置 Git 仓库路径，请联系管理员。"}
+                Note over S,H: 不写库、不写审计；前端据此隐藏刷新按钮
+                H-->>FE: 200 {code:0,data:GitSnapshot(not_configured)}
+            else 已配置
+                S->>GR: Read(ctx, configuredPath)
+                Note over GR,PR: 安全校验点 ① 路径白名单（唯一入口）
+                GR->>PR: ResolveRepoPath(configured, allowedRoots)
+                PR->>PR: 非空 → IsAbs → filepath.Clean → EvalSymlinks(解析软链)
+                PR->>PR: 逐根 filepath.Rel 判定前缀边界（拒 ../ 越界 / 软链逃逸 / 白名单外）
+                alt 越界 / 非绝对 / 逃逸 / 不存在
+                    PR-->>GR: GitError{status:path_forbidden,message:"配置的仓库路径不在允许范围内。"}
+                    GR-->>S: GitSnapshot(path_forbidden)
+                    Note over GR: 服务端仅记错误类别，绝不记录原始路径/输出
+                else 路径合法（得到规范化 abs）
+                    PR-->>GR: absPath
+                    Note over GR,PR: 安全校验点 ② 命令白名单（固定参数，无 shell 字符串）
+                GR->>PR: Args(包内私有 op, absPath) — op ∈ {rev-parse, log, status, branch}
+                PR-->>GR: 固定 argv（git -C absPath …；客户端不能传 op/argv/path）
+                Note over GR,PR: 隔离 Git 环境/配置，禁 pager/提示/外网，stdin 关闭；拒绝根外 gitdir
+                Note over GR,PR: 安全校验点 ③ CommandContext + 超时 + stdout/stderr 独立字节上限
+                    GR->>GR: 依次执行 rev-parse / log(-n 10) / status --porcelain / branch --show-current
+                    alt 非 git 仓库（rev-parse 失败）
+                        GR-->>S: GitSnapshot{status:not_repo,message:"配置的路径不是有效的 Git 仓库。"}
+                    else 超时
+                        GR->>GR: context 取消 → 子进程被终止
+                        GR-->>S: GitSnapshot{status:timeout,message:"读取 Git 记录超时，请稍后重试。"}
+                    else 其它命令失败
+                        GR-->>S: GitSnapshot{status:error,message:"读取 Git 记录失败，请稍后重试。"}
+                        Note over GR: stderr 不回显、不记日志原文（防凭据泄漏）
+                    else 成功
+                        Note over GR,PR: 安全校验点 ④ 输出脱敏（唯一入口，逐字段）
+                        GR->>PR: Sanitize(author/message/branch 所有自由文本)
+                        PR-->>GR: 全部脱敏；status 仅保留 clean/dirty+changedCount，不返回文件名
+                        GR-->>S: GitSnapshot{status:ok,sanitizedBranch,workspaceClean,changedFileCount,commits[],readAt}
+                    end
+                end
+            end
+            S-->>H: GitSnapshot（含 status + 友好文案）
+            H-->>FE: 200 {code:0,data:GitSnapshot,message:'ok'}
+            FE->>U: 按 status 渲染提交列表/工作区状态；失败态显示文案并允许重试
+        end
+    end
+    Note over H,FE: 全过程只读：不写 rdc_delivery_record、不写 team.audit_logs
+
+%% 图二：归档联动需求状态（单一事务，失败回滚）
+sequenceDiagram
+    actor U as 用户(team 模式)
+    participant FE as DeliveryDetailDrawer / api/rdcDelivery.ts
+    participant MW as chi 中间件链
+    participant H as handler.DeliveryHandler.Archive
+    participant S as service.DeliveryService.Archive
+    participant RV as repository/rdc.RequirementValidator
+    participant R as repository/rdc.DeliveryRepository
+    participant DB as PostgreSQL(team schema)
+    participant A as service/audit.Record
+
+    U->>FE: 点「归档需求」→ 二次确认（写清：联动标记已归档，本版不可撤销）
+    FE->>MW: POST /api/v1/rdc/delivery/records/{requirementId}/archive
+    MW->>MW: RequireAuth → InjectScope → RequireTeamMode → RequirePermission(rdc.delivery.read)
+    MW->>H: middleware.Wrap 调用 handler（无请求体，归属全从 ctx 取）
+    H->>S: Archive(ctx, requirementID, scope, actor)
+    S->>R: RequirementVisible(requirementID, scope)
+    alt 需求不存在 / 跨公司
+        R-->>S: false → 404
+        S-->>H: NotFound
+        H-->>FE: {code:404,data:null,message:...}
+    else 需求可见
+        rect rgb(255,251,235)
+        Note over R,DB: 事务边界 BEGIN…COMMIT/ROLLBACK；测试/验收/归档共用需求行锁
+        S->>R: WithLockedRequirement(ctx,scope,requirementID,fn)
+        R->>DB: BEGIN → SELECT 需求行 WHERE id+scope FOR UPDATE
+        R-->>S: 锁内 status / acceptance_criteria（越界/不存在→404）
+        S->>R: tx.FindCurrent(requirementID) ORDER BY seq DESC LIMIT 1
+        R-->>S: 锁内最新 DeliveryRecord
+        Note over S: 锁内按当前标准拆条复核全部 passed；需求非 archived；不强制研发/审核
+        alt 已归档 / 空标准 / 最新验收非 passed / 缺失或 failed 条目
+            S-->>R: ValidationError 400
+            R->>DB: ROLLBACK
+            S-->>H: 400「状态已变化或验收未通过」
+            H-->>FE: {code:400,data:null,message:...}
+        else 前置全部通过
+            S->>S: 锁内组装归档快照（复制最新 test/acceptance + archived=true/by/at）
+            S->>R: tx.Append(archiveSnapshot)
+            R->>DB: INSERT INTO team.rdc_delivery_record(...) RETURNING id,seq,created_at
+            R->>DB: UPDATE team.rdc_requirements SET status='archived'<br/>WHERE id=$1 AND tenant 条件 AND status<>'archived'
+            alt UPDATE 影响 0 行（并发已归档 / 需求消失）
+                DB-->>R: 0 rows
+                R->>DB: ROLLBACK
+                R-->>S: ValidationError 400「状态已变化，请刷新后重试」
+            else UPDATE 影响 1 行 且 INSERT 成功
+                DB-->>R: ok
+                R->>DB: COMMIT
+                R-->>S: DeliveryRecord（archived=true，含新 seq）
+            else INSERT / COMMIT 失败
+                DB-->>R: error
+                R->>DB: ROLLBACK（需求状态不被改成 archived）
+                R-->>S: 500 服务内部错误
+            end
+            end
+            alt 事务失败
+                S-->>H: error（400/500）
+                H-->>FE: {code:400/500,data:null,message:...}
+                Note over S,DB: 无新交付记录、需求状态不变；本路径不写审计
+            else 事务成功
+                S-->>H: DeliveryRecord（最新一条即当前状态）
+                H->>A: Record(ctx, actor,'rdc.delivery.archived',<br/>'rdc_delivery_record', requirementID, {recordId,seq}, ip)
+                Note over A,DB: 审计写 team.audit_logs；失败只记日志，绝不回滚归档事务
+                H-->>FE: 200 {code:0,data:DeliveryRecord,message:'ok'}
+                FE->>U: 详情刷新为「已归档」终态；隐藏归档/验收/测试入口（不可撤销）
+            end
+        end
+    end

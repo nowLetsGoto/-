@@ -98,11 +98,14 @@ make build          # 前端产物 → server/public/，再 CGO_ENABLED=0 go bui
 | `PORT` | `8080` | Go 监听端口 |
 | `HOST` | `0.0.0.0` | Go 监听地址 |
 | `STORAGE_DIR` | `./storage` | 运行时数据根，相对进程工作目录（make 系列命令在仓库根运行） |
+| `RDC_GIT_ROOTS` | 空 | 交付中心 Git 读取允许根（绝对路径，逗号分隔；空值禁用）。运维配置，不能在页面修改；容器须将仓库根以只读卷挂载并填写容器内路径。公司管理员仅在平台集成页配置本公司根目录内的具体仓库，不回退到别家公司或平台行。 |
+| `RDC_GIT_TIMEOUT_SECONDS` | `5` | 单条只读 Git 命令超时秒数，最大 30；超限启动失败。 |
 | `MAX_UPLOAD_MB` | `200` | 单包上限，不得超过契约的 200 MB |
 | `GO_ENV` | `development` | `development` 放宽不可达基址；其它值按生产严格校验、非法即 fail-fast |
 | `ADMIN_USERNAME` | `admin` | 唯一管理员账号，不落库 |
 | `ADMIN_PASSWORD` | `admin123456` | 管理员口令；**生产必须改** |
 | `AUTH_SECRET` | `dandelion-dev-only-secret-change-me` | 登录令牌的 HMAC 密钥；生产沿用默认值会 fail-fast（`openssl rand -hex 32`） |
+| `RDC_MODEL_ENCRYPTION_KEY` | 无（必填） | AI 模型 Key 的 AES-256 主密钥，必须是 base64 编码的 32 字节（`openssl rand -base64 32`）；缺失或非法时服务启动即失败。丢失将无法解密存量 Key，需在 AI 模型页重新录入；请与 `AUTH_SECRET` 分别生成，绝不写入代码 / 文档 / 日志。 |
 | `VITE_API_BASE` | 空 | 前端 API 基址，留空表示同源 / 走代理 |
 
 ### `PUBLIC_BASE_URL` 三场景

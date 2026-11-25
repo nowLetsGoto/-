@@ -3,7 +3,9 @@
 // 职责：构造 {code,data,message}；把 AppError / 404 / 未知错误统一成中文可读响应；失败清理 tmp 残留。
 // 输入：ResponseWriter、Request、业务数据或 error。
 // 输出：JSON 响应（成功 code=0，失败 code=HTTP 状态码且 data=null）。
-// 边界：错误码只有 400/401/404/405/413/500；handler 层零 try/catch；不写 SQL、不拼磁盘路径。
+// 边界：错误码只有 400/401/404/405/409/413/500（409 仅用于交互层内容冲突）；
+//
+//	handler 层零 try/catch；不写 SQL、不拼磁盘路径。
 package handler
 
 import (
@@ -30,6 +32,8 @@ func (e *AppError) Error() string { return e.Message }
 
 func BadRequest(message string) error { return &AppError{Status: 400, Code: 400, Message: message} }
 func NotFound(message string) error   { return &AppError{Status: 404, Code: 404, Message: message} }
+// Conflict 是内容冲突（如回滚哈希不匹配）的 409；只提示冲突，不提供强制覆盖。
+func Conflict(message string) error { return &AppError{Status: 409, Code: 409, Message: message} }
 func MethodNotAllowed(message string) error {
 	return &AppError{Status: 405, Code: 405, Message: message}
 }

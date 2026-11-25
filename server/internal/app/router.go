@@ -56,8 +56,19 @@ type Deps struct {
 	Tenants  *tenanthandler.Handler
 	Settings *settingshandler.Handler
 	// RDC 是研发中心需求池的入口，只在 team 专区注册（solo 会话被中间件挡在门外）。
-	RDC    *rdchandler.Handler
-	Verify loginmw.Verifier
+	RDC *rdchandler.Handler
+	// RDCDev 是研发任务编排层入口，与需求池共用 team 专区但操作路径独立。
+	RDCDev *rdchandler.DevHandler
+	// RDCReview 是人工审核中心入口，只在 team 专区注册。
+	RDCReview *rdchandler.ReviewHandler
+	// RDCInteraction 是 AI 人机交互层入口，挂在 03 人工审核中心的团队专区组内。
+	RDCInteraction *rdchandler.InteractionHandler
+	RDCDelivery    *rdchandler.DeliveryHandler
+	// RDCModel 是第 5 菜单「AI模型」入口：读 2 操作挂 read，写 6 操作挂 write。
+	RDCModel *rdchandler.AIModelHandler
+	// RDCModelUsage 是同一菜单下的统计与软限流阈值入口（读挂 read、阈值写挂 write）。
+	RDCModelUsage *rdchandler.AIModelUsageHandler
+	Verify        loginmw.Verifier
 	// APIKey 每次请求查一次库反查归属公司（空串=平台兜底 Key），改配置无需重启。
 	APIKey   apikey.KeyResolver
 	Health   *handler.HealthHandler
@@ -88,7 +99,41 @@ var allowedMethods = map[string]string{
 	contract.RouteRDCRequirements:     "GET, POST",
 	contract.RouteRDCRequirementByKey: "GET",
 	// 需求图片访问是受保护的只读接口，走与需求详情相同的读权限点。
-	contract.RouteRDCRequirementAttachment: "GET",
+	contract.RouteRDCRequirementAttachment:   "GET",
+	contract.RouteRDCDevTasks:                "GET, POST",
+	contract.RouteRDCDevTaskByID:             "GET, PUT, DELETE",
+	contract.RouteRDCDevSubtaskTransition:    "POST",
+	contract.RouteRDCDevSubtaskSkip:          "POST",
+	contract.RouteRDCDevSubtaskResubmit:      "POST",
+	contract.RouteRDCReviewTasks:             "GET",
+	contract.RouteRDCReviewTaskByID:          "GET",
+	contract.RouteRDCReviewApprove:           "POST",
+	contract.RouteRDCReviewReject:            "POST",
+	contract.RouteRDCReviewCommit:            "POST",
+	contract.RouteRDCInteractionDiffReview:   "GET",
+	contract.RouteRDCInteractionDiffSubmit:   "POST",
+	contract.RouteRDCInteractionHunkDecision: "PUT",
+	contract.RouteRDCInteractionPlanGet:      "GET",
+	contract.RouteRDCInteractionPlanConfirm:  "POST",
+	contract.RouteRDCInteractionCheckpoints:  "GET",
+	contract.RouteRDCInteractionRollback:     "POST",
+	contract.RouteRDCInteractionApprovalGet:  "GET",
+	contract.RouteRDCInteractionApprovalDec:  "POST",
+	contract.RouteRDCDeliveryRecords:         "GET",
+	contract.RouteRDCDeliveryByReq:           "GET",
+	contract.RouteRDCDeliveryGitRefresh:      "POST",
+	contract.RouteRDCDeliveryTest:            "POST",
+	contract.RouteRDCDeliveryAccept:          "POST",
+	contract.RouteRDCDeliveryArchive:         "POST",
+	contract.RouteSettingsGitRepo:            "GET, PUT",
+	contract.RouteRDCModels:                  "GET, POST",
+	// usage / quota 是静态段，必须与 {id} 的规则分开登记，否则 405 回填会给出错误的方法集。
+	contract.RouteRDCModelUsage:   "GET",
+	contract.RouteRDCModelQuota:   "GET, PUT",
+	contract.RouteRDCModelByID:    "GET, PUT, DELETE",
+	contract.RouteRDCModelDefault: "POST",
+	contract.RouteRDCModelStatus:  "POST",
+	contract.RouteRDCModelTest:    "POST",
 }
 
 // allowedMethodsFor 返回该请求应回填的 Allow 值。
@@ -119,6 +164,15 @@ func allowedMethodsFor(req *http.Request) string {
 		return "GET, PUT"
 	case strings.HasPrefix(path, contract.RouteTeams+"/"), strings.HasPrefix(path, contract.RouteRoles+"/"):
 		return "GET, PUT"
+	case path == contract.RouteSettingsGitRepo:
+		return "GET, PUT"
+	case path == contract.RouteRDCDeliveryRecords:
+		return "GET"
+	case strings.HasPrefix(path, contract.RouteRDCDeliveryRecords+"/"):
+		if strings.HasSuffix(path, "/refresh") || strings.HasSuffix(path, "/test") || strings.HasSuffix(path, "/accept") || strings.HasSuffix(path, "/archive") {
+			return "POST"
+		}
+		return "GET"
 	case path == contract.RouteSettings:
 		return "GET, PUT"
 	case path == contract.RouteBuilds:
@@ -132,6 +186,48 @@ func allowedMethodsFor(req *http.Request) string {
 	case strings.HasPrefix(path, contract.RouteRDCRequirements+"/"):
 		// /rdc/requirements/{reqKey} 只支持 GET；带斜杠的子路径一律按详情处理。
 		return "GET"
+	case path == contract.RouteRDCDevTasks:
+		return "GET, POST"
+	case strings.HasPrefix(path, strings.TrimSuffix(contract.RouteRDCDevTaskByID, "{id}")):
+		// 子路径优先：transition / skip / resubmit 只收 POST，其余（任务本体）收 GET/PUT/DELETE。
+		if strings.HasSuffix(path, "/transition") || strings.HasSuffix(path, "/skip") ||
+			strings.HasSuffix(path, "/resubmit") {
+			return "POST"
+		}
+		return "GET, PUT, DELETE"
+	case strings.HasPrefix(path, contract.RouteRDCReviewTasks):
+		// 审核中心：列表/详情收 GET；approve / reject / commit 收 POST。
+		if strings.HasSuffix(path, "/approve") || strings.HasSuffix(path, "/reject") ||
+			strings.HasSuffix(path, "/commit") {
+			return "POST"
+		}
+		return "GET"
+	case strings.HasPrefix(path, contract.APIPrefix+"/rdc/interactions/"):
+		// 子路径优先：/submit、/confirm、/rollback 收 POST，/decision 收 PUT，
+		// 其余（diff-review / plan-confirmation / checkpoints / approval）收 GET。
+		switch {
+		case strings.HasSuffix(path, "/submit"), strings.HasSuffix(path, "/confirm"),
+			strings.HasSuffix(path, "/rollback"), strings.HasSuffix(path, "/approval/decide"):
+			return "POST"
+		case strings.HasSuffix(path, "/decision"):
+			return "PUT"
+		default:
+			return "GET"
+		}
+	// usage / quota 必须排在 RouteRDCModels+"/" 分支之前：它们是静态段，
+	// 若落到下面那条会被当成 {id} 而回填 "GET, PUT, DELETE"，405 的 Allow 头就错了。
+	case path == contract.RouteRDCModelUsage:
+		return "GET"
+	case path == contract.RouteRDCModelQuota:
+		return "GET, PUT"
+	case strings.HasPrefix(path, contract.RouteRDCModels+"/"):
+		// 子路径优先：default / status / test 只收 POST，模型本体收 GET/PUT/DELETE。
+		if strings.HasSuffix(path, "/default") || strings.HasSuffix(path, "/status") || strings.HasSuffix(path, "/test") {
+			return "POST"
+		}
+		return "GET, PUT, DELETE"
+	case path == contract.RouteRDCModels:
+		return "GET, POST"
 	case strings.HasPrefix(path, contract.RouteBuilds+"/"):
 		return "GET"
 	default:
@@ -268,6 +364,8 @@ func NewRouter(d Deps) http.Handler {
 				Post("/settings/webhook/test", middleware.Wrap(d.Settings.Test))
 			settings.With(authzmw.RequirePermission(d.Authz, contract.PermissionSettingsWrite)).
 				Post("/settings/api-key/rotate", middleware.Wrap(d.Settings.RotateAPIKey))
+			settings.With(authzmw.RequirePermission(d.Authz, contract.PermissionSettingsRead)).Get("/settings/git-repo", middleware.Wrap(d.Settings.GetGitRepo))
+			settings.With(authzmw.RequirePermission(d.Authz, contract.PermissionSettingsWrite)).Put("/settings/git-repo", middleware.Wrap(d.Settings.UpdateGitRepo))
 		})
 
 		// 角色管理：三个权限点分别守读、写、删。
@@ -309,6 +407,101 @@ func NewRouter(d Deps) http.Handler {
 				Get("/rdc/requirement-attachments/{id}", middleware.Wrap(d.RDC.Attachment))
 			rdc.With(authzmw.RequirePermission(d.Authz, contract.PermissionRDCRequirementWrite)).
 				Post("/rdc/requirements", middleware.Wrap(d.RDC.Create))
+		})
+
+		// 研发任务编排层（仅 team）：7 个操作全部挂 rdc.dev.read——本版有意不新增写点。
+		// RequireTeamMode 是真边界；scope 由 InjectScope 写入上下文，仓储逐条过滤。
+		api.Group(func(dev chi.Router) {
+			dev.Use(loginmw.RequireAuth(d.Verify))
+			dev.Use(loginmw.InjectScope(d.Authz))
+			dev.Use(authzmw.RequireTeamMode)
+			dev.Use(authzmw.RequirePermission(d.Authz, contract.PermissionRDCDevRead))
+
+			dev.Get("/rdc/dev/tasks", middleware.Wrap(d.RDCDev.List))
+			dev.Post("/rdc/dev/tasks", middleware.Wrap(d.RDCDev.Create))
+			dev.Get("/rdc/dev/tasks/{id}", middleware.Wrap(d.RDCDev.Get))
+			dev.Put("/rdc/dev/tasks/{id}", middleware.Wrap(d.RDCDev.Update))
+			dev.Delete("/rdc/dev/tasks/{id}", middleware.Wrap(d.RDCDev.Delete))
+			dev.Post("/rdc/dev/tasks/{id}/subtasks/{subtaskId}/transition", middleware.Wrap(d.RDCDev.Advance))
+			dev.Post("/rdc/dev/tasks/{id}/subtasks/{subtaskId}/skip", middleware.Wrap(d.RDCDev.Skip))
+			dev.Post("/rdc/dev/tasks/{id}/subtasks/{subtaskId}/resubmit", middleware.Wrap(d.RDCDev.Resubmit))
+		})
+
+		// 人工审核中心（仅 team）：5 个操作全部挂 rdc.review.read——与研发中心一致，本版不新增写点。
+		api.Group(func(review chi.Router) {
+			review.Use(loginmw.RequireAuth(d.Verify))
+			review.Use(loginmw.InjectScope(d.Authz))
+			review.Use(authzmw.RequireTeamMode)
+			review.Use(authzmw.RequirePermission(d.Authz, contract.PermissionRDCReviewRead))
+
+			review.Get("/rdc/reviews/tasks", middleware.Wrap(d.RDCReview.List))
+			review.Get("/rdc/reviews/tasks/{id}", middleware.Wrap(d.RDCReview.Get))
+			review.Post("/rdc/reviews/tasks/{id}/subtasks/{subtaskId}/approve", middleware.Wrap(d.RDCReview.Approve))
+			review.Post("/rdc/reviews/tasks/{id}/subtasks/{subtaskId}/reject", middleware.Wrap(d.RDCReview.Reject))
+			review.Post("/rdc/reviews/tasks/{id}/subtasks/{subtaskId}/commit", middleware.Wrap(d.RDCReview.Commit))
+		})
+
+		// AI 人机交互层（仅 team）：9 条独立前缀挂既有 rdc.review.read 组，本版不新增写点。
+		// 所有写操作只写决策 / 证据 / 门禁 / 检查点状态；子任务状态仍只由 DevService 写。
+		api.Group(func(interaction chi.Router) {
+			interaction.Use(loginmw.RequireAuth(d.Verify))
+			interaction.Use(loginmw.InjectScope(d.Authz))
+			interaction.Use(authzmw.RequireTeamMode)
+			interaction.Use(authzmw.RequirePermission(d.Authz, contract.PermissionRDCReviewRead))
+
+			interaction.Get("/rdc/interactions/tasks/{id}/subtasks/{subtaskId}/diff-review", middleware.Wrap(d.RDCInteraction.GetDiffReview))
+			interaction.Post("/rdc/interactions/tasks/{id}/subtasks/{subtaskId}/diff-review/submit", middleware.Wrap(d.RDCInteraction.SubmitDiffReview))
+			interaction.Put("/rdc/interactions/diff-reviews/{reviewId}/hunks/{hunkId}/decision", middleware.Wrap(d.RDCInteraction.SetHunkDecision))
+			interaction.Get("/rdc/interactions/tasks/{id}/subtasks/{subtaskId}/plan-confirmation", middleware.Wrap(d.RDCInteraction.GetPlan))
+			interaction.Post("/rdc/interactions/plan-confirmations/{planId}/confirm", middleware.Wrap(d.RDCInteraction.ConfirmPlan))
+			interaction.Get("/rdc/interactions/tasks/{id}/subtasks/{subtaskId}/checkpoints", middleware.Wrap(d.RDCInteraction.ListCheckpoints))
+			interaction.Post("/rdc/interactions/checkpoints/{checkpointId}/rollback", middleware.Wrap(d.RDCInteraction.Rollback))
+			interaction.Get("/rdc/interactions/tasks/{id}/subtasks/{subtaskId}/approval", middleware.Wrap(d.RDCInteraction.GetApproval))
+			interaction.Post("/rdc/interactions/tasks/{id}/subtasks/{subtaskId}/approval/decide", middleware.Wrap(d.RDCInteraction.DecideApproval))
+		})
+		api.Group(func(delivery chi.Router) {
+			delivery.Use(loginmw.RequireAuth(d.Verify))
+			delivery.Use(loginmw.InjectScope(d.Authz))
+			delivery.Use(authzmw.RequireTeamMode)
+			delivery.Use(authzmw.RequirePermission(d.Authz, contract.PermissionRDCDeliveryRead))
+			delivery.Get("/rdc/delivery/records", middleware.Wrap(d.RDCDelivery.List))
+			delivery.Get("/rdc/delivery/records/{requirementId}", middleware.Wrap(d.RDCDelivery.Detail))
+			delivery.Post("/rdc/delivery/records/{requirementId}/git/refresh", middleware.Wrap(d.RDCDelivery.RefreshGit))
+			delivery.Post("/rdc/delivery/records/{requirementId}/test", middleware.Wrap(d.RDCDelivery.RegisterTest))
+			delivery.Post("/rdc/delivery/records/{requirementId}/accept", middleware.Wrap(d.RDCDelivery.Accept))
+			delivery.Post("/rdc/delivery/records/{requirementId}/archive", middleware.Wrap(d.RDCDelivery.Archive))
+		})
+
+		// 第 5 菜单「AI模型」（仅 team）：读写点分离，Key 只进加密存储；
+		// 超管代配的 tenantId 是查询参数，由 service 投影 scope，路由层不信任它。
+		api.Group(func(models chi.Router) {
+			models.Use(loginmw.RequireAuth(d.Verify))
+			models.Use(loginmw.InjectScope(d.Authz))
+			models.Use(authzmw.RequireTeamMode)
+
+			models.With(authzmw.RequirePermission(d.Authz, contract.PermissionRDCModelRead)).
+				Get("/rdc/models", middleware.Wrap(d.RDCModel.List))
+			// 静态段先注册：chi 静态段优先于参数段，但显式写在 {id} 之前能防止后人调序出错。
+			models.With(authzmw.RequirePermission(d.Authz, contract.PermissionRDCModelRead)).
+				Get("/rdc/models/usage", middleware.Wrap(d.RDCModelUsage.GetUsage))
+			models.With(authzmw.RequirePermission(d.Authz, contract.PermissionRDCModelRead)).
+				Get("/rdc/models/quota", middleware.Wrap(d.RDCModelUsage.GetQuota))
+			models.With(authzmw.RequirePermission(d.Authz, contract.PermissionRDCModelWrite)).
+				Put("/rdc/models/quota", middleware.Wrap(d.RDCModelUsage.UpdateQuota))
+			models.With(authzmw.RequirePermission(d.Authz, contract.PermissionRDCModelRead)).
+				Get("/rdc/models/{id}", middleware.Wrap(d.RDCModel.Get))
+			models.With(authzmw.RequirePermission(d.Authz, contract.PermissionRDCModelWrite)).
+				Post("/rdc/models", middleware.Wrap(d.RDCModel.Create))
+			models.With(authzmw.RequirePermission(d.Authz, contract.PermissionRDCModelWrite)).
+				Put("/rdc/models/{id}", middleware.Wrap(d.RDCModel.Update))
+			models.With(authzmw.RequirePermission(d.Authz, contract.PermissionRDCModelWrite)).
+				Post("/rdc/models/{id}/default", middleware.Wrap(d.RDCModel.SetDefault))
+			models.With(authzmw.RequirePermission(d.Authz, contract.PermissionRDCModelWrite)).
+				Post("/rdc/models/{id}/status", middleware.Wrap(d.RDCModel.SetEnabled))
+			models.With(authzmw.RequirePermission(d.Authz, contract.PermissionRDCModelWrite)).
+				Delete("/rdc/models/{id}", middleware.Wrap(d.RDCModel.Delete))
+			models.With(authzmw.RequirePermission(d.Authz, contract.PermissionRDCModelWrite)).
+				Post("/rdc/models/{id}/test", middleware.Wrap(d.RDCModel.Test))
 		})
 	})
 	r.Get(contract.RouteHealth, middleware.Wrap(d.Health.Health))

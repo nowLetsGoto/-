@@ -3596,3 +3596,816 @@ code {
     color: #fff;
   }
 }
+
+/* ── AI研发中心 · 研发任务编排层 ───────────────────────────────────────── */
+.rdc-dev-status-pending,
+.rdc-dev-status-ai_running {
+  color: #475569;
+  background: #f1f5f9;
+}
+
+.rdc-dev-status-ai_completed,
+.rdc-dev-status-reviewing {
+  color: #0369a1;
+  background: #e0f2fe;
+}
+
+.rdc-dev-status-waiting_commit,
+.rdc-dev-status-committed {
+  color: #a16207;
+  background: #fef3c7;
+}
+
+.rdc-dev-status-validated,
+.rdc-dev-status-completed {
+  color: #15803d;
+  background: #dcfce7;
+}
+
+.rdc-dev-status-skipped {
+  color: #64748b;
+  background: #e2e8f0;
+  text-decoration: line-through;
+}
+
+/* 驳回是阻断态，用琥珀色警示，与完成/在途色区分。 */
+.rdc-dev-status-rejected {
+  color: #b45309;
+  background: #fef3c7;
+}
+
+.rdc-dev-detail {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-md);
+}
+
+.rdc-dev-meta {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--spacing-sm) var(--spacing-md);
+  padding: var(--spacing-md);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-2);
+
+  p {
+    margin: 2px 0 0;
+  }
+}
+
+.rdc-dev-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--spacing-sm);
+}
+
+.button-danger {
+  color: #b45309;
+}
+
+.rdc-dev-hint {
+  margin: 0;
+}
+
+.rdc-dev-subtask-grid,
+.rdc-placeholder-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: var(--spacing-md);
+}
+
+.rdc-dev-subtask-card,
+.rdc-placeholder-card {
+  padding: var(--spacing-md);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+}
+
+.rdc-dev-subtask-card header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--spacing-sm);
+  margin-bottom: var(--spacing-xs);
+}
+
+.rdc-dev-note {
+  margin: var(--spacing-sm) 0;
+  color: var(--color-text-2);
+  word-break: break-word;
+}
+
+.rdc-dev-subtask-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--spacing-sm);
+}
+
+.rdc-dev-placeholders {
+  margin-top: var(--spacing-lg);
+  padding-top: var(--spacing-md);
+  border-top: 1px solid var(--color-border);
+
+  h3 {
+    margin: 0 0 var(--spacing-xs);
+  }
+}
+
+.rdc-placeholder-name {
+  margin-bottom: var(--spacing-xs);
+  font-weight: 600;
+}
+
+.rdc-placeholder-card p {
+  margin: 0 0 var(--spacing-sm);
+  color: var(--color-text-2);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.rdc-placeholder-tag {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 999px;
+  color: #0369a1;
+  background: #e0f2fe;
+  font-size: 12px;
+}
+
+@media (max-width: 720px) {
+  .rdc-dev-meta {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* ── 人工审核中心 ──────────────────────────────────────────────── */
+.rdc-review-page {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-md);
+}
+
+/* 任务名为详情入口，沿用主色文字，不加下划线。 */
+.button-link {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--color-primary, #0369a1);
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+}
+
+.button-link:hover {
+  color: var(--color-primary-strong, #0369a1);
+  text-decoration: underline;
+}
+
+.rdc-review-detail {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-lg);
+}
+
+.rdc-review-task-meta p {
+  margin: 0 0 4px;
+}
+
+.rdc-review-detail .rdc-inline-error {
+  margin: 0;
+  color: #b91c1c;
+  font-size: 13px;
+}
+
+.rdc-review-history,
+.rdc-review-placeholder {
+  border-top: 1px solid var(--color-border);
+  padding-top: var(--spacing-md);
+}
+
+.rdc-review-history h4,
+.rdc-review-placeholder h4 {
+  margin: 0 0 var(--spacing-sm);
+  font-size: 14px;
+}
+
+.rdc-review-history ul {
+  margin: 0;
+  padding-left: 20px;
+  line-height: 1.9;
+  font-size: 13px;
+}
+
+.rdc-review-history li {
+  color: var(--color-text-secondary);
+}
+
+/* 交付中心：证据分段、长文本与移动端约束。 */
+.rdc-delivery-page .rdc-filter-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+}
+
+.rdc-delivery-page .rdc-filter-row form {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.rdc-delivery-detail {
+  display: grid;
+  gap: 20px;
+  min-width: 0;
+}
+
+.rdc-delivery-section {
+  border-top: 1px solid var(--color-border);
+  padding-top: 18px;
+  min-width: 0;
+}
+
+.rdc-delivery-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.rdc-evidence-form {
+  display: grid;
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.rdc-evidence-text {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.rdc-git-commits,
+.rdc-history,
+.rdc-acceptance-items {
+  display: grid;
+  gap: 10px;
+  padding-left: 24px;
+}
+
+.rdc-git-commits li,
+.rdc-history li {
+  overflow-wrap: anywhere;
+}
+
+.rdc-git-commits small {
+  display: block;
+  color: var(--color-text-secondary);
+}
+
+.rdc-acceptance-items li {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.rdc-history li {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.rdc-delivery-passed {
+  color: #166534;
+}
+.rdc-delivery-failed {
+  color: #b45309;
+}
+
+@media (max-width: 640px) {
+  .rdc-delivery-page .rdc-filter-row form {
+    width: 100%;
+  }
+  .rdc-delivery-page .rdc-filter-row form input {
+    min-width: 0;
+    flex: 1;
+  }
+}
+
+/* ---------- AI 人机交互层：审核详情抽屉内的四类面板 ---------- */
+.rdc-interaction-block {
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid var(--color-border-soft);
+
+  > h4 {
+    margin: 0 0 10px;
+    font-size: 14px;
+    color: var(--color-text);
+  }
+}
+
+.rdc-approval-badges {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.rdc-risk-low,
+.rdc-intervention-exempt {
+  background: var(--color-success-bg);
+  color: var(--color-success);
+}
+
+.rdc-risk-medium,
+.rdc-intervention-sample {
+  background: var(--color-warn-bg);
+  color: var(--color-warn);
+}
+
+.rdc-risk-high,
+.rdc-intervention-strict {
+  background: #fdecec;
+  color: #b91c1c;
+}
+
+.rdc-approval-actions,
+.rdc-diff-hunk-actions {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.rdc-plan-question,
+.rdc-plan-task {
+  margin-bottom: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: var(--color-surface-2);
+}
+
+.rdc-plan-question p,
+.rdc-plan-task p {
+  margin: 0 0 6px;
+}
+
+.rdc-plan-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.rdc-required,
+.rdc-inline-error {
+  color: var(--color-warn);
+}
+
+.rdc-plan-footer,
+.rdc-diff-submit-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.rdc-checkpoint-list {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+
+  li {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 10px;
+    padding: 10px 12px;
+    border: 1px solid var(--color-border);
+    border-radius: 8px;
+  }
+}
+
+.rdc-hash-field {
+  display: grid;
+  gap: 4px;
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--color-muted);
+}
+
+.rdc-diff-grid {
+  display: grid;
+  grid-template-columns: minmax(160px, 1fr) minmax(260px, 1.4fr) minmax(260px, 1.4fr);
+  gap: 12px;
+  align-items: start;
+
+  > * {
+    min-width: 0;
+    padding: 10px;
+    border: 1px solid var(--color-border);
+    border-radius: 8px;
+    background: var(--color-surface-2);
+  }
+
+  h5 {
+    margin: 0 0 8px;
+    font-size: 12px;
+    color: var(--color-muted);
+  }
+}
+
+.rdc-diff-hunks {
+  display: grid;
+  gap: 10px;
+  max-height: 420px;
+  overflow: auto;
+}
+
+.rdc-diff-hunk {
+  padding: 8px;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  background: var(--color-surface);
+
+  header {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-bottom: 6px;
+  }
+}
+
+.rdc-diff-old,
+.rdc-diff-new,
+.rdc-diff-context,
+.rdc-diff-preview pre {
+  margin: 2px 0;
+  padding: 6px 8px;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 12px;
+  line-height: 1.5;
+  border-radius: 4px;
+}
+
+.rdc-diff-old {
+  background: #fdecec;
+  color: #9f1239;
+}
+
+.rdc-diff-new {
+  background: var(--color-success-bg);
+  color: var(--color-success);
+}
+
+.rdc-diff-context {
+  background: var(--color-surface-3);
+  color: var(--color-muted);
+}
+
+.rdc-diff-preview pre {
+  max-height: 420px;
+  background: var(--color-surface);
+  color: var(--color-text);
+}
+
+@media (max-width: 900px) {
+  .rdc-diff-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* ── 研发中心 · AI模型：列表 / 掩码 / 表单 / 实测卡片 ───────────────── */
+.rdc-model-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+.rdc-model-tenant {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  color: var(--color-muted);
+}
+
+.rdc-model-tenant .app-select {
+  min-width: 220px;
+}
+
+.rdc-model-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.rdc-model-actions .button-link {
+  padding: 2px 4px;
+}
+
+.rdc-model-mask {
+  color: var(--color-primary, #0369a1);
+  background: var(--color-surface-2);
+  border-radius: 4px;
+  padding: 2px 6px;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.rdc-model-default {
+  color: var(--color-primary, #0369a1);
+  background: var(--color-info-bg);
+}
+
+.rdc-model-on {
+  color: #166534;
+  background: var(--color-success-bg);
+}
+.rdc-model-off {
+  color: var(--color-muted);
+  background: var(--color-surface-2);
+}
+
+.rdc-model-detail {
+  display: grid;
+  grid-template-columns: 110px 1fr;
+  gap: 10px 14px;
+  margin: 0;
+  font-size: 13px;
+}
+
+.rdc-model-detail dt {
+  color: var(--color-muted);
+}
+.rdc-model-detail dd {
+  margin: 0;
+  word-break: break-all;
+}
+
+.rdc-model-json {
+  max-height: 200px;
+  overflow: auto;
+  margin: 0;
+  padding: 8px;
+  background: var(--color-surface-2);
+  border-radius: 4px;
+}
+
+.cell-break {
+  overflow-wrap: anywhere;
+}
+
+.rdc-model-section-title {
+  margin: 20px 0 10px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--color-border);
+  font-size: 14px;
+  color: var(--color-primary, #0369a1);
+}
+
+.rdc-model-template {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: center;
+  margin-top: 8px;
+}
+
+.rdc-model-extra {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.rdc-model-capabilities {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 18px;
+}
+
+.rdc-model-test-hint {
+  margin: 0 0 12px;
+  color: var(--color-muted);
+  line-height: 1.6;
+}
+
+.rdc-model-result {
+  margin-top: 16px;
+  padding: 12px;
+  border: 1px solid var(--color-border);
+  border-left: 3px solid var(--color-primary, #0369a1);
+  border-radius: 6px;
+  background: var(--color-surface-2);
+}
+
+.rdc-model-result.is-failed {
+  border-left-color: #b45309;
+}
+
+.rdc-model-result-title {
+  margin: 0 0 10px;
+  font-weight: 600;
+  color: var(--color-primary, #0369a1);
+}
+
+.rdc-model-result.is-failed .rdc-model-result-title {
+  color: #b45309;
+}
+
+.rdc-model-result dl {
+  display: grid;
+  grid-template-columns: 90px 1fr;
+  gap: 6px 10px;
+  margin: 0;
+  font-size: 13px;
+}
+
+.rdc-model-result dt {
+  color: var(--color-muted);
+}
+.rdc-model-result dd {
+  margin: 0;
+}
+
+@media (max-width: 900px) {
+  .rdc-model-extra {
+    grid-template-columns: 1fr;
+  }
+  .rdc-model-tenant {
+    width: 100%;
+  }
+  .rdc-model-tenant .app-select {
+    flex: 1;
+  }
+}
+
+/* ── 研发中心 · AI模型 P1：协议提示 / 统计页 / 阈值弹窗 ─────────────── */
+.rdc-model-head-actions {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
+.rdc-model-protocol-filter {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  color: var(--color-muted);
+}
+
+.rdc-model-protocol-filter .app-select {
+  min-width: 200px;
+}
+
+/* 协议端点与认证方式的只读提示：信息性强于操作性，用弱底色与左侧色条区分于表单输入。 */
+.rdc-model-protocol-hint {
+  margin-top: 14px;
+  padding: 12px 14px;
+  border: 1px solid var(--color-border);
+  border-left: 3px solid var(--color-primary, #0369a1);
+  border-radius: 6px;
+  background: var(--color-surface-2);
+  font-size: 13px;
+  line-height: 1.7;
+}
+
+.rdc-model-protocol-hint strong {
+  display: block;
+  margin-bottom: 6px;
+  color: var(--color-primary, #0369a1);
+}
+
+.rdc-model-protocol-hint dl {
+  display: grid;
+  grid-template-columns: 84px 1fr;
+  gap: 4px 10px;
+  margin: 0 0 6px;
+}
+
+.rdc-model-protocol-hint dt {
+  color: var(--color-muted);
+}
+.rdc-model-protocol-hint dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.rdc-model-conflict {
+  margin-top: 8px;
+  color: #b45309;
+}
+
+.rdc-model-inline-check {
+  white-space: nowrap;
+}
+
+/* 摘要卡：数字优先，标签弱化；窄屏自动回流成两列。 */
+.rdc-model-summary {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.rdc-model-summary-card {
+  padding: 12px 14px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: var(--color-surface-2);
+}
+
+.rdc-model-summary-card span {
+  display: block;
+  color: var(--color-muted);
+  font-size: 12px;
+}
+
+.rdc-model-summary-card strong {
+  display: block;
+  margin-top: 4px;
+  font-size: 20px;
+  color: var(--color-primary, #0369a1);
+}
+
+.rdc-model-failure-list {
+  margin: 0 0 8px;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 6px;
+}
+
+.rdc-model-failure-list li {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  font-size: 13px;
+}
+
+.rdc-model-failure-count {
+  color: #b45309;
+  font-variant-numeric: tabular-nums;
+}
+
+/* 超阈值提示条：琥珀色而非红色——它是"提醒"不是"故障"，warn 模式下调用仍然正常。 */
+.rdc-quota-banner {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+  align-items: center;
+  margin-bottom: 14px;
+  padding: 12px 14px;
+  border: 1px solid #fcd34d;
+  border-radius: 8px;
+  background: #fffbeb;
+  color: #92400e;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.rdc-quota-banner strong {
+  color: #b45309;
+}
+
+.rdc-quota-form {
+  display: grid;
+  gap: 12px;
+}
+
+.rdc-quota-intro {
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: 6px;
+  background: var(--color-surface-2);
+  color: var(--color-muted);
+  font-size: 13px;
+  line-height: 1.7;
+}
+
+/* 校验提示复用全站既有 .field-error（见样式表上方），此处不再重复定义。 */
+
+@media (max-width: 900px) {
+  .rdc-model-head-actions {
+    width: 100%;
+    flex-wrap: wrap;
+  }
+  .rdc-model-protocol-filter {
+    width: 100%;
+  }
+  .rdc-model-protocol-filter .app-select {
+    flex: 1;
+  }
+}

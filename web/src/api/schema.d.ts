@@ -417,6 +417,24 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/settings/git-repo": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 读取本公司 Git 仓库配置 */
+        get: operations["getGitRepo"];
+        /** 保存本公司 Git 仓库路径 */
+        put: operations["updateGitRepo"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/settings/webhook/test": {
         parameters: {
             query?: never;
@@ -659,6 +677,644 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/rdc/dev/tasks": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 研发任务列表（仅团队模式）
+         * @description 数据范围由登录身份推导的 scope 决定。reqKey 按关联需求的编号精确匹配； status 按两条子任务聚合出的整体状态筛选（skipped 子任务不参与，两条都跳过视为 completed）。 服务端分页（默认 10、上限 200、0 全量）。
+         */
+        get: operations["listDevTasks"];
+        put?: never;
+        /**
+         * 新建研发任务（仅团队模式）
+         * @description 任务必须绑定一条本公司需求；创建时在同一事务内自动拆分 frontend / backend 两条 pending 子任务。整体状态不落列，由子任务聚合推导。写 created 审计。 全程只要求 rdc.dev.read，不新增写权限点。
+         */
+        post: operations["createDevTask"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/rdc/dev/tasks/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 研发任务详情（仅团队模式）
+         * @description 越界或不存在的任务一律 404，不泄漏存在性。
+         */
+        get: operations["getDevTask"];
+        /**
+         * 编辑研发任务资料（仅团队模式）
+         * @description 只改任务名、绑定需求与子任务备注。请求体任意层级出现 status 字段一律 400： 编辑绝不写状态，状态只能经 transition / skip 两条专用路径变更。 换绑的需求必须存在且属于当前 scope，越界 400。写 updated 审计。
+         */
+        put: operations["updateDevTask"];
+        post?: never;
+        /**
+         * 删除研发任务（仅团队模式）
+         * @description 任务与两条子任务一并删除（外键级联），不可恢复；写 deleted 审计。
+         */
+        delete: operations["deleteDevTask"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/rdc/dev/tasks/{id}/subtasks/{subtaskId}/transition": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 手动推进子任务到下一状态（仅团队模式）
+         * @description 纯平台编排：只按 x-rdc-dev-transitions 前进一态，不接 Agent、不触发任何真实研发动作。 终态 / skipped / 跳级 / 回退一律 400；并发点击时条件更新影响 0 行也返回 400， 提示刷新后重试。写 transitioned 审计。
+         */
+        post: operations["advanceDevSubtask"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/rdc/dev/tasks/{id}/subtasks/{subtaskId}/skip": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 将子任务标记为已跳过（仅团队模式）
+         * @description 仅序 0..6 的未完成态可标记；completed / skipped 为终态不可再标。 标记后永久不可恢复：没有 unskip 接口、编辑 DTO 也不可达。写 skipped 审计。
+         */
+        post: operations["skipDevSubtask"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/rdc/dev/tasks/{id}/subtasks/{subtaskId}/resubmit": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 驳回后重新研发（rejected → ai_completed，仅团队模式）
+         * @description 研发中心触发：仅 rejected 态可重新研发，回到 ai_completed 等待再次提交审核。 这是 rejected 阻断态回到链路的唯一出口；其它状态一律 400。 状态写入复用与手动推进相同的条件更新，审计 from/to 同源。写 transitioned 审计。
+         */
+        post: operations["resubmitDevSubtask"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/rdc/reviews/tasks": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 待审研发任务列表（仅团队模式）
+         * @description 列出含「待审核(reviewing) / 待提交(waiting_commit) / 已驳回(rejected)」子任务的任务。 服务端分页，支持按 reqKey 筛选。数据范围由 scope 决定，仅本公司可见。
+         */
+        get: operations["listReviewTasks"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/rdc/reviews/tasks/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 审核详情：任务、子任务与审核历史（仅团队模式） */
+        get: operations["getReviewTask"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/rdc/reviews/tasks/{id}/subtasks/{subtaskId}/approve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 审核通过（reviewing → waiting_commit，仅团队模式）
+         * @description 仅 reviewing 态可审核通过；写 approve 审核记录与 transitioned 审计。
+         */
+        post: operations["approveDevSubtask"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/rdc/reviews/tasks/{id}/subtasks/{subtaskId}/reject": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 审核驳回（reviewing → rejected，仅团队模式）
+         * @description 仅 reviewing 态可驳回，驳回原因必填。驳回后子任务进入 rejected 阻断态， 需研发中心「重新研发」才能回到链路。写 reject 审核记录与审计。
+         */
+        post: operations["rejectDevSubtask"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/rdc/reviews/tasks/{id}/subtasks/{subtaskId}/commit": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 人工提交确认（waiting_commit → committed，仅团队模式）
+         * @description 仅 waiting_commit 态可确认提交，commit SHA 必填。纯平台记录，不触发真实 Git 操作。 写 commit 审核记录与审计。
+         */
+        post: operations["commitDevSubtask"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/rdc/delivery/records": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 按需求列出最新交付快照 */
+        get: operations["listDeliveryRecords"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/rdc/delivery/records/{requirementId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 读取需求交付详情与历史 */
+        get: operations["getDeliveryDetail"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/rdc/delivery/records/{requirementId}/git/refresh": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 只读刷新本机 Git 记录 */
+        post: operations["refreshDeliveryGit"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/rdc/delivery/records/{requirementId}/test": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 人工登记外部测试报告摘要 */
+        post: operations["registerDeliveryTest"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/rdc/delivery/records/{requirementId}/accept": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 逐条确认当前验收标准 */
+        post: operations["acceptDelivery"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/rdc/delivery/records/{requirementId}/archive": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 原子归档需求与交付快照 */
+        post: operations["archiveDelivery"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/rdc/interactions/tasks/{id}/subtasks/{subtaskId}/diff-review": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 读取子任务最新 Diff 审查对象（仅团队模式）
+         * @description 产物只来自 AgentArtifactProvider。执行器未就绪时返回真实空态 data:null， 不返回任何模拟 diff；只读，不改变研发子任务状态。
+         */
+        get: operations["getRDCInteractionDiffReview"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/rdc/interactions/tasks/{id}/subtasks/{subtaskId}/diff-review/submit": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 提交 hunk 三态决策并留痕（仅团队模式）
+         * @description 存在 pending hunk 时 400；全非 pending 才写决策 + diff_submitted 审核记录 + 审计。 本操作绝不更新 rdc_dev_subtask.status。
+         */
+        post: operations["submitRDCInteractionDiffReview"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/rdc/interactions/diff-reviews/{reviewId}/hunks/{hunkId}/decision": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * 单 hunk 三态决策（仅团队模式）
+         * @description 只 UPSERT 决策表，不写审核记录；提交审查时统一留一条 diff_submitted 证据。
+         */
+        put: operations["setRDCInteractionHunkDecision"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/rdc/interactions/tasks/{id}/subtasks/{subtaskId}/plan-confirmation": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 读取子任务计划确认对象（仅团队模式）
+         * @description 无真实产物时返回真实空态 data:null；只读。
+         */
+        get: operations["getRDCInteractionPlan"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/rdc/interactions/plan-confirmations/{planId}/confirm": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 确认计划门禁（仅团队模式）
+         * @description 必答题已答 + 所有计划任务已确认才放行；写 gate_status/confirmed_by/at + plan_confirmed 证据与审计。 只表达意图对齐完成，不推进子任务状态、不触发生成。
+         */
+        post: operations["confirmRDCInteractionPlan"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/rdc/interactions/tasks/{id}/subtasks/{subtaskId}/checkpoints": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 读取子任务检查点时间线（仅团队模式）
+         * @description 只读；无真实产物时返回空数组，绝不伪造快照。
+         */
+        get: operations["listRDCInteractionCheckpoints"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/rdc/interactions/checkpoints/{checkpointId}/rollback": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 检查点回滚（仅团队模式）
+         * @description 必须携带服务端 rollback_token；逐文件比对 currentHashes 与 afterHash。 任一不匹配 → 409 列出冲突文件 + rollback_blocked 失败审计，绝不强制覆盖； 匹配 → 写 checkpoint_rolled_back 证据并更新检查点状态，不回退子任务状态。 本版只做证据层，不写真实文件。
+         */
+        post: operations["rollbackRDCInteractionCheckpoint"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/rdc/interactions/tasks/{id}/subtasks/{subtaskId}/approval": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 读取分级审批徽标（仅团队模式）
+         * @description 整体风险取该子任务全部 hunk 风险最大值；低免审 / 中抽查 / 高强审批。
+         */
+        get: operations["getRDCInteractionApproval"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/rdc/interactions/tasks/{id}/subtasks/{subtaskId}/approval/decide": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 记录分级审批决定（仅团队模式）
+         * @description 写 approval_decided 证据 + 审计；是业务介入强度证据，不是新权限点、不是状态边。
+         */
+        post: operations["decideRDCInteractionApproval"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/rdc/models": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 按公司列出模型配置（仅团队模式）
+         * @description 普通账号只看本公司；超管必须带 tenantId，未指定时返回空列表。
+         */
+        get: operations["listAIModels"];
+        put?: never;
+        /**
+         * 新建模型配置（仅团队模式）
+         * @description Key 经 AES-GCM 加密入库，响应只返回末 4 位掩码；tenantId 由服务端从身份推导。
+         */
+        post: operations["createAIModel"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/rdc/models/usage": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 按公司统计模型调用（仅团队模式）
+         * @description 半开区间 [start, end)，缺省最近 7 天。平均耗时只算「成功且已出站」， token 只对上报了 usage 的记录求和（未上报返回 null，不是 0）。 超管未指定 tenantId 时返回空统计，不做跨公司聚合。
+         */
+        get: operations["getAIModelUsage"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/rdc/models/quota": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 读取本公司调用阈值（仅团队模式）
+         * @description 每公司一行；无配置行时返回默认值（enabled=false / 1000 / 60 / warn），不返回零值。
+         */
+        get: operations["getAIModelQuota"];
+        /**
+         * 整行覆盖本公司调用阈值（仅团队模式）
+         * @description 请求体不接受 tenantId（超管用 ?tenantId=）；写入成功后记一条 rdc.ai_model.quota_updated 审计。
+         */
+        put: operations["updateAIModelQuota"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/rdc/models/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 读取模型详情（仅团队模式） */
+        get: operations["getAIModel"];
+        /**
+         * 编辑模型资料（仅团队模式）
+         * @description apiKey 留空表示不更新；请求体不接受 tenantId / isDefault / enabled / apiKeyMask。
+         */
+        put: operations["updateAIModel"];
+        post?: never;
+        /** 软删模型（enabled=false，仅团队模式） */
+        delete: operations["deleteAIModel"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/rdc/models/{id}/default": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 设为本公司默认模型（事务互斥，仅团队模式） */
+        post: operations["setAIModelDefault"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/rdc/models/{id}/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 启用 / 停用模型（仅团队模式）
+         * @description 停用默认模型时若本公司另有启用模型，须先指定新默认；禁用行的 isDefault 恒为 false。
+         */
+        post: operations["setAIModelStatus"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/rdc/models/{id}/test": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 用该模型已存 Key 实测一次（仅团队模式）
+         * @description 与内部 ModelService.Chat 共用 chatOnce；上游错误按六类返回脱敏结果，不回显 Key 与原报文。
+         */
+        post: operations["testAIModel"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/healthz": {
         parameters: {
             query?: never;
@@ -705,6 +1361,7 @@ export interface components {
             /** @description 是否已生成过外部上传接口的 Key。Key 本身只存 SHA-256 摘要， 本接口不返回明文；要拿明文请调用轮换接口（一次性返回）。 */
             apiKeyConfigured: boolean;
             availableFields: components["schemas"]["WebhookFieldOption"][];
+            gitRepo: components["schemas"]["GitRepoConfig"];
         };
         /** @description 测试投递结果；目标不可达也是 200，用 delivered=false 表达 */
         WebhookTestResult: {
@@ -1418,6 +2075,633 @@ export interface components {
                 pageSize: number;
             };
         };
+        /**
+         * @description 子任务状态；十值与顺序的唯一来源是 x-rdc-dev-statuses
+         * @enum {string}
+         */
+        DevSubtaskStatus: "pending" | "ai_running" | "ai_completed" | "reviewing" | "waiting_commit" | "committed" | "validated" | "completed" | "rejected" | "skipped";
+        /**
+         * @description 子任务类型；一个任务固定 frontend / backend 各一条
+         * @enum {string}
+         */
+        DevSubtaskKind: "frontend" | "backend";
+        /** @description 研发子任务；status 只能经 transition / skip 变更，编辑接口不可达 */
+        DevSubtask: {
+            /** Format: uuid */
+            id: string;
+            kind: components["schemas"]["DevSubtaskKind"];
+            status: components["schemas"]["DevSubtaskStatus"];
+            /** @description 可编辑的非状态备注 */
+            note: string;
+            /** Format: date-time */
+            createdAt: string;
+            /** Format: date-time */
+            updatedAt: string;
+        };
+        /** @description 研发任务列表项；整体状态不落列，由两条子任务聚合推导。 reqKey / requirementTitle / projectName / frontendStatus / backendStatus 均为 JOIN 投影，不可编辑；tenantId 只参与服务端过滤，不进响应。 */
+        DevTask: {
+            /** Format: uuid */
+            id: string;
+            title: string;
+            /**
+             * Format: uuid
+             * @description 绑定真相（一对多），换绑时须校验在 scope 内可见
+             */
+            requirementId: string;
+            /** @description 关联需求的编号投影，仅展示与筛选 */
+            reqKey: string;
+            /** @description 关联需求的标题投影 */
+            requirementTitle: string;
+            /** @description 需求所属项目名投影；空串表示未归属项目 */
+            projectName: string;
+            /** @description 两条子任务聚合出的整体状态；skipped 两条都命中时为 completed */
+            overallStatus: components["schemas"]["DevSubtaskStatus"];
+            frontendStatus: components["schemas"]["DevSubtaskStatus"];
+            backendStatus: components["schemas"]["DevSubtaskStatus"];
+            /** @description 创建人账号 id（裸文本） */
+            creatorUserId: string;
+            /** @description people.name 优先，回落 users.username */
+            creatorName: string;
+            /** Format: date-time */
+            createdAt: string;
+            /** Format: date-time */
+            updatedAt: string;
+        };
+        DevTaskDetail: components["schemas"]["DevTask"] & {
+            /** @description 恰好两条（frontend / backend），始终非 nil */
+            subtasks: components["schemas"]["DevSubtask"][];
+        };
+        /** @description 新建研发任务的请求体；未知字段一律 400，归属字段由服务端推导 */
+        DevTaskInput: {
+            /** @description 必填，1-100 字 */
+            title: string;
+            /**
+             * Format: uuid
+             * @description 必填，来源需求 id，须存在且在当前 scope 内可见
+             */
+            requirementId: string;
+        };
+        /** @description 子任务的非状态属性更新；刻意没有 status 字段，任意层级出现 status 一律 400 */
+        DevSubtaskNoteUpdate: {
+            /** Format: uuid */
+            id: string;
+            /** @description 备注，≤500 字 */
+            note: string;
+        };
+        /** @description 编辑任务资料的请求体；只允许任务名 / 换绑需求 / 子任务备注， 没有 status 字段。状态只能经 transition / skip 变更，SKIPPED 永久不可恢复。 */
+        DevTaskUpdate: {
+            title: string;
+            /**
+             * Format: uuid
+             * @description 换绑后的需求 id，须存在且在当前 scope 内可见
+             */
+            requirementId: string;
+            /** @description 可选；只更新出现的子任务备注，绝不写状态 */
+            subtasks?: components["schemas"]["DevSubtaskNoteUpdate"][];
+        };
+        DevTaskResponse: components["schemas"]["ApiResponse"] & {
+            data: components["schemas"]["DevTask"];
+        };
+        DevTaskDetailResponse: components["schemas"]["ApiResponse"] & {
+            data: components["schemas"]["DevTaskDetail"];
+        };
+        DevTaskListResponse: components["schemas"]["ApiResponse"] & {
+            data: {
+                items: components["schemas"]["DevTask"][];
+                /** @description 总条数 */
+                total: number;
+                /** @description 当前页，从 1 开始 */
+                page: number;
+                /** @description 每页条数；0 表示不分页（全量） */
+                pageSize: number;
+            };
+        };
+        DevSubtaskResponse: components["schemas"]["ApiResponse"] & {
+            data: components["schemas"]["DevSubtask"];
+        };
+        /**
+         * @description 审核动作枚举。前 4 值是既有状态动作（resubmit 由研发中心触发）； 后 5 值是 AI 交互证据动作，其中 rollback_blocked 只写审计、不写审核记录； 证据动作绝不触发子任务状态流转。
+         * @enum {string}
+         */
+        ReviewAction: "approve" | "reject" | "commit" | "resubmit" | "diff_submitted" | "plan_confirmed" | "checkpoint_rolled_back" | "approval_decided" | "rollback_blocked";
+        /** @description 驳回请求体；原因必填 */
+        ReviewRejectInput: {
+            /** @description 驳回原因，1-500 字，必填 */
+            reason: string;
+        };
+        /** @description 提交确认请求体；commit SHA 必填 */
+        ReviewCommitInput: {
+            /** @description 人工提交的 commit SHA，1-64 字，必填 */
+            commitSha: string;
+        };
+        /** @description 一次审核动作的事实记录（只追加） */
+        ReviewRecord: {
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            taskId: string;
+            /** Format: uuid */
+            subtaskId: string;
+            action: components["schemas"]["ReviewAction"];
+            /** @description 驳回原因；其它动作为空串 */
+            reason: string;
+            /** @description 提交 SHA；其它动作为空串 */
+            commitSha: string;
+            reviewerUserId: string;
+            /** @description AI 交互证据的结构化 detail；既有审核动作为空对象 */
+            detail: {
+                [key: string]: unknown;
+            };
+            /** Format: date-time */
+            createdAt: string;
+        };
+        /** @description 待审任务列表项；含处于待审态的子任务信息 */
+        ReviewTask: {
+            /** Format: uuid */
+            id: string;
+            title: string;
+            reqKey: string;
+            requirementTitle: string;
+            projectName: string;
+            /** @description 任务整体状态（含 rejected） */
+            overallStatus: string;
+            /** @description 处于待审/待提交/已驳回的子任务数 */
+            reviewableCount: number;
+            frontendStatus: string;
+            backendStatus: string;
+            /** Format: date-time */
+            createdAt: string;
+        };
+        ReviewTaskListResponse: components["schemas"]["ApiResponse"] & {
+            data: {
+                items: components["schemas"]["ReviewTask"][];
+                total: number;
+                page: number;
+                pageSize: number;
+            };
+        };
+        /** @description 审核详情：任务、子任务与审核历史 */
+        ReviewDetail: {
+            task: components["schemas"]["ReviewTask"];
+            subtasks: components["schemas"]["DevSubtask"][];
+            /** @description 该任务全部审核记录，按时间正序 */
+            records: components["schemas"]["ReviewRecord"][];
+        };
+        /** @enum {string} */
+        TestResult: "not_registered" | "passed" | "failed";
+        /** @enum {string} */
+        AcceptanceStatus: "pending" | "passed" | "failed";
+        /** @enum {string} */
+        GitStatus: "ok" | "not_configured" | "path_forbidden" | "not_repo" | "timeout" | "error";
+        GitRepoInput: {
+            gitRepoPath: string;
+        };
+        GitRepoConfig: {
+            gitRepoPath: string;
+            allowedRoots: string[];
+            configured: boolean;
+        };
+        GitRepoConfigResponse: components["schemas"]["ApiResponse"] & {
+            data: components["schemas"]["GitRepoConfig"];
+        };
+        AcceptanceItemResult: {
+            index: number;
+            /** @enum {string} */
+            result: "passed" | "failed";
+        };
+        TestRegisterInput: {
+            /** @enum {string} */
+            result: "passed" | "failed";
+            summary: string;
+            reportRef?: string;
+        };
+        DeliveryAcceptInput: {
+            /** @enum {string} */
+            result: "passed" | "failed";
+            note: string;
+            items: components["schemas"]["AcceptanceItemResult"][];
+        };
+        DeliveryRecord: {
+            id: string;
+            seq: number;
+            requirementId: string;
+            reqKey: string;
+            requirementTitle: string;
+            projectName: string;
+            requirementStatus: string;
+            testResult: components["schemas"]["TestResult"];
+            testSummary: string;
+            testReportRef: string;
+            testRegisteredBy: string;
+            testRegisteredAt: string;
+            acceptanceStatus: components["schemas"]["AcceptanceStatus"];
+            acceptanceItems: string;
+            acceptanceNote: string;
+            acceptedBy: string;
+            acceptedAt: string;
+            archived: boolean;
+            archivedBy: string;
+            archivedAt: string;
+            creatorName: string;
+            createdAt: string;
+        };
+        DeliveryDetail: {
+            requirementId: string;
+            reqKey: string;
+            title: string;
+            description: string;
+            acceptanceCriteria: string;
+            requirementStatus: string;
+            projectName: string;
+            current: components["schemas"]["DeliveryRecord"];
+            history: components["schemas"]["DeliveryRecord"][];
+        };
+        DeliveryCommit: {
+            sha: string;
+            shortSha: string;
+            author: string;
+            time: string;
+            subject: string;
+        };
+        GitSnapshot: {
+            status: components["schemas"]["GitStatus"];
+            message: string;
+            branch: string;
+            workspaceClean: boolean;
+            changedFileCount: number;
+            commits: components["schemas"]["DeliveryCommit"][];
+            readAt: string;
+        };
+        DeliveryRecordResponse: components["schemas"]["ApiResponse"] & {
+            data: components["schemas"]["DeliveryRecord"];
+        };
+        DeliveryDetailResponse: components["schemas"]["ApiResponse"] & {
+            data: components["schemas"]["DeliveryDetail"];
+        };
+        GitSnapshotResponse: components["schemas"]["ApiResponse"] & {
+            data: components["schemas"]["GitSnapshot"];
+        };
+        DeliveryRecordListResponse: components["schemas"]["ApiResponse"] & {
+            data: {
+                items: components["schemas"]["DeliveryRecord"][];
+                total: number;
+                page: number;
+                pageSize: number;
+            };
+        };
+        ReviewDetailResponse: components["schemas"]["ApiResponse"] & {
+            data: components["schemas"]["ReviewDetail"];
+        };
+        /** @enum {string} */
+        ReviewDecision: "pending" | "accepted" | "rejected";
+        /** @enum {string} */
+        InteractionFileStatus: "added" | "modified" | "deleted" | "renamed";
+        /** @enum {string} */
+        InteractionSource: "agent_executor";
+        /** @enum {string} */
+        SubmitStatus: "pending" | "submitted";
+        /** @enum {string} */
+        QuestionType: "single" | "multiple" | "text";
+        /** @enum {string} */
+        GateStatus: "blocked" | "confirmed";
+        /** @enum {string} */
+        CheckpointStatus: "active" | "rolled_back" | "partially_rolled_back";
+        /** @enum {string} */
+        RiskLevel: "low" | "medium" | "high";
+        /** @enum {string} */
+        Intervention: "exempt" | "sample" | "strict";
+        /** @enum {string} */
+        OperationType: "delete_file" | "config_change" | "dependency_change" | "schema_migration" | "permission_change" | "api_change" | "model_change" | "code_edit" | "format" | "comment" | "doc" | "add_test" | "style" | "add_file" | "other";
+        /** @enum {string} */
+        RollbackScope: "hunk" | "file" | "checkpoint";
+        /** @enum {string} */
+        ApprovalDecision: "approve" | "reject";
+        /** @description 单个 diff 块；oldStart/newStart 均 1-based，上下文为独立字段仅中栏展示 */
+        Hunk: {
+            hunkId: string;
+            oldStart: number;
+            oldLines: number;
+            newStart: number;
+            newLines: number;
+            oldContent: string[];
+            newContent: string[];
+            contextBefore: string[];
+            contextAfter: string[];
+            riskLabel: components["schemas"]["OperationType"];
+        };
+        FileDiff: {
+            /** @description 仓库相对路径，已脱敏 */
+            filePath: string;
+            fileStatus: components["schemas"]["InteractionFileStatus"];
+            /** @description 仅 renamed 时有值 */
+            oldPath: string;
+            hunks: components["schemas"]["Hunk"][];
+        };
+        HunkDecision: {
+            /** Format: uuid */
+            reviewId: string;
+            hunkId: string;
+            decision: components["schemas"]["ReviewDecision"];
+            decidedBy: string;
+            decidedAt: string;
+        };
+        HunkDecisionInput: {
+            decision: components["schemas"]["ReviewDecision"];
+        };
+        DiffReview: {
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            taskId: string;
+            /** Format: uuid */
+            subtaskId: string;
+            checkpointId: string;
+            source: components["schemas"]["InteractionSource"];
+            submitStatus: components["schemas"]["SubmitStatus"];
+            files: components["schemas"]["FileDiff"][];
+            decisions: components["schemas"]["HunkDecision"][];
+            /** Format: date-time */
+            createdAt: string;
+        };
+        DiffReviewInput: {
+            decisions: components["schemas"]["HunkDecision"][];
+        };
+        DiffReviewResponse: components["schemas"]["ApiResponse"] & {
+            data?: components["schemas"]["DiffReview"] | null;
+        };
+        QuestionOption: {
+            optionId: string;
+            label: string;
+        };
+        Question: {
+            questionId: string;
+            prompt: string;
+            type: components["schemas"]["QuestionType"];
+            required: boolean;
+            options: components["schemas"]["QuestionOption"][];
+            answer?: unknown;
+        };
+        PlanTask: {
+            stepId: string;
+            title: string;
+            description: string;
+            confirmed: boolean;
+            estimatedRisk: components["schemas"]["RiskLevel"];
+        };
+        PlanConfirmation: {
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            taskId: string;
+            /** Format: uuid */
+            subtaskId: string;
+            questionnaire: components["schemas"]["Question"][];
+            planTasks: components["schemas"]["PlanTask"][];
+            gateStatus: components["schemas"]["GateStatus"];
+            confirmedBy: string;
+            confirmedAt: string;
+        };
+        PlanConfirmInput: {
+            answers: components["schemas"]["Question"][];
+            stepIds: string[];
+        };
+        PlanConfirmationResponse: components["schemas"]["ApiResponse"] & {
+            data?: components["schemas"]["PlanConfirmation"] | null;
+        };
+        FileSnapshot: {
+            filePath: string;
+            fileStatus: components["schemas"]["InteractionFileStatus"];
+            beforeContent: string;
+            afterContent: string;
+            beforeHash: string;
+            afterHash: string;
+        };
+        Checkpoint: {
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            taskId: string;
+            /** Format: uuid */
+            subtaskId: string;
+            aiAction: string;
+            files: components["schemas"]["FileSnapshot"][];
+            rollbackToken: string;
+            status: components["schemas"]["CheckpointStatus"];
+            createdBy: string;
+            /** Format: date-time */
+            createdAt: string;
+        };
+        RollbackTarget: {
+            filePath: string;
+            hunkId: string;
+        };
+        RollbackInput: {
+            rollbackToken: string;
+            scope: components["schemas"]["RollbackScope"];
+            targets: components["schemas"]["RollbackTarget"][];
+            currentHashes: {
+                [key: string]: string;
+            };
+        };
+        CheckpointResponse: components["schemas"]["ApiResponse"] & {
+            data?: components["schemas"]["Checkpoint"] | null;
+        };
+        CheckpointListResponse: components["schemas"]["ApiResponse"] & {
+            data?: components["schemas"]["Checkpoint"][];
+        };
+        ApprovalView: {
+            overallRisk: components["schemas"]["RiskLevel"];
+            intervention: components["schemas"]["Intervention"];
+            decided: boolean;
+            decision: components["schemas"]["ApprovalDecision"];
+        };
+        ApprovalDecideInput: {
+            /** Format: uuid */
+            checkpointId: string;
+            decision: components["schemas"]["ApprovalDecision"];
+        };
+        ApprovalResponse: components["schemas"]["ApiResponse"] & {
+            data?: components["schemas"]["ApprovalView"] | null;
+        };
+        /** @enum {string} */
+        AIProvider: "scnet";
+        /**
+         * @description 三种上游报文协议；差异只收在各 protocol_xxx.go 的 build/parse 两处。
+         * @enum {string}
+         */
+        AIProtocol: "openai" | "anthropic" | "openai_responses";
+        /** @enum {string} */
+        AIReasoningEffort: "none" | "low" | "high" | "max";
+        /** @enum {string} */
+        AICapability: "文本生成" | "深度思考" | "视觉理解";
+        /**
+         * @description 七类错误分类；ok 仅用于成功结果（不是错误类别）。
+         * @enum {string}
+         */
+        AITestCategory: "ok" | "config_missing" | "auth_failed" | "parameter_error" | "rate_limited" | "network_error" | "response_error" | "capability_mismatch";
+        /** @description 首版四个具体字段；写入时未知键 400，读取时忽略未知键并补默认值。 */
+        AIExtraConfig: {
+            /** @default 1 */
+            temperature: number;
+            /** @default 1 */
+            topP: number;
+            reasoningEffort?: components["schemas"]["AIReasoningEffort"];
+            /** @default 30000 */
+            timeoutMs: number;
+        };
+        /** @description 模型配置投影；apiKeyMask 是唯一可回显的 Key 相关信息。 */
+        AIModel: {
+            /** Format: uuid */
+            id: string;
+            name: string;
+            provider: components["schemas"]["AIProvider"];
+            protocol: components["schemas"]["AIProtocol"];
+            baseUrl: string;
+            modelId: string;
+            /** @description 仅末 4 位掩码，例如 sk-****wxyz */
+            apiKeyMask: string;
+            isDefault: boolean;
+            thinkingEnabled: boolean;
+            contextTokens: number;
+            extraConfig: components["schemas"]["AIExtraConfig"];
+            capabilities: components["schemas"]["AICapability"][];
+            enabled: boolean;
+            /** Format: date-time */
+            createdAt: string;
+            /** Format: date-time */
+            updatedAt: string;
+        };
+        /** @description 新建 / 编辑请求体；apiKey 留空=不更新；无 tenantId / isDefault / enabled / apiKeyMask。 */
+        AIModelInput: {
+            name: string;
+            provider: components["schemas"]["AIProvider"];
+            protocol: components["schemas"]["AIProtocol"];
+            baseUrl: string;
+            modelId: string;
+            /** @description 明文仅入站；留空表示不更新 */
+            apiKey?: string;
+            thinkingEnabled: boolean;
+            /** @default 8192 */
+            contextTokens: number;
+            extraConfig: components["schemas"]["AIExtraConfig"];
+            capabilities: components["schemas"]["AICapability"][];
+        };
+        AIModelStatusInput: {
+            enabled: boolean;
+        };
+        /** @description 实测结果摘要；请求 / 响应预览均经 Redact，无 Key、密文与上游原文。 */
+        AIModelTestResult: {
+            ok: boolean;
+            category: components["schemas"]["AITestCategory"];
+            message: string;
+            statusCode: number;
+            /** Format: int64 */
+            latencyMs: number;
+            modelId: string;
+            usedFallback: boolean;
+            requestSummary: string;
+            responsePreview: string;
+            promptTokens: number;
+            completionTokens: number;
+        };
+        AIModelResponse: components["schemas"]["ApiResponse"] & {
+            data?: components["schemas"]["AIModel"];
+        };
+        AIModelListResponse: components["schemas"]["ApiResponse"] & {
+            data?: {
+                items: components["schemas"]["AIModel"][];
+                total: number;
+                page: number;
+                pageSize: number;
+            };
+        };
+        AIModelTestResultResponse: components["schemas"]["ApiResponse"] & {
+            data?: components["schemas"]["AIModelTestResult"];
+        };
+        /**
+         * @description 超阈值时的动作：warn 只告警照常调用，reject 拒绝且上游零请求。
+         * @enum {string}
+         */
+        AIQuotaAction: "warn" | "reject";
+        /** @description 阈值读取投影；无配置行时补默认值，不返回零值。 */
+        AIQuotaConfig: {
+            /** @default false */
+            enabled: boolean;
+            /** @default 1000 */
+            maxCalls: number;
+            /** @default 60 */
+            windowMinutes: number;
+            action: components["schemas"]["AIQuotaAction"];
+            /** @description 从未配置过时为空串（表示"用的默认值"，不是"刚刚更新"） */
+            updatedAt: string;
+        };
+        /** @description 整行覆盖请求体；无 tenantId（超管用 ?tenantId=）。 */
+        AIQuotaInput: {
+            enabled: boolean;
+            maxCalls: number;
+            windowMinutes: number;
+            action: components["schemas"]["AIQuotaAction"];
+        };
+        AIQuotaResponse: components["schemas"]["ApiResponse"] & {
+            data?: components["schemas"]["AIQuotaConfig"];
+        };
+        /** @description 分组明细；维度由请求的 groupBy 决定，未选中的维度为空串。 */
+        AIModelCallGroup: {
+            modelId: string;
+            modelName: string;
+            protocol: string;
+            scene: string;
+            /** @description 分组维度含 day 时为 YYYY-MM-DD，否则空串 */
+            day: string;
+            totalCalls: number;
+            successCalls: number;
+            failedCalls: number;
+            /**
+             * Format: int64
+             * @description 缺数据为 null（不是 0）
+             */
+            promptTokens: number;
+            /** Format: int64 */
+            completionTokens: number;
+            /**
+             * Format: int64
+             * @description 仅成功且已出站；无数据为 null
+             */
+            avgSuccessLatencyMs: number;
+        };
+        /** @description 统计总量 + 分组明细；口径见设计 §4.4（平均耗时只算成功且已出站）。 */
+        AIModelCallStats: {
+            totalCalls: number;
+            successCalls: number;
+            failedCalls: number;
+            /** @description 未出站条数；默认口径已排除，includeLocal=true 时单列 */
+            localRejected: number;
+            /**
+             * Format: int64
+             * @description null 表示没有任何上报 usage 的记录
+             */
+            promptTokens: number;
+            /** Format: int64 */
+            completionTokens: number;
+            /** @description tokens_reported=false 的条数 */
+            tokensUnreported: number;
+            /** Format: int64 */
+            avgSuccessLatencyMs: number;
+            failureCategories: {
+                category: components["schemas"]["AITestCategory"];
+                count: number;
+            }[];
+            groups: components["schemas"]["AIModelCallGroup"][];
+            quota: components["schemas"]["AIQuotaConfig"];
+            /**
+             * @description ok 未超阈值；exceeded 已达上限（warn 模式下前端提示条）
+             * @enum {string}
+             */
+            quotaState: "ok" | "exceeded";
+        };
+        AIModelUsageResponse: components["schemas"]["ApiResponse"] & {
+            data?: components["schemas"]["AIModelCallStats"];
+        };
     };
     responses: {
         /** @description 缺文件 / 枚举非法 / 平台与文件类型不一致 / 字段超长 / stageToken 失效 / 登录凭据错误 */
@@ -1449,6 +2733,15 @@ export interface components {
         };
         /** @description 请求的资源不存在或已被移除 */
         NotFound: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["ErrorResponse"];
+            };
+        };
+        /** @description 冲突：检查点回滚哈希不匹配 / rollback_token 无效或已回滚（禁止强制覆盖） */
+        Conflict: {
             headers: {
                 [name: string]: unknown;
             };
@@ -2598,6 +3891,51 @@ export interface operations {
             500: components["responses"]["InternalError"];
         };
     };
+    getGitRepo: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 配置 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GitRepoConfigResponse"];
+                };
+            };
+        };
+    };
+    updateGitRepo: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["GitRepoInput"];
+            };
+        };
+        responses: {
+            /** @description 配置 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GitRepoConfigResponse"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+        };
+    };
     testWebhook: {
         parameters: {
             query?: never;
@@ -3020,6 +4358,1094 @@ export interface operations {
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
             500: components["responses"]["InternalError"];
+        };
+    };
+    listDevTasks: {
+        parameters: {
+            query?: {
+                /** @description 页码，从 1 开始；缺省或非法按 1 处理 */
+                page?: components["parameters"]["PageParam"];
+                /** @description 每页条数，默认 10、上限 200；显式传 0 表示不分页（返回全量，供下拉选项与聚合使用） */
+                pageSize?: components["parameters"]["PageSizeParam"];
+                /** @description 关联需求编号，完整编号精确匹配；留空表示不筛 */
+                reqKey?: string;
+                /** @description 整体状态筛选；八值之一，skipped 不作为整体态 */
+                status?: components["schemas"]["DevSubtaskStatus"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 研发任务分页列表 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DevTaskListResponse"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    createDevTask: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DevTaskInput"];
+            };
+        };
+        responses: {
+            /** @description 创建成功（含两条子任务） */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DevTaskDetailResponse"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    getDevTask: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description 研发任务 id（UUID） */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 任务详情（含两条子任务与需求投影） */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DevTaskDetailResponse"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    updateDevTask: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description 研发任务 id（UUID） */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DevTaskUpdate"];
+            };
+        };
+        responses: {
+            /** @description 编辑后的任务详情 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DevTaskDetailResponse"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    deleteDevTask: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description 研发任务 id（UUID） */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 删除成功 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiResponse"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    advanceDevSubtask: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description 研发任务 id（UUID） */
+                id: string;
+                /** @description 子任务 id（UUID） */
+                subtaskId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 推进后的子任务 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DevSubtaskResponse"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    skipDevSubtask: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description 研发任务 id（UUID） */
+                id: string;
+                /** @description 子任务 id（UUID） */
+                subtaskId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 标记后的子任务 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DevSubtaskResponse"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    resubmitDevSubtask: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description 研发任务 id（UUID） */
+                id: string;
+                /** @description 子任务 id（UUID） */
+                subtaskId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 重新研发后的子任务 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DevSubtaskResponse"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    listReviewTasks: {
+        parameters: {
+            query?: {
+                page?: number;
+                pageSize?: number;
+                /** @description 需求编号精确筛选 */
+                reqKey?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 待审任务分页列表 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReviewTaskListResponse"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    getReviewTask: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description 研发任务 id（UUID） */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 审核详情 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReviewDetailResponse"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    approveDevSubtask: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+                subtaskId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 通过后的子任务 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DevSubtaskResponse"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    rejectDevSubtask: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+                subtaskId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReviewRejectInput"];
+            };
+        };
+        responses: {
+            /** @description 驳回后的子任务 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DevSubtaskResponse"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    commitDevSubtask: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+                subtaskId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReviewCommitInput"];
+            };
+        };
+        responses: {
+            /** @description 提交确认后的子任务 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DevSubtaskResponse"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    listDeliveryRecords: {
+        parameters: {
+            query?: {
+                /** @description 页码，从 1 开始；缺省或非法按 1 处理 */
+                page?: components["parameters"]["PageParam"];
+                /** @description 每页条数，默认 10、上限 200；显式传 0 表示不分页（返回全量，供下拉选项与聚合使用） */
+                pageSize?: components["parameters"]["PageSizeParam"];
+                keyword?: string;
+                acceptanceStatus?: components["schemas"]["AcceptanceStatus"];
+                archived?: boolean;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 交付列表 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DeliveryRecordListResponse"];
+                };
+            };
+        };
+    };
+    getDeliveryDetail: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                requirementId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 交付详情 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DeliveryDetailResponse"];
+                };
+            };
+        };
+    };
+    refreshDeliveryGit: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                requirementId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 读取结果 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GitSnapshotResponse"];
+                };
+            };
+        };
+    };
+    registerDeliveryTest: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                requirementId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TestRegisterInput"];
+            };
+        };
+        responses: {
+            /** @description 当前快照 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DeliveryRecordResponse"];
+                };
+            };
+        };
+    };
+    acceptDelivery: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                requirementId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DeliveryAcceptInput"];
+            };
+        };
+        responses: {
+            /** @description 当前快照 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DeliveryRecordResponse"];
+                };
+            };
+        };
+    };
+    archiveDelivery: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                requirementId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 归档快照 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DeliveryRecordResponse"];
+                };
+            };
+        };
+    };
+    getRDCInteractionDiffReview: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+                subtaskId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Diff 审查对象或空态 null */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DiffReviewResponse"];
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    submitRDCInteractionDiffReview: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+                subtaskId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DiffReviewInput"];
+            };
+        };
+        responses: {
+            /** @description 已提交的 Diff 审查对象 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DiffReviewResponse"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    setRDCInteractionHunkDecision: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                reviewId: string;
+                hunkId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HunkDecisionInput"];
+            };
+        };
+        responses: {
+            /** @description 更新后的 Diff 审查对象 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DiffReviewResponse"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    getRDCInteractionPlan: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+                subtaskId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 计划确认对象或空态 null */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PlanConfirmationResponse"];
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    confirmRDCInteractionPlan: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                planId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PlanConfirmInput"];
+            };
+        };
+        responses: {
+            /** @description 已确认的计划对象 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PlanConfirmationResponse"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    listRDCInteractionCheckpoints: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+                subtaskId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 检查点时间线 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CheckpointListResponse"];
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    rollbackRDCInteractionCheckpoint: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                checkpointId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RollbackInput"];
+            };
+        };
+        responses: {
+            /** @description 已记录的检查点 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CheckpointResponse"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+        };
+    };
+    getRDCInteractionApproval: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+                subtaskId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 审批徽标 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApprovalResponse"];
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    decideRDCInteractionApproval: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+                subtaskId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ApprovalDecideInput"];
+            };
+        };
+        responses: {
+            /** @description 审批徽标与决定 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApprovalResponse"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    listAIModels: {
+        parameters: {
+            query?: {
+                /** @description 页码，从 1 开始；缺省或非法按 1 处理 */
+                page?: components["parameters"]["PageParam"];
+                /** @description 每页条数，默认 10、上限 200；显式传 0 表示不分页（返回全量，供下拉选项与聚合使用） */
+                pageSize?: components["parameters"]["PageSizeParam"];
+                enabled?: boolean;
+                /** @description 按报文协议筛选（三协议并存后用于快速定位同一公司的协议分布） */
+                protocol?: components["schemas"]["AIProtocol"];
+                tenantId?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 模型列表 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AIModelListResponse"];
+                };
+            };
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    createAIModel: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AIModelInput"];
+            };
+        };
+        responses: {
+            /** @description 新建的模型 */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AIModelResponse"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    getAIModelUsage: {
+        parameters: {
+            query?: {
+                /** @description 区间起点（含），缺省 end-7d */
+                start?: string;
+                /** @description 区间终点（不含），缺省当前整点 */
+                end?: string;
+                /** @description 逗号分隔，可组合：model */
+                groupBy?: string;
+                /** @description 是否含本地拒绝（未出站）记录 */
+                includeLocal?: boolean;
+                tenantId?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 统计结果 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AIModelUsageResponse"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    getAIModelQuota: {
+        parameters: {
+            query?: {
+                tenantId?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 阈值配置 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AIQuotaResponse"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    updateAIModelQuota: {
+        parameters: {
+            query?: {
+                tenantId?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AIQuotaInput"];
+            };
+        };
+        responses: {
+            /** @description 更新后的阈值 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AIQuotaResponse"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    getAIModel: {
+        parameters: {
+            query?: {
+                tenantId?: string;
+            };
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 模型详情 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AIModelResponse"];
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    updateAIModel: {
+        parameters: {
+            query?: {
+                tenantId?: string;
+            };
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AIModelInput"];
+            };
+        };
+        responses: {
+            /** @description 更新后的模型 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AIModelResponse"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    deleteAIModel: {
+        parameters: {
+            query?: {
+                tenantId?: string;
+            };
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 软删完成 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AIModelResponse"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    setAIModelDefault: {
+        parameters: {
+            query?: {
+                tenantId?: string;
+            };
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 新的默认模型 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AIModelResponse"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    setAIModelStatus: {
+        parameters: {
+            query?: {
+                tenantId?: string;
+            };
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AIModelStatusInput"];
+            };
+        };
+        responses: {
+            /** @description 更新后的模型 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AIModelResponse"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    testAIModel: {
+        parameters: {
+            query?: {
+                tenantId?: string;
+            };
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 实测结果（成功与失败均在此表达） */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AIModelTestResultResponse"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
         };
     };
     health: {

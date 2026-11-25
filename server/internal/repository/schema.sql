@@ -211,6 +211,7 @@ CREATE TABLE IF NOT EXISTS system_settings (
 -- 全部幂等，可反复执行（schema.sql 每次启动都会跑）。
 ALTER TABLE system_settings DROP CONSTRAINT IF EXISTS system_settings_id_check;
 ALTER TABLE system_settings ADD COLUMN IF NOT EXISTS tenant_id UUID REFERENCES tenants(id);
+ALTER TABLE system_settings ADD COLUMN IF NOT EXISTS git_repo_path TEXT NOT NULL DEFAULT '';
 ALTER TABLE system_settings ALTER COLUMN id TYPE INTEGER;
 DO $$
 BEGIN
@@ -615,4 +616,252 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_rdc_requirement_attachment_path
 CREATE TABLE IF NOT EXISTS team.rdc_req_key_sequences (
   day      DATE    PRIMARY KEY,
   next_seq INTEGER NOT NULL DEFAULT 1
+);
+
+-- 增量 3：研发任务（一对多："多"侧外键指向需求；需求无删除路径，外键不设级联）。
+-- 整体状态不落列：由两条子任务按 contract.AggregateDevStatus 聚合推导。
+-- creator_user_id 沿用裸 TEXT 惯例（不加 users 外键，账号删除后历史任务仍可读）；
+-- tenant_id 提供公司隔离；status 不加 CHECK（枚举唯一来源是 api/openapi.yaml）。
+CREATE TABLE IF NOT EXISTS team.rdc_dev_task (
+  id              UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+  requirement_id  UUID        NOT NULL REFERENCES team.rdc_requirements(id),
+  title           TEXT        NOT NULL,
+  creator_user_id TEXT        NOT NULL DEFAULT '',
+  tenant_id       UUID        REFERENCES tenants(id),
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+-- 列表形态：租户 + 需求 + 时间倒序；单需求多任务的反向查询走 requirement_id 索引。
+CREATE INDEX IF NOT EXISTS idx_rdc_dev_task_tenant_created
+  ON team.rdc_dev_task (tenant_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_rdc_dev_task_tenant_requirement
+  ON team.rdc_dev_task (tenant_id, requirement_id, created_at DESC);
+
+-- 增量 4：子任务。一任务恰好 frontend + backend 各一条，用唯一索引强制；
+-- status 默认 pending；note 是编辑接口唯一可改的子任务属性（非状态）；
+-- task_id 级联删除，保证删任务后无子任务孤儿行。
+CREATE TABLE IF NOT EXISTS team.rdc_dev_subtask (
+  id         UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+  task_id    UUID        NOT NULL REFERENCES team.rdc_dev_task(id) ON DELETE CASCADE,
+  kind       TEXT        NOT NULL,              -- frontend | backend，枚举见 openapi
+  status     TEXT        NOT NULL DEFAULT 'pending',
+  note       TEXT        NOT NULL DEFAULT '',   -- 可编辑的非状态配置
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_rdc_dev_subtask_task_kind
+  ON team.rdc_dev_subtask (task_id, kind);
+CREATE INDEX IF NOT EXISTS idx_rdc_dev_subtask_task
+  ON team.rdc_dev_subtask (task_id);
+
+-- 人工审核记录：一条审核动作一行，只追加、无更新/删除。
+-- task_id / subtask_id 均级联删除（删任务或子任务时审核历史随行清理，不留孤儿）；
+-- reason 仅驳回时有值，commit_sha 仅提交确认时有值，其余动作为空串。
+CREATE TABLE IF NOT EXISTS team.rdc_review_record (
+  id               UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+  task_id          UUID        NOT NULL REFERENCES team.rdc_dev_task(id) ON DELETE CASCADE,
+  subtask_id       UUID        NOT NULL REFERENCES team.rdc_dev_subtask(id) ON DELETE CASCADE,
+  action           TEXT        NOT NULL,          -- approve | reject | commit，枚举见 openapi
+  reason           TEXT        NOT NULL DEFAULT '',
+  commit_sha       TEXT        NOT NULL DEFAULT '',
+  reviewer_user_id TEXT        NOT NULL DEFAULT '',
+  tenant_id        UUID        REFERENCES public.tenants(id),
+  created_at       TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_rdc_review_record_task
+  ON team.rdc_review_record (task_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_rdc_review_record_subtask
+  ON team.rdc_review_record (subtask_id, created_at);
+
+-- ---------------------------------------------------------------------------
+-- 六·增补 · AI 人机交互证据层（team 专属，循环之外，不为永远为空的 solo 造表）
+-- 四张表只承载「决策 / 门禁 / 快照 / 幂等令牌」，都不写子任务状态；
+-- 关联键复用 rdc_dev_task / rdc_dev_subtask，级联删除不留孤儿；
+-- 枚举不加 CHECK（唯一来源是 api/openapi.yaml 的 x-rdc-interaction-* 扩展）。
+-- ---------------------------------------------------------------------------
+
+-- ① Diff 审查会话：files 是 AgentArtifactProvider 产物的不可变 JSONB 快照。
+CREATE TABLE IF NOT EXISTS team.rdc_diff_review (
+  id            UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+  task_id       UUID        NOT NULL REFERENCES team.rdc_dev_task(id) ON DELETE CASCADE,
+  subtask_id    UUID        NOT NULL REFERENCES team.rdc_dev_subtask(id) ON DELETE CASCADE,
+  checkpoint_id UUID,                    -- 逻辑关联 rdc_checkpoint.id，无 FK 避免建表顺序依赖
+  source        TEXT        NOT NULL,    -- 唯一合法值 agent_executor
+  submit_status TEXT        NOT NULL DEFAULT 'pending',
+  files         JSONB       NOT NULL DEFAULT '[]'::jsonb,
+  tenant_id     UUID        REFERENCES public.tenants(id),
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_rdc_diff_review_subtask ON team.rdc_diff_review (subtask_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_rdc_diff_review_tenant  ON team.rdc_diff_review (tenant_id, created_at DESC);
+
+-- ② Hunk 决策：与 files JSONB 内 hunk_id 对齐，单 hunk 可独立更新三态。
+CREATE TABLE IF NOT EXISTS team.rdc_hunk_decision (
+  id          UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+  review_id   UUID        NOT NULL REFERENCES team.rdc_diff_review(id) ON DELETE CASCADE,
+  hunk_id     TEXT        NOT NULL,
+  decision    TEXT        NOT NULL DEFAULT 'pending',
+  decided_by  TEXT        NOT NULL DEFAULT '',
+  decided_at  TIMESTAMPTZ,
+  tenant_id   UUID        REFERENCES public.tenants(id),
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE (review_id, hunk_id)
+);
+CREATE INDEX IF NOT EXISTS idx_rdc_hunk_decision_review ON team.rdc_hunk_decision (review_id);
+
+-- ③ 计划确认：问卷 + 可确认任务整体存 JSONB；确认时整体重写 + 更新门禁。
+CREATE TABLE IF NOT EXISTS team.rdc_plan_confirmation (
+  id            UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+  task_id       UUID        NOT NULL REFERENCES team.rdc_dev_task(id) ON DELETE CASCADE,
+  subtask_id    UUID        NOT NULL REFERENCES team.rdc_dev_subtask(id) ON DELETE CASCADE,
+  questionnaire JSONB       NOT NULL DEFAULT '[]'::jsonb,
+  plan_tasks    JSONB       NOT NULL DEFAULT '[]'::jsonb,
+  gate_status   TEXT        NOT NULL DEFAULT 'blocked',
+  confirmed_by  TEXT        NOT NULL DEFAULT '',
+  confirmed_at  TIMESTAMPTZ,
+  tenant_id     UUID        REFERENCES public.tenants(id),
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_rdc_plan_conf_subtask ON team.rdc_plan_confirmation (subtask_id, created_at DESC);
+
+-- ④ 检查点：一次 AI 动作的文件 before/after 快照 + 幂等回滚令牌。
+CREATE TABLE IF NOT EXISTS team.rdc_checkpoint (
+  id             UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+  task_id        UUID        NOT NULL REFERENCES team.rdc_dev_task(id) ON DELETE CASCADE,
+  subtask_id     UUID        NOT NULL REFERENCES team.rdc_dev_subtask(id) ON DELETE CASCADE,
+  ai_action      TEXT        NOT NULL DEFAULT '',
+  files          JSONB       NOT NULL DEFAULT '[]'::jsonb,
+  rollback_token TEXT        NOT NULL,
+  status         TEXT        NOT NULL DEFAULT 'active',
+  created_by     TEXT        NOT NULL DEFAULT '',
+  tenant_id      UUID        REFERENCES public.tenants(id),
+  created_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE (rollback_token)
+);
+CREATE INDEX IF NOT EXISTS idx_rdc_checkpoint_subtask ON team.rdc_checkpoint (subtask_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_rdc_checkpoint_tenant  ON team.rdc_checkpoint (tenant_id, created_at DESC);
+
+-- ⑤ 幂等扩展：审核记录加 detail JSONB，承载四类交互动作的结构化证据。
+--    既有 4 列语义不变；action 扩 5 值，DDL 不加 CHECK。
+ALTER TABLE team.rdc_review_record ADD COLUMN IF NOT EXISTS detail JSONB NOT NULL DEFAULT '{}'::jsonb;
+
+-- 交付证据只追加；seq 定义同需求当前快照的唯一排序口径。
+CREATE TABLE IF NOT EXISTS team.rdc_delivery_record (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  seq BIGSERIAL UNIQUE,
+  requirement_id UUID NOT NULL REFERENCES team.rdc_requirements(id),
+  tenant_id UUID REFERENCES tenants(id),
+  test_result TEXT NOT NULL DEFAULT 'not_registered',
+  test_summary TEXT NOT NULL DEFAULT '',
+  test_report_ref TEXT NOT NULL DEFAULT '',
+  test_registered_by TEXT NOT NULL DEFAULT '',
+  test_registered_at TIMESTAMPTZ,
+  acceptance_status TEXT NOT NULL DEFAULT 'pending',
+  acceptance_items TEXT NOT NULL DEFAULT '[]',
+  acceptance_note TEXT NOT NULL DEFAULT '',
+  accepted_by TEXT NOT NULL DEFAULT '',
+  accepted_at TIMESTAMPTZ,
+  archived BOOLEAN NOT NULL DEFAULT false,
+  archived_by TEXT NOT NULL DEFAULT '',
+  archived_at TIMESTAMPTZ,
+  creator_user_id TEXT NOT NULL DEFAULT '',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_rdc_delivery_tenant_req_seq ON team.rdc_delivery_record (tenant_id, requirement_id, seq DESC);
+CREATE INDEX IF NOT EXISTS idx_rdc_delivery_tenant_seq ON team.rdc_delivery_record (tenant_id, seq DESC);
+
+-- 六·增补 · AI 模型配置（team 专属，不进 FOREACH 循环，solo 无此表）。
+-- tenant_id 提供公司隔离；RequireTeamMode 是模式边界；明文 Key 绝不入库，
+-- api_key_ciphertext / api_key_nonce 为 base64(AES-GCM 密文 / 12B nonce)，
+-- api_key_mask 写入时算好，列表读取不解密。枚举唯一来源是 openapi.yaml，DDL 不加 CHECK。
+CREATE TABLE IF NOT EXISTS team.rdc_ai_model (
+  id                  UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id           UUID        REFERENCES public.tenants(id),
+  name                TEXT        NOT NULL,
+  provider            TEXT        NOT NULL DEFAULT 'scnet',
+  protocol            TEXT        NOT NULL DEFAULT 'openai',
+  base_url            TEXT        NOT NULL,
+  model_id            TEXT        NOT NULL,
+  api_key_ciphertext  TEXT        NOT NULL DEFAULT '',
+  api_key_nonce       TEXT        NOT NULL DEFAULT '',
+  api_key_mask        TEXT        NOT NULL DEFAULT '',
+  is_default          BOOLEAN     NOT NULL DEFAULT false,
+  thinking_enabled    BOOLEAN     NOT NULL DEFAULT false,
+  context_tokens      INTEGER     NOT NULL DEFAULT 8192,
+  extra_config        JSONB       NOT NULL DEFAULT '{}'::jsonb,
+  capabilities        JSONB       NOT NULL DEFAULT '[]'::jsonb,
+  enabled             BOOLEAN     NOT NULL DEFAULT true,
+  created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at          TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+-- 列表形态：租户 + 启用态 + 时间倒序；默认置顶由 ORDER BY is_default DESC 完成。
+CREATE INDEX IF NOT EXISTS idx_rdc_ai_model_tenant_enabled_created
+  ON team.rdc_ai_model (tenant_id, enabled, created_at DESC);
+-- 每公司至多一个默认模型；切换默认在事务内先清后置，唯一索引兜底。
+CREATE UNIQUE INDEX IF NOT EXISTS uq_rdc_ai_model_default
+  ON team.rdc_ai_model (tenant_id) WHERE is_default;
+
+-- 六·增补 · AI 模型调用记录（team 专属，不进 FOREACH 循环，solo 无此表）。
+-- 一行 = 一次 Chat/Test 调用事实（含未出站的本地失败，用 used_upstream 区分）。
+-- 不设物理外键：记录是历史事实，删模型不得抹掉历史；model_id 保留原值 + 名称/标识快照。
+-- token 列**可空**：NULL = 上游没上报 usage（不知道），0 = 上游确实报了 0（如缓存命中）。
+-- 这两件事必须分开——把不知道当零会让容量规划系统性偏低，而统计口径本身只依赖
+-- tokens_reported 标记（SUM ... FILTER (WHERE tokens_reported)），nullable 不会污染求和。
+-- 枚举唯一来源是 openapi.yaml，DDL 不加 CHECK。
+CREATE TABLE IF NOT EXISTS team.rdc_ai_model_call (
+  id                     UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id              UUID        NOT NULL REFERENCES public.tenants(id),
+  model_id               UUID,                              -- 可为 NULL：无匹配 / 限流拒绝时没有目标模型
+  model_name             TEXT        NOT NULL DEFAULT '',   -- 快照：模型改名后历史仍可读
+  model_identifier       TEXT        NOT NULL DEFAULT '',   -- 快照：上游 model 标识
+  protocol               TEXT        NOT NULL DEFAULT '',   -- 快照：当次使用的协议
+  scene                  TEXT        NOT NULL DEFAULT '',   -- 调用方场景标识，空串 = 未声明
+  success                BOOLEAN     NOT NULL DEFAULT false,
+  error_category         TEXT        NOT NULL DEFAULT '',   -- 成功为空串；失败为 7 类之一
+  status_code            INTEGER     NOT NULL DEFAULT 0,    -- 上游状态码；本地失败为 0
+  prompt_tokens          INTEGER,                           -- NULL = 未上报；0 = 真实 0
+  completion_tokens      INTEGER,                           -- 同上
+  tokens_reported        BOOLEAN     NOT NULL DEFAULT false,
+  latency_ms             BIGINT      NOT NULL DEFAULT 0,    -- 本地拒绝为 0；不含写记录耗时
+  used_upstream          BOOLEAN     NOT NULL DEFAULT false,-- 是否真的发出上游请求（限流窗口只数 true）
+  used_default           BOOLEAN     NOT NULL DEFAULT false,
+  used_fallback          BOOLEAN     NOT NULL DEFAULT false,
+  requested_capabilities JSONB       NOT NULL DEFAULT '[]'::jsonb, -- 入参快照：无匹配时可复盘"为什么没选上"
+  requested_min_context  INTEGER     NOT NULL DEFAULT 0,
+  requested_effort       TEXT        NOT NULL DEFAULT '',
+  created_at             TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+-- 存量环境迁移：CREATE TABLE IF NOT EXISTS 不会改已存在表的列约束，
+-- 因此这里必须显式放开 NOT NULL。DROP NOT NULL 对已经可空的列是幂等的（不报错），
+-- 所以本脚本可以反复执行；同时 DROP DEFAULT 让"未上报"真正落 NULL 而不是被默认值兜成 0。
+ALTER TABLE team.rdc_ai_model_call ALTER COLUMN prompt_tokens DROP NOT NULL;
+ALTER TABLE team.rdc_ai_model_call ALTER COLUMN prompt_tokens DROP DEFAULT;
+ALTER TABLE team.rdc_ai_model_call ALTER COLUMN completion_tokens DROP NOT NULL;
+ALTER TABLE team.rdc_ai_model_call ALTER COLUMN completion_tokens DROP DEFAULT;
+-- 统计页面与限流窗口的共同入口：同租户 + 时间倒序 range scan。
+CREATE INDEX IF NOT EXISTS idx_rdc_ai_model_call_tenant_created
+  ON team.rdc_ai_model_call (tenant_id, created_at DESC);
+-- 限流窗口专用部分索引：只扫"已出站"的行，"被拒不计入"靠索引条件直接落地。
+CREATE INDEX IF NOT EXISTS idx_rdc_ai_model_call_upstream
+  ON team.rdc_ai_model_call (tenant_id, created_at DESC) WHERE used_upstream;
+-- 按模型分组统计（groupBy=model 的主路径）。
+CREATE INDEX IF NOT EXISTS idx_rdc_ai_model_call_tenant_model_created
+  ON team.rdc_ai_model_call (tenant_id, model_id, created_at DESC);
+
+-- 六·增补 · AI 模型软限流阈值（team 专属，每公司一行）。
+-- 关注点单一：不复用 public.system_settings（那里已是 Webhook / 外部 API Key / Git 路径的集合体，
+-- 且全局键值表做"每公司一行"只能靠 key 字符串拼接，加不了唯一约束与类型安全）。
+-- 判定只认四元组 (enabled, window_minutes, max_calls, action)；未来加 token 维度不改 DDL，
+-- 新维度配置写进 extra_config（未知键原样保留、缺失补默认）。
+CREATE TABLE IF NOT EXISTS team.rdc_ai_model_quota (
+  tenant_id       UUID        PRIMARY KEY REFERENCES public.tenants(id),
+  enabled         BOOLEAN     NOT NULL DEFAULT false,
+  max_calls       INTEGER     NOT NULL DEFAULT 1000,
+  window_minutes  INTEGER     NOT NULL DEFAULT 60,
+  action          TEXT        NOT NULL DEFAULT 'warn',   -- warn | reject
+  extra_config    JSONB       NOT NULL DEFAULT '{}'::jsonb,
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at      TIMESTAMPTZ NOT NULL DEFAULT now()
 );

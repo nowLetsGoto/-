@@ -1,0 +1,131 @@
+classDiagram
+    class DevSubtask {
+        +string ID
+        +string Kind
+        +string Status
+        +string Note
+        +string CreatedAt
+        +string UpdatedAt
+    }
+    class DevTask {
+        +string ID
+        +string Title
+        +string RequirementID
+        +string ReqKey
+        +string RequirementTitle
+        +string ProjectName
+        +string OverallStatus
+        +string FrontendStatus
+        +string BackendStatus
+        +string CreatorUserID
+        +string CreatorName
+        +string CreatedAt
+        +string UpdatedAt
+    }
+    class DevTaskDetail {
+        +DevTask base
+        +DevSubtask[] Subtasks
+    }
+    class DevTaskInput {
+        +string Title
+        +string RequirementID
+    }
+    class DevTaskUpdate {
+        +string Title
+        +string RequirementID
+        +DevSubtaskNoteUpdate[] Subtasks
+        note "无 status 字段"
+    }
+    class DevSubtaskNoteUpdate {
+        +string ID
+        +string Note
+        note "无 status 字段"
+    }
+    class DevTaskQuery {
+        +PageQuery Page
+        +string ReqKey
+        +string Status
+    }
+    class DevTaskList {
+        +DevTask[] Items
+        +int Page
+        +int PageSize
+        +int Total
+    }
+    class DevStateMachine {
+        <<contract>>
+        +string[] DevSubtaskStatuses
+        +map DevAdvance
+        +DevNextStatus(from) string, bool
+        +CanSkipDevStatus(from) bool
+        +IsDevTerminal(s) bool
+        +DevStatusOrdinal(s) int
+        +AggregateDevStatus(statuses) string
+    }
+    class DevRepository {
+        -sql.DB db
+        -string table
+        -string subtaskTable
+        +CreateWithSubtasks(ctx, in, creatorID, tenantID) DevTaskDetail
+        +List(ctx, query, scope) DevTaskList
+        +FindByID(ctx, id, scope) DevTaskDetail
+        +FindSubtask(ctx, taskID, subtaskID, scope) DevSubtask
+        +UpdateTask(ctx, id, in, scope) DevTaskDetail
+        +UpdateSubtaskNote(ctx, taskID, subtaskID, note, scope) bool
+        +UpdateStatusIf(ctx, taskID, subtaskID, from, to, scope) bool
+        +Delete(ctx, id, scope) error
+    }
+    class RequirementValidator {
+        <<interface>>
+        +ExistsVisibleByID(ctx, id, scope) bool
+    }
+    class RequirementRepository {
+        +ExistsVisibleByID(ctx, id, scope) bool
+    }
+    class DevService {
+        -DevRepository repo
+        -RequirementValidator requirements
+        +Create(ctx, caller, scope, in) DevTaskDetail
+        +List(ctx, query, scope) DevTaskList
+        +Get(ctx, id, scope) DevTaskDetail
+        +Update(ctx, scope, id, in) DevTaskDetail
+        +Delete(ctx, scope, id) error
+        +Advance(ctx, scope, taskID, subtaskID) DevSubtask
+        +Skip(ctx, scope, taskID, subtaskID) DevSubtask
+        -validateTitle(in) error
+    }
+    class DevHandler {
+        -DevService svc
+        -AuditService audit
+        +List(w, r) error
+        +Create(w, r) error
+        +Get(w, r) error
+        +Update(w, r) error
+        +Delete(w, r) error
+        +Advance(w, r) error
+        +Skip(w, r) error
+    }
+    class AuditService {
+        +Record(ctx, actor, action, objectType, objectID, detail, ip) void
+    }
+    class Identity {
+        +string UserID
+        +string TenantID
+        +SessionMode Mode
+    }
+    class Scope {
+        +bool All
+        +string TenantID
+        +bool TeamScoped
+    }
+
+    DevService --> DevRepository : depends
+    DevService --> RequirementValidator : rebind/create validation
+    RequirementRepository ..|> RequirementValidator : implements
+    DevService ..> DevStateMachine : only status writer
+    DevHandler --> DevService : calls
+    DevHandler --> AuditService : 5 events
+    DevRepository ..> DevTaskDetail : maps rows
+    DevRepository ..> DevSubtask : maps rows
+    DevService ..> Identity : creator
+    DevService ..> Scope : isolation

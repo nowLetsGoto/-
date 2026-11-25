@@ -1,0 +1,84 @@
+sequenceDiagram
+    autonumber
+    participant C as 调用方<br/>(service 内其他模块)
+    participant CS as ChatService<br/>model_chat.go
+    participant SEL as chat_select.go<br/>(纯函数)
+    participant QT as chat_quota.go<br/>(纯函数)
+    participant QR as AIQuotaRepository
+    participant CR as AIModelCallRepository
+    participant MR as AIModelRepository
+    participant CD as modelkey.Codec
+    participant TR as chat_transport.go
+    participant SP as protocol_*.go
+    participant UP as 上游 LLM
+
+    C->>CS: Chat(ctx, ChatRequest{TenantID, Scene, Messages,<br/>Capabilities?, MinContextTokens?, ReasoningEffort?})
+    CS->>CS: ResolveScope(TenantID) — 超管缺 tenantId → ErrAITenantRequired
+    CS->>CS: normalizeNeeds(req) → ChatNeeds（裁剪/去重/档位校验）
+    CS->>CS: startedAt = now()
+
+    rect rgb(255, 245, 230)
+    Note over CS,QR: ① 限流判定（先于选模）
+    CS->>QR: Get(scope)
+    QR-->>CS: AIQuotaConfig{Enabled, MaxCalls, WindowMinutes, Action}
+    alt cfg.Enabled
+        CS->>CR: CountInWindow(scope, windowMinutes)
+        CR-->>CS: usedInWindow
+        CS->>QT: decideQuota(cfg, usedInWindow)
+        QT-->>CS: QuotaDecision{Allow, Warn}
+    else 未启用 / 读取失败(→enabled=false)
+        CS->>CS: QuotaDecision{Allow:true}
+    end
+    end
+
+    alt decision.Allow == false
+        Note over CS,UP: ② reject 分支：上游零请求
+        CS->>CR: Insert(buildCallRecord(success=false,<br/>error_category=rate_limited, used_upstream=false))
+        CR-->>CS: (写失败仅 slog.Error，忽略)
+        CS-->>C: ChatError{Category: "rate_limited"}
+    else Allowed
+        rect rgb(232, 245, 255)
+        Note over CS,MR: ③ 取候选 + 选模
+        CS->>MR: ListEnabled(scope)
+        MR-->>CS: []AIModelRecord（同租户 + enabled）
+        CS->>SEL: selectModel(candidates, needs)
+        alt needs.Declared() == false
+            SEL->>SEL: Step1 零值短路 = P0 语义<br/>is_default DESC, created_at ASC
+        else 已声明
+            SEL->>SEL: Step2 enabled → Step3 context ≥ →<br/>Step4 effort ≥ → Step5 capabilities AND →<br/>Step6 稳定排序取首
+        end
+        SEL-->>CS: AIModelRecord 或 capability_mismatch
+        end
+
+        alt 无候选 / capability_mismatch
+            CS->>CR: Insert(buildCallRecord(success=false,<br/>error_category=capability_mismatch, used_upstream=false))
+            CS-->>C: ChatError{Category: "capability_mismatch"}
+        else 选中模型
+            rect rgb(235, 250, 235)
+            Note over CS,CD: ④ 取 Key（明文只在此段存活）
+            CS->>CD: Open(record.Ciphertext, record.Nonce)
+            CD-->>CS: plainKey（仅在栈上，绝不进 DTO/日志/错误）
+            end
+
+            rect rgb(240, 240, 255)
+            Note over CS,SP: ⑤ 协议分支（差异全在 chatOnce 内部）
+            CS->>SP: protocolSpec(record.Protocol) → spec
+            CS->>SP: spec.build(record, params, messages)
+            SP-->>CS: endpoint, header, body
+            CS->>TR: transport(ctx, client, endpoint, header, plainKey, timeoutMS)
+            TR->>UP: client.Do(POST)  ★ 唯一 HTTP 出口
+            Note over TR: 出站已发生 → used_upstream = true<br/>（此赋值全项目仅出现一次）
+            UP-->>TR: raw bytes / statusCode / transportErr
+            TR-->>CS: raw, statusCode, transportErr
+            CS->>SP: spec.parse(raw, statusCode, record, plainKey)
+            SP-->>CS: ChatResult 或 ChatError
+            end
+
+            rect rgb(250, 240, 250)
+            Note over CS,CR: ⑥ 落统计（旁路，失败不影响结果）
+            CS->>CR: Insert(buildCallRecord(...success, tokens_reported,<br/>latency_ms, used_upstream=true, 需求快照))
+            CR-->>CS: (写失败仅 slog.Error)
+            end
+            CS-->>C: ChatResult{Content, ReasoningContent, ModelID,<br/>UsedDefault, UsedFallback, LatencyMS, tokens}
+        end
+    end

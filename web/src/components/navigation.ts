@@ -170,6 +170,14 @@ export const NAV_SECTIONS: ReadonlyArray<NavSection> = [
         scope: 'platform',
         envScoped: false,
       },
+      {
+        label: 'AI模型',
+        path: '/rdc/models',
+        permission: 'rdc.model.read',
+        icon: 'model',
+        scope: 'platform',
+        envScoped: false,
+      },
     ],
   },
   {

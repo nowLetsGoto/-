@@ -115,10 +115,10 @@ func TestAllMenuKeysMatchesCatalog(t *testing.T) {
 }
 
 // TestRDCMenusAreLegalButNotAutoGranted 钉住研发中心菜单的授权基线。
-// 4 个菜单必须是合法的可授权项（管理员能勾选），但默认不进内置角色的自动授权集合
+// 5 个菜单必须是合法的可授权项（管理员能勾选），但默认不进内置角色的自动授权集合
 // （默认不含 RDC）；缺任一半都会破坏"按需授权"的安全模型。
 func TestRDCMenusAreLegalButNotAutoGranted(t *testing.T) {
-	rdc := []string{"/rdc/requirements", "/rdc/dev", "/rdc/review", "/rdc/delivery"}
+	rdc := []string{"/rdc/requirements", "/rdc/dev", "/rdc/review", "/rdc/delivery", "/rdc/models"}
 	defaults := make(map[string]struct{})
 	for _, key := range DefaultMenuKeys() {
 		defaults[key] = struct{}{}
@@ -146,9 +146,9 @@ func TestRDCMenusAreLegalButNotAutoGranted(t *testing.T) {
 // TestDefaultMenuKeysKeepsLegacyBaseline 保证既有菜单仍默认自动授予，
 // 避免引入 AutoGrantBuiltin 时不小心把老菜单也排除在内置角色之外。
 func TestDefaultMenuKeysKeepsLegacyBaseline(t *testing.T) {
-	if len(DefaultMenuKeys()) != len(Menus)-4 {
-		t.Fatalf("默认菜单应为目录减去 4 个研发中心菜单：期望 %d，实际 %d",
-			len(Menus)-4, len(DefaultMenuKeys()))
+	if len(DefaultMenuKeys()) != len(Menus)-5 {
+		t.Fatalf("默认菜单应为目录减去 5 个研发中心菜单：期望 %d，实际 %d",
+			len(Menus)-5, len(DefaultMenuKeys()))
 	}
 	for _, menu := range Menus {
 		if menu.Group == "研发中心" {

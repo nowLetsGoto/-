@@ -7,6 +7,7 @@
 package settings
 
 import (
+	"context"
 	"net/http"
 
 	"dandelion/server/internal/authctx"
@@ -66,6 +67,30 @@ func (h *Handler) RotateAPIKey(w http.ResponseWriter, r *http.Request) error {
 	h.audit.Record(r.Context(), authctx.From(r.Context()), "apikey.rotated", "settings", "api-key",
 		map[string]any{}, handler.ClientIP(r))
 	return handler.OK(w, contract.ApiKeyResult{ApiKey: key})
+}
+
+// GetGitRepo 返回当前公司精确配置和只读允许根提示。
+func (h *Handler) GetGitRepo(w http.ResponseWriter, r *http.Request) error {
+	data, err := h.settings.GetGitRepo(r.Context(), authctx.ScopeFrom(r.Context()))
+	if err != nil {
+		return err
+	}
+	return handler.OK(w, data)
+}
+
+// UpdateGitRepo 写入配置；审计只记 configured 布尔，不记录绝对路径。
+func (h *Handler) UpdateGitRepo(w http.ResponseWriter, r *http.Request) error {
+	var in contract.GitRepoInput
+	if err := handler.DecodeJSON(w, r, &in, "gitRepoPath"); err != nil {
+		return err
+	}
+	data, err := h.settings.UpdateGitRepo(r.Context(), authctx.ScopeFrom(r.Context()), in)
+	if err != nil {
+		return err
+	}
+	scope := authctx.ScopeFrom(r.Context())
+	h.audit.Record(context.WithoutCancel(r.Context()), authctx.From(r.Context()), "rdc.delivery.repo_configured", "settings", scope.TenantID, map[string]any{"configured": data.Configured}, handler.ClientIP(r))
+	return handler.OK(w, data)
 }
 
 // Test 发一条示例消息；目标不可达也返回 200，结果由 delivered / statusCode / message 表达。
