@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"os"
 	"path"
 	"path/filepath"
 	"strings"
@@ -38,6 +39,24 @@ func NewPaths(root string) (*Paths, error) {
 func (p *Paths) Root() string       { return p.root }
 func (p *Paths) TmpDir() string     { return filepath.Join(p.root, "tmp") }
 func (p *Paths) UploadsDir() string { return filepath.Join(p.root, "uploads") }
+
+// FreeBytes 返回存储根所在文件系统的可用字节数。
+//
+// 目录可能尚未创建（首次运行、刚清空），此时向上找到第一个存在的祖先再查：
+// 同一文件系统内的可用空间相同，这样不必为了查空间去创建一个空目录。
+func (p *Paths) FreeBytes() (int64, error) {
+	dir := p.root
+	for {
+		if _, err := os.Stat(dir); err == nil {
+			return DiskFree(dir)
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return DiskFree(dir) // 到达挂载根，交给 syscall 报错
+		}
+		dir = parent
+	}
+}
 
 func (p *Paths) StagePath(token, ext string) string {
 	return filepath.Join(p.TmpDir(), token+"."+ext)

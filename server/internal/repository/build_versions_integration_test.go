@@ -34,12 +34,16 @@ func TestPublicVersionsAcrossEnvironments(t *testing.T) {
 	defer cancel()
 	for _, query := range []string{
 		`CREATE TEMP TABLE download_version_projects (id TEXT PRIMARY KEY, key TEXT, icon_url TEXT)`,
+		// 列必须与 buildColumns 完全对齐：rowToBuild 按固定顺序 Scan，
+		// 少一列就会在读取时报 "column does not exist"，而不是静默缺字段。
 		`CREATE TEMP TABLE download_version_builds (
 			id TEXT PRIMARY KEY, project_id TEXT, environment TEXT, platform TEXT,
 			app_name TEXT, package_id TEXT, version TEXT, build_number TEXT,
 			changelog TEXT, original_file_name TEXT, file_size BIGINT, file_ext TEXT,
 			relative_path TEXT, meta_source TEXT, download_count BIGINT,
-			created_at TIMESTAMPTZ, owner_user_id TEXT
+			created_at TIMESTAMPTZ, owner_user_id TEXT,
+			r2_key TEXT NOT NULL DEFAULT '', pin_kind TEXT NOT NULL DEFAULT '',
+			r2_state TEXT NOT NULL DEFAULT 'pending', local_state TEXT NOT NULL DEFAULT 'absent'
 		)`,
 		`INSERT INTO download_version_projects VALUES ('project-a', 'app', ''), ('project-b', 'other', '')`,
 		`INSERT INTO download_version_builds

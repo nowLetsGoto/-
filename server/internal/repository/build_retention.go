@@ -29,6 +29,10 @@ type RetentionRow struct {
 	PinKind        string
 	CreatedAt      time.Time
 	LastAccessedAt *time.Time
+	// RelativePath 与 FileSize 供淘汰前核对本机副本：
+	// 删掉 R2 对象前必须确认本机有等价文件，否则这个包会彻底消失。
+	RelativePath string
+	FileSize     int64
 }
 
 // ListRetentionCandidates 读出一个租户下所有仍在 R2 的包，供淘汰算法决策。
@@ -38,7 +42,8 @@ type RetentionRow struct {
 // 是因为淘汰后 key 故意保留，按 key 判会把已回收的包重新算进候选，
 // 每轮巡检都重复处理同一批对象。
 func (r *BuildRepository) ListRetentionCandidates(ctx context.Context, tenantID string) ([]RetentionRow, error) {
-	query := `SELECT b.id, p.tenant_id, b.r2_key, b.r2_bytes, b.pin_kind, b.created_at, b.last_accessed_at
+	query := `SELECT b.id, p.tenant_id, b.r2_key, b.r2_bytes, b.pin_kind, b.created_at,
+       b.last_accessed_at, b.relative_path, b.file_size
 FROM ` + r.table + ` b
 JOIN ` + r.project + ` p ON p.id = b.project_id
 WHERE p.tenant_id = $1 AND b.r2_state = $2 AND b.r2_bytes > 0
@@ -55,7 +60,7 @@ ORDER BY b.created_at DESC`
 		var row RetentionRow
 		var accessed sql.NullTime
 		if err := rows.Scan(&row.ID, &row.TenantID, &row.R2Key, &row.R2Bytes,
-			&row.PinKind, &row.CreatedAt, &accessed); err != nil {
+			&row.PinKind, &row.CreatedAt, &accessed, &row.RelativePath, &row.FileSize); err != nil {
 			return nil, fmt.Errorf("读取淘汰候选失败: %w", err)
 		}
 		if accessed.Valid {

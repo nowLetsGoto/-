@@ -87,8 +87,8 @@ func (r *BuildRepository) Insert(ctx context.Context, projectID string, b *contr
 	query := `INSERT INTO ` + r.table + ` (
 		id, project_id, environment, platform, app_name, package_id, version, build_number,
 		changelog, original_file_name, file_size, file_ext, relative_path,
-		meta_source, download_count, created_at, owner_user_id
-	) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, now(), $16)
+		meta_source, download_count, created_at, owner_user_id, local_state
+	) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, now(), $16, $17)
 	RETURNING created_at, download_count`
 
 	var createdAt time.Time
@@ -96,7 +96,7 @@ func (r *BuildRepository) Insert(ctx context.Context, projectID string, b *contr
 	err = tx.QueryRowContext(ctx, query,
 		b.ID, projectID, b.Environment, b.Platform, b.AppName, b.PackageID, b.Version, b.BuildNumber,
 		b.Changelog, b.OriginalFileName, b.FileSize, b.FileExt, b.RelativePath,
-		b.MetaSource, 0, ownerUserID(b.OwnerUserID),
+		b.MetaSource, 0, ownerUserID(b.OwnerUserID), b.LocalState,
 	).Scan(&createdAt, &count)
 	if err != nil {
 		return fmt.Errorf("写入包元数据失败: %w", err)

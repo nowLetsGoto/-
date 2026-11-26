@@ -82,8 +82,10 @@ func TestMarkEvictedKeepsRow(t *testing.T) {
 		t.Fatalf("淘汰后记录不应消失，但查不到: %v", err)
 	}
 
-	if gotKey != "" {
-		t.Fatalf("r2_key 应被清空（否则会签发失效直链），got=%q", gotKey)
+	// r2_key 必须保留：它是「同步到 R2」重推的目标对象名。
+	// 清空后重推就得重新生成 key，而新 key 很可能丢掉 {租户}/{项目}/ 归属前缀。
+	if gotKey != testKey {
+		t.Fatalf("r2_key 应保留供重推复用，got=%q want=%q", gotKey, testKey)
 	}
 	if gotBytes != 0 {
 		t.Fatalf("r2_bytes 应归零（否则容量统计不释放），got=%d", gotBytes)

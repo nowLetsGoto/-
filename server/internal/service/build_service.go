@@ -375,6 +375,11 @@ func (s *BuildService) Create(ctx context.Context, in contract.CommitInput, iden
 		MetaSource:       metaSource,
 		DownloadCount:    0,
 		OwnerUserID:      identity.UserID,
+		// 本机留底状态在建记录时就确定：
+		//   直传包（staged.r2Key 非空）字节只在 R2，本机没有 → absent，等后台拉回；
+		//   普通上传已把暂存文件 move 到正式目录，本机就是权威副本 → present。
+		// 不写成"插入后再补一次状态"，是为了避免中间出现「记录已存在但状态未知」的窗口。
+		LocalState: localStateFor(staged.r2Key),
 	}
 
 	if err := repo.Insert(ctx, project.ID, &build); err != nil {
@@ -413,6 +418,10 @@ func (s *BuildService) Create(ctx context.Context, in contract.CommitInput, iden
 			// 下载名元数据已在直传时写入，此处无需再补。
 			s.prewarmCDNAsync(staged.r2Key)
 		}
+		// 直传包的字节只在 R2，本机还没有副本：立即排队拉回。
+		// 异步执行，不阻塞发布——用户此刻已经能通过 CDN 下载，
+		// 留底只是为了将来淘汰后仍可下载。
+		go s.PullLocal(context.Background(), mode, build.ID)
 		return build, nil
 	}
 	// 镜像到 R2 是纯加速旁路：后台执行，失败只记日志。

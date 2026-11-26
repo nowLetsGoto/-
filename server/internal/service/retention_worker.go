@@ -63,11 +63,14 @@ func (s *BuildService) RunRetentionWorker(ctx context.Context, tenants retention
 	}()
 }
 
-// sweepOnce 对所有租户的每个分区各执行一次淘汰。
+// sweepOnce 对所有租户的每个分区各执行一次「补拉 + 淘汰」。
 //
 // 为什么要遍历两个分区：同一个租户在 team 与 solo 里都可能有项目
 // （实测默认公司既有 2 个团队项目也有 1 个单人项目）。只扫一个分区
 // 会让另一边的包永远超额而无人处理。
+//
+// 为什么先补拉后淘汰：淘汰要求本机有副本才敢删 R2，否则包会彻底消失。
+// 先补拉能让本轮淘汰多一些可用副本，减少「因缺副本而跳过」的情况。
 //
 // 单个租户失败只记日志并继续：某个租户的数据库抖动不该让其余租户
 // 长期超额。整轮结束后汇总一行，便于在日志里一眼看出这轮做了多少事。
@@ -79,26 +82,33 @@ func (s *BuildService) sweepOnce(ctx context.Context, tenants retentionTenantLis
 	}
 
 	start := time.Now()
-	total, failed := 0, 0
+	pulled, evicted, failed := 0, 0, 0
 	for _, tenantID := range ids {
 		for _, mode := range []contract.SessionMode{contract.ModeTeam, contract.ModeSolo} {
 			// 每个租户单独限时：一个租户的慢查询不该拖住其余租户，
 			// 也不该让整轮巡检越过下一次触发点。
 			tenantCtx, cancel := context.WithTimeout(ctx, retentionTenantTimeout)
-			n, err := s.EvictTenant(tenantCtx, mode, tenantID)
-			cancel()
 
+			n, err := s.pullPendingLocal(tenantCtx, mode, tenantID)
+			if err != nil {
+				log.Printf("补拉本机：租户 %s 分区 %s 失败 err=%v", tenantID, mode, err)
+				failed++
+			}
+			pulled += n
+
+			n, err = s.EvictTenant(tenantCtx, mode, tenantID)
 			if err != nil {
 				log.Printf("淘汰巡检：租户 %s 分区 %s 失败 err=%v", tenantID, mode, err)
 				failed++
-				continue
 			}
-			total += n
+			evicted += n
+
+			cancel()
 		}
 	}
 
-	log.Printf("淘汰巡检完成：%d 个租户 × 2 分区，淘汰 %d 个对象，失败 %d 次，耗时 %s",
-		len(ids), total, failed, time.Since(start).Round(time.Millisecond))
+	log.Printf("巡检完成：%d 个租户 × 2 分区，补拉 %d 个、淘汰 %d 个对象，失败 %d 次，耗时 %s",
+		len(ids), pulled, evicted, failed, time.Since(start).Round(time.Millisecond))
 }
 
 // retentionTenantTimeout 限制单个租户的巡检时长。

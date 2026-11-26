@@ -17,62 +17,6 @@ import (
 	"dandelion/server/internal/contract"
 )
 
-// TestMarkEvictedKeepsKeyForResync 验证淘汰保留 r2_key。
-//
-// 这是「同步到 R2」能工作的前提：重推需要知道推到哪个对象名。
-// 若清空 key，重推就得重新生成，而新 key 很可能丢掉 {租户}/{项目}/ 归属前缀，
-// 对象成孤儿后再也无法判断属于谁。
-func TestMarkEvictedKeepsKeyForResync(t *testing.T) {
-	db, skip := openTestDB(t)
-	if skip != "" {
-		t.Skip(skip)
-	}
-	ctx := context.Background()
-
-	var projectID string
-	if err := db.QueryRowContext(ctx,
-		`SELECT id::text FROM team.projects LIMIT 1`).Scan(&projectID); err != nil {
-		t.Skipf("跳过：没有可用于构造测试的项目 %v", err)
-	}
-
-	const testKey = "mirror-test/evict-retain.apk"
-	var buildID string
-	err := db.QueryRowContext(ctx, `
-		INSERT INTO team.builds
-			(project_id, environment, platform, app_name, original_file_name, file_size,
-			 file_ext, relative_path, r2_key, r2_state, r2_bytes)
-		VALUES ($1, 'test', 'android', 'mirror-probe', 'probe.apk', 1024,
-		 'apk', 'test/android/mirror-probe.apk', $2, $3, 1024)
-		RETURNING id::text`, projectID, testKey, contract.R2StateSynced).Scan(&buildID)
-	if err != nil {
-		t.Fatalf("构造测试包失败: %v", err)
-	}
-	defer db.ExecContext(ctx, `DELETE FROM team.builds WHERE id = $1`, buildID)
-
-	repo := newBuildRepository(db, PartitionTeam, false)
-	if err := repo.MarkEvicted(ctx, []string{buildID}); err != nil {
-		t.Fatalf("标记淘汰失败: %v", err)
-	}
-
-	var gotKey, gotState string
-	var gotBytes int64
-	if err := db.QueryRowContext(ctx,
-		`SELECT r2_key, r2_state, r2_bytes FROM team.builds WHERE id = $1`, buildID).
-		Scan(&gotKey, &gotState, &gotBytes); err != nil {
-		t.Fatalf("查询失败: %v", err)
-	}
-
-	if gotKey != testKey {
-		t.Fatalf("淘汰必须保留 r2_key 供重推复用，got=%q want=%q", gotKey, testKey)
-	}
-	if gotState != contract.R2StateEvicted {
-		t.Fatalf("状态应为 evicted，got=%q", gotState)
-	}
-	if gotBytes != 0 {
-		t.Fatalf("占用应归零以释放配额，got=%d", gotBytes)
-	}
-}
-
 // TestEvictedBuildLeavesRetentionCandidates 验证已淘汰的包不再进候选。
 //
 // 淘汰后 r2_key 仍在，若候选筛选仍按「key 是否为空」判断，
