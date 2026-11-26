@@ -1248,6 +1248,8 @@ export interface components {
             downloadPageUrl: string;
             /** @description 有效分享的绝对文件地址，下载按钮的唯一来源；分享失效时为空串 */
             downloadFileUrl: string;
+            /** @description 非空表示该版本被固定、永不参与容量淘汰（manual 为人工钉住）；空串表示可淘汰 */
+            pinKind: string;
             /**
              * Format: date-time
              * @description ISO 8601 UTC

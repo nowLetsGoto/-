@@ -133,6 +133,33 @@ BEGIN
   END LOOP;
 END $$;
 
+-- 存储治理字段：让版本淘汰可计算、可干预、可追溯。
+--
+-- 为什么需要它们：原先只有 r2_key 一个字段，只知道"有没有对象名"，
+-- 不知道同步是否成功、对象多大、是否允许淘汰、多久没被下载——
+-- 缺少这些信息就无法安全地决定该删哪个版本。
+--
+-- 全部带默认值：存量包可原地升级，无需回填脚本；
+-- r2_bytes 由 Worker 首次扫描补齐，默认 0 表示"未统计"，不计入预算。
+DO $$
+DECLARE
+  s TEXT;
+BEGIN
+  FOREACH s IN ARRAY ARRAY['team', 'solo'] LOOP
+    -- 对象同步状态：pending 待同步 / synced 已同步 / failed 同步失败 / local_only 仅本机。
+    EXECUTE format($q$ALTER TABLE %I.builds ADD COLUMN IF NOT EXISTS r2_state TEXT NOT NULL DEFAULT 'pending'$q$, s);
+    EXECUTE format('ALTER TABLE %I.builds ADD COLUMN IF NOT EXISTS r2_synced_at TIMESTAMPTZ', s);
+    -- R2 上对象的真实字节数，预算计算与用量统计的唯一依据。
+    EXECUTE format('ALTER TABLE %I.builds ADD COLUMN IF NOT EXISTS r2_bytes BIGINT NOT NULL DEFAULT 0', s);
+    -- 固定标记：空串表示可淘汰；manual 为人工钉住，永不进入淘汰候选。
+    EXECUTE format($q$ALTER TABLE %I.builds ADD COLUMN IF NOT EXISTS pin_kind TEXT NOT NULL DEFAULT ''$q$, s);
+    EXECUTE format('ALTER TABLE %I.builds ADD COLUMN IF NOT EXISTS pinned_at TIMESTAMPTZ', s);
+    EXECUTE format($q$ALTER TABLE %I.builds ADD COLUMN IF NOT EXISTS pinned_by TEXT NOT NULL DEFAULT ''$q$, s);
+    -- 最近下载时间：额度紧张时优先淘汰"没人下载的旧包"，比纯按时间更贴近实际价值。
+    EXECUTE format('ALTER TABLE %I.builds ADD COLUMN IF NOT EXISTS last_accessed_at TIMESTAMPTZ', s);
+  END LOOP;
+END $$;
+
 -- 索引按查询形态建，两个 schema 各自持有一份同名索引。
 DO $$
 DECLARE

@@ -2737,6 +2737,7 @@ components:
         - downloadSharePath
         - downloadPageUrl
         - downloadFileUrl
+        - pinKind
         - createdAt
       properties:
         id:
@@ -2783,6 +2784,9 @@ components:
         downloadSharePath:
           type: string
           description: 带 shareToken 的相对路径 /d/{id}?shareToken=...，后台「下载页」按钮用它打开分享页（免登录）；分享失效时为空串
+        pinKind:
+          type: string
+          description: 非空表示该版本被固定、永不参与容量淘汰（manual 为人工钉住）；空串表示可淘汰
         downloadPageUrl:
           type: string
           description: 有效分享的绝对地址，二维码与复制的唯一来源；分享失效时为空串

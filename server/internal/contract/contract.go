@@ -1160,7 +1160,11 @@ type Build struct {
 	// 与 DownloadPagePath 只差 query：后者是内部预览（需登录），前者打开对外
 	// 分享页（免登录），符合运营人员点按钮的预期。无有效分享时为空串。
 	DownloadSharePath string `json:"downloadSharePath"`
-	CreatedAt         string `json:"createdAt"`
+	// PinKind 非空表示该版本被固定，永不参与容量淘汰。前端据此显示"已固定"。
+	// 其余治理字段（同步状态、字节数、访问时间）不进列表 DTO：
+	// 列表不需要它们，多读只会让每次查询为无关数据付出代价。
+	PinKind   string `json:"pinKind"`
+	CreatedAt string `json:"createdAt"`
 	// OwnerUserID 是上传者账号 id；system 表示由外部 API 或历史数据产生。
 	OwnerUserID string `json:"ownerUserId"`
 }

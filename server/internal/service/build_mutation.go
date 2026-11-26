@@ -63,6 +63,14 @@ func (s *BuildService) Update(ctx context.Context, id string, in contract.BuildU
 	return items[0], nil
 }
 
+// Delete 删除一个包，并清理它的两份字节：本机磁盘与 R2 对象。
+//
+// 为什么要连同 R2 一起删：下载已 302 到 CDN，R2 才是实际被访问的副本。
+// 只删本地会留下永久占用的孤儿对象，而界面上再无任何入口能发现它。
+//
+// 清理顺序：先删数据库行（拿到 relative_path 与 r2_key），再删两份字节。
+// 字节删除失败只记日志——数据库记录已消失，重试无从定位，因此不阻断响应；
+// 落下的孤儿对象由 Worker 的孤儿扫描兜底。
 func (s *BuildService) Delete(ctx context.Context, id string, identity contract.Identity) (contract.Build, error) {
 	build, project, err := s.buildInScope(ctx, id, identity, "build.delete")
 	if err != nil {
@@ -72,12 +80,25 @@ func (s *BuildService) Delete(ctx context.Context, id string, identity contract.
 	if err != nil {
 		return contract.Build{}, err
 	}
-	// DELETE 已提交，关联分享授权已级联移除；只清理实际删除行返回的路径。
-	abs, resolveErr := s.paths.SafeResolve(relativePath)
-	if resolveErr != nil {
-		log.Printf("删除包后路径校验失败 id=%s err=%v", id, resolveErr)
-	} else if err := os.Remove(abs); err != nil && !errors.Is(err, os.ErrNotExist) {
-		log.Printf("删除包后清理文件失败 id=%s err=%v", id, err)
-	}
+	// 关联分享授权已随 DELETE 级联移除，这里只清理字节。
+	s.removeBuildBytes(ctx, id, relativePath, build.R2Key)
 	return build, nil
+}
+
+// removeBuildBytes 清理一个包在本机与 R2 上的字节，两份都可缺失。
+//
+// 独立成方法是为了让 Delete 与后续的淘汰执行器共用同一套清理语义，
+// 避免两处各写一遍"删文件 + 删对象"而逐渐漂移。
+func (s *BuildService) removeBuildBytes(ctx context.Context, id, relativePath, r2Key string) {
+	if abs, err := s.paths.SafeResolve(relativePath); err != nil {
+		log.Printf("清理包字节：路径校验失败 id=%s err=%v", id, err)
+	} else if err := os.Remove(abs); err != nil && !errors.Is(err, os.ErrNotExist) {
+		log.Printf("清理包字节：删除本地文件失败 id=%s err=%v", id, err)
+	}
+	if r2Key == "" || s.r2 == nil {
+		return
+	}
+	if err := s.r2.DeleteObject(ctx, r2Key); err != nil {
+		log.Printf("清理包字节：删除 R2 对象失败 id=%s key=%s err=%v", id, r2Key, err)
+	}
 }

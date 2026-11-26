@@ -260,14 +260,16 @@ func TestCommitRequestHasExactlyNineFields(t *testing.T) {
 	}
 }
 
-// TestBuildHasThreeURLsAndCount 断言 Build 带 4 个地址字段与下载次数，供前端零拼接消费。
+// TestBuildHasThreeURLsAndCount 断言 Build 带 4 个地址字段、下载次数与固定标记。
 // downloadSharePath 与 downloadPagePath 成对存在：前者带凭证供后台按钮跳分享页，
 // 后者是内部预览回退值，缺任一都会让「下载页」按钮行为不一致。
+// pinKind 是淘汰保护的唯一前端可见信号，缺了就无法在列表上标记"已固定"。
 func TestBuildHasThreeURLsAndCount(t *testing.T) {
 	spec := loadSpec(t)
 	build := spec.Components.Schemas["Build"].Properties
 	for _, field := range []string{
-		"downloadPagePath", "downloadSharePath", "downloadPageUrl", "downloadFileUrl", "downloadCount",
+		"downloadPagePath", "downloadSharePath", "downloadPageUrl", "downloadFileUrl",
+		"downloadCount", "pinKind",
 	} {
 		if _, exists := build[field]; !exists {
 			t.Fatalf("Build 缺少字段 %s", field)
