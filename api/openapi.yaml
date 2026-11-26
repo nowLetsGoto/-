@@ -1536,6 +1536,48 @@ paths:
         '500':
           $ref: '#/components/responses/InternalError'
 
+  /builds/{id}/sync-to-r2:
+    post:
+      operationId: syncBuildToR2
+      summary: 把已被容量淘汰的包重新推回对象存储
+      description: >
+        本机是权威副本、R2 是可回收的缓存。包被容量淘汰后对象已离开桶，
+        下载会回落到本机流式（较慢）。调用本接口可用本机副本重建 R2 对象，
+        恢复 CDN 直链下载。
+        
+        限定行为：仅允许 r2State=evicted 的包重推。synced 说明对象还在桶里，
+        重推纯属浪费带宽；pending 是上传流程的中间态，不该由这个入口介入。
+        已同步时幂等返回当前状态，不报错——用户可能连点两次或页面状态过期。
+        
+        失败条件：本机副本已丢失（本接口不做拉回，没有别的字节来源）、
+        记录缺少 r2Key（无法确定推到哪个对象名）。
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+          description: 包 id
+      responses:
+        '200':
+          description: 同步完成（或本来已同步）
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [code, data]
+                properties:
+                  code:
+                    type: integer
+                  data:
+                    $ref: '#/components/schemas/Build'
+        '404':
+          description: 包不存在或无权访问
+        '400':
+          description: 状态不允许重推，或本机副本已丢失
+
   /builds/{id}/file:
     get:
       security:

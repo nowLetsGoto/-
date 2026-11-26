@@ -262,13 +262,16 @@ const (
 	RouteStage        = APIPrefix + "/builds/stage"
 	// 直传 R2：先取票据，浏览器 PUT 到 R2，再让后端回拉解析。
 	// 三个接口合起来替代 stage，用于超过 Tunnel 100MB 上限的大包。
-	RouteUploadTicket        = APIPrefix + "/builds/upload-ticket"
-	RouteStageFromR2         = APIPrefix + "/builds/stage-from-r2"
-	RouteUploadAbort         = APIPrefix + "/builds/upload-abort"
-	RouteBuilds              = APIPrefix + "/builds"
-	RouteBuildByID           = APIPrefix + "/builds/{id}"
-	RouteBuildVersions       = APIPrefix + "/builds/{id}/versions"
-	RouteBuildFile           = APIPrefix + "/builds/{id}/file"
+	RouteUploadTicket  = APIPrefix + "/builds/upload-ticket"
+	RouteStageFromR2   = APIPrefix + "/builds/stage-from-r2"
+	RouteUploadAbort   = APIPrefix + "/builds/upload-abort"
+	RouteBuilds        = APIPrefix + "/builds"
+	RouteBuildByID     = APIPrefix + "/builds/{id}"
+	RouteBuildVersions = APIPrefix + "/builds/{id}/versions"
+	RouteBuildFile     = APIPrefix + "/builds/{id}/file"
+	// RouteBuildSyncToR2 把已被容量淘汰的包重新推到对象存储。
+	// 本机是权威副本，淘汰只回收 R2——想恢复 CDN 加速下载就走这个接口。
+	RouteBuildSyncToR2       = APIPrefix + "/builds/{id}/sync-to-r2"
 	RouteSharedBuild         = APIPrefix + "/public/builds/{id}"
 	RouteSharedBuildVersions = APIPrefix + "/public/builds/{id}/versions"
 	RouteSharedBuildFile     = APIPrefix + "/public/builds/{id}/file"
@@ -322,7 +325,7 @@ var APIRoutes = []string{
 	RoutePeople, RoutePersonByID, RouteTeams, RouteTeamByID,
 	RoutePermissions, RouteMenus, RouteRoles, RouteRoleByID,
 	RouteSettings, RouteWebhookTest, RouteAPIKeyRotate, RouteOpenBuilds, RouteStorageUsage,
-	RouteStage, RouteUploadTicket, RouteStageFromR2, RouteUploadAbort, RouteBuilds, RouteBuildByID, RouteBuildVersions, RouteBuildFile, RouteSharedBuild, RouteSharedBuildVersions, RouteSharedBuildFile, RouteHealth,
+	RouteStage, RouteUploadTicket, RouteStageFromR2, RouteUploadAbort, RouteBuilds, RouteBuildByID, RouteBuildVersions, RouteBuildFile, RouteBuildSyncToR2, RouteSharedBuild, RouteSharedBuildVersions, RouteSharedBuildFile, RouteHealth,
 }
 
 // Webhook 可推送字段的键：与 api/openapi.yaml 的 x-webhook-fields 键集合一致。

@@ -27,6 +27,9 @@ const ICONS = {
   trash: 'M4 7h16 M9 7V4h6v3 M6 7l1 14h10l1-14 M10 10v7 M14 10v7',
   file: 'M14 3H6v18h12V7z M14 3v5h4 M9 12h6 M9 16h4',
   download: 'M12 3v12 M7 10l5 5 5-5 M5 16v5h14v-5',
+  // 云上传：用于「同步到 R2」——把本机副本推回对象存储。
+  cloud:
+    'M7 18h10a4 4 0 0 0 0-8a5.5 5.5 0 0 0-10.5 1.5A3.5 3.5 0 0 0 7 18 M12 15v-5 M9.5 12.5 12 10l2.5 2.5',
   clock: 'M12 8v5l3 2 M21 12a9 9 0 1 0-18 0a9 9 0 0 0 18 0',
   external: 'M9 5H4v15h15v-5 M13 4h7v7 M11 13l9-9',
   phone: 'M7 3h10v18H7z M11 18h2',

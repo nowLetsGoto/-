@@ -18,6 +18,7 @@ import { Skeleton } from '../../components/Skeleton';
 import { Empty, ErrorState } from '../../components/States';
 import { Icon } from '../../components/icons';
 import { useDeleteAction } from '../../hooks/useDeleteAction';
+import { useSyncToR2 } from '../../hooks/useSyncToR2';
 import { useEnvironment } from '../../hooks/useEnvironment';
 import { useMe } from '../../hooks/useMe';
 import { usePackageBuilds } from '../../hooks/usePackageBuilds';
@@ -58,6 +59,16 @@ function PackageList({ projectKey }: { projectKey: string }): JSX.Element {
   const [notice, setNotice] = useState('');
   const removal = useDeleteAction<Build & { label: string }>(builds.remove, () => {
     setNotice('应用包已删除，原下载页与分享链接已失效。');
+    builds.reload();
+  });
+  // 同步结果统一走 notice 提示；成功时刷新列表，
+  // 状态以服务端返回为准，前端不自己推测 r2State 怎么变。
+  const syncing = useSyncToR2((error) => {
+    if (error) {
+      setNotice(error);
+      return;
+    }
+    setNotice('已同步到对象存储，下载将走 CDN 加速。');
     builds.reload();
   });
 
@@ -228,6 +239,8 @@ function PackageList({ projectKey }: { projectKey: string }): JSX.Element {
                 onDelete={
                   deletable ? () => removal.request({ ...build, label: build.appName }) : undefined
                 }
+                onSync={writable ? () => syncing.sync(build.id) : undefined}
+                syncing={syncing.syncingID === build.id}
               />
             ))}
           </div>
@@ -308,11 +321,15 @@ function PackageCard({
   latest,
   onEdit,
   onDelete,
+  onSync,
+  syncing,
 }: {
   build: Build;
   latest: boolean;
   onEdit?: () => void;
   onDelete?: () => void;
+  onSync?: () => void;
+  syncing?: boolean;
 }): JSX.Element {
   return (
     <article
@@ -368,6 +385,21 @@ function PackageCard({
           <Icon name="external" size={14} />
         </Link>
         <div className="package-actions">
+          {/* 只在「已被容量淘汰」时出现：此时对象已离开 R2，下载回落到本机流式（较慢）。
+              其他状态下重推没有意义——synced 对象还在桶里，pending 属于上传中间态。 */}
+          {onSync && build.r2State === 'evicted' ? (
+            <Button
+              className="button button-quiet"
+              type="button"
+              onClick={onSync}
+              disabled={syncing}
+              aria-label={`将 ${build.appName} ${build.version} 同步到对象存储`}
+              title="对象已被容量淘汰，点击用本机副本重建并恢复 CDN 加速"
+            >
+              <Icon name="cloud" />
+              {syncing ? '同步中…' : '同步到 R2'}
+            </Button>
+          ) : null}
           {onEdit ? (
             <Button
               className="button button-quiet"

@@ -42,6 +42,7 @@ const ROUTES = {
   builds: '/api/v1/builds',
   buildById: (id: string): string => `/api/v1/builds/${encodeURIComponent(id)}`,
   buildVersions: (id: string): string => `/api/v1/builds/${encodeURIComponent(id)}/versions`,
+  buildSyncToR2: (id: string): string => `/api/v1/builds/${encodeURIComponent(id)}/sync-to-r2`,
   storageUsage: '/api/v1/storage/usage',
 } as const;
 
@@ -179,6 +180,17 @@ export function updateBuild(id: string, input: UpdateBuildRequest): Promise<Buil
 
 export function deleteBuild(id: string): Promise<void> {
   return del<void>(ROUTES.buildById(id));
+}
+
+/**
+ * 把已被容量淘汰的包重新推回对象存储。
+ *
+ * 只对 r2State === 'evicted' 的包有意义：本机是权威副本、R2 是可回收的缓存，
+ * 淘汰后下载会回落到本机流式（较慢），调用它可以恢复 CDN 直链。
+ * 已同步时服务端幂等返回，重复点击不会报错。
+ */
+export function syncBuildToR2(id: string): Promise<Build> {
+  return postJSON<Build>(ROUTES.buildSyncToR2(id), {});
 }
 
 /** 独立分享读取当前授权版本，不依赖登录态。 */
