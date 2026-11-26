@@ -76,6 +76,7 @@ var allowedMethods = map[string]string{
 	contract.RouteTeamByID:            "GET, PUT",
 	contract.RouteOpenBuilds:          "POST",
 	contract.RouteSettings:            "GET, PUT",
+	contract.RouteStorageUsage:        "GET",
 	contract.RouteWebhookTest:         "POST",
 	contract.RouteBuilds:              "GET, POST",
 	contract.RouteStage:               "POST",
@@ -120,6 +121,8 @@ func allowedMethodsFor(req *http.Request) string {
 		return "GET, PUT"
 	case path == contract.RouteSettings:
 		return "GET, PUT"
+	case path == contract.RouteStorageUsage:
+		return "GET"
 	case path == contract.RouteBuilds:
 		return "GET, POST"
 	case path == contract.RouteStage, path == contract.RouteUploadTicket,
@@ -170,6 +173,8 @@ func NewRouter(d Deps) http.Handler {
 			private.Post("/builds/upload-abort", middleware.Wrap(d.Builds.UploadAbort))
 			private.Post("/builds", middleware.Wrap(d.Builds.Commit))
 			private.With(authzmw.RequireProjectPermission(d.Authz, "build.read")).Get("/builds", middleware.Wrap(d.Builds.List))
+			// 存储用量：租户一律取自登录态，前端无法通过参数查别人的用量。
+			private.Get("/storage/usage", middleware.Wrap(d.Builds.StorageUsage))
 
 			private.Get("/me", middleware.Wrap(d.People.Me))
 			// 改自己的密码只要求登录态：任何账号都该能换自己的密码，与是否超管无关。

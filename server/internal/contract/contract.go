@@ -222,10 +222,12 @@ const (
 	// RoutePlatformTenantStatus 启停公司；与 ByID 分开是因为它是"改状态"而非"改资料"。
 	RoutePlatformTenantStatus = APIPrefix + "/platform/tenants/{id}/status"
 	RouteSettings             = APIPrefix + "/settings"
-	RouteWebhookTest          = APIPrefix + "/settings/webhook/test"
-	RouteAPIKeyRotate         = APIPrefix + "/settings/api-key/rotate"
-	RouteOpenBuilds           = APIPrefix + "/open/builds"
-	RouteStage                = APIPrefix + "/builds/stage"
+	// RouteStorageUsage 返回当前租户的存储用量，供「应用」页头部容量条使用。
+	RouteStorageUsage = APIPrefix + "/storage/usage"
+	RouteWebhookTest  = APIPrefix + "/settings/webhook/test"
+	RouteAPIKeyRotate = APIPrefix + "/settings/api-key/rotate"
+	RouteOpenBuilds   = APIPrefix + "/open/builds"
+	RouteStage        = APIPrefix + "/builds/stage"
 	// 直传 R2：先取票据，浏览器 PUT 到 R2，再让后端回拉解析。
 	// 三个接口合起来替代 stage，用于超过 Tunnel 100MB 上限的大包。
 	RouteUploadTicket        = APIPrefix + "/builds/upload-ticket"
@@ -287,7 +289,7 @@ var APIRoutes = []string{
 	RouteProjects, RouteProjectByKey,
 	RoutePeople, RoutePersonByID, RouteTeams, RouteTeamByID,
 	RoutePermissions, RouteMenus, RouteRoles, RouteRoleByID,
-	RouteSettings, RouteWebhookTest, RouteAPIKeyRotate, RouteOpenBuilds,
+	RouteSettings, RouteWebhookTest, RouteAPIKeyRotate, RouteOpenBuilds, RouteStorageUsage,
 	RouteStage, RouteUploadTicket, RouteStageFromR2, RouteUploadAbort, RouteBuilds, RouteBuildByID, RouteBuildVersions, RouteBuildFile, RouteSharedBuild, RouteSharedBuildVersions, RouteSharedBuildFile, RouteHealth,
 }
 
@@ -1290,6 +1292,43 @@ type ListResult struct {
 	Total       int     `json:"total"`
 	Environment string  `json:"environment"`
 	Platform    string  `json:"platform"`
+}
+
+// StorageUsageGroup 是按「项目 + 环境 + 平台」聚合的一行用量。
+// 这是运营看数据的最小粒度："哪个项目的哪个环境占得多"是唯一能指导清理的问题。
+type StorageUsageGroup struct {
+	ProjectKey  string `json:"projectKey"`
+	Environment string `json:"environment"`
+	Platform    string `json:"platform"`
+	BuildCount  int    `json:"buildCount"`
+	R2Bytes     int64  `json:"r2Bytes"`
+}
+
+// StorageUsage 是当前租户的存储用量视图，供「应用」页头部容量条使用。
+//
+// 所有派生量（剩余额度、可上传数量）都由服务端算好再下发：
+// 前端只负责展示，不重复实现配额口径——两处各算一遍必然漂移。
+type StorageUsage struct {
+	UsedBytes  int64 `json:"usedBytes"`
+	QuotaBytes int64 `json:"quotaBytes"`
+	// FreeBytes 是剩余额度；已超额时为 0，不返回负数。
+	FreeBytes int64 `json:"freeBytes"`
+	// EstimatedUploads 按现有包的平均体积估算还能上传几个；无历史包时为 0。
+	EstimatedUploads int `json:"estimatedUploads"`
+
+	// BuildCount 是记录总数（含已淘汰的），R2BuildCount 是仍占 R2 的。
+	// 两者分开是让管理员区分"历史有多少版本"与"当前占了多少配额"。
+	BuildCount   int `json:"buildCount"`
+	R2BuildCount int `json:"r2BuildCount"`
+
+	MaxVersions       int `json:"maxVersions"`
+	RemainingVersions int `json:"remainingVersions"`
+
+	PendingCount int `json:"pendingCount"`
+	FailedCount  int `json:"failedCount"`
+
+	// Groups 按占用从大到小排序，最该清理的排在最前。
+	Groups []StorageUsageGroup `json:"groups"`
 }
 
 // HealthStatus 是健康检查结果。

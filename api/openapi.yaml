@@ -995,6 +995,31 @@ paths:
         '403':
           $ref: '#/components/responses/Forbidden'
 
+  /storage/usage:
+    get:
+      operationId: getStorageUsage
+      summary: 当前租户的对象存储用量
+      description: >
+        返回已用容量、配额余量、按项目/环境/平台的分组明细，以及待同步与同步失败的数量。
+        租户由登录态决定，不接受请求参数——否则等于允许越权查别家公司的用量。
+        所有派生量（剩余额度、可上传数量）由服务端算好，前端只展示，
+        避免两处各实现一遍配额口径而产生漂移。
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: 用量统计
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [code, data]
+                properties:
+                  code:
+                    type: integer
+                  data:
+                    $ref: '#/components/schemas/StorageUsage'
+
   /settings:
     get:
       operationId: getSettings
@@ -2952,6 +2977,79 @@ components:
         platform:
           type: string
           description: 实际生效的平台筛选，未筛选时为 all
+
+    StorageUsage:
+      type: object
+      description: 当前租户的对象存储用量视图；派生量全部由服务端算好
+      required:
+        - usedBytes
+        - quotaBytes
+        - freeBytes
+        - estimatedUploads
+        - buildCount
+        - r2BuildCount
+        - maxVersions
+        - remainingVersions
+        - pendingCount
+        - failedCount
+        - groups
+      properties:
+        usedBytes:
+          type: integer
+          format: int64
+          description: 已占用的对象存储字节数
+        quotaBytes:
+          type: integer
+          format: int64
+          description: 配额上限，当前为 9 GiB（给 10GB 免费额度留抖动余量）
+        freeBytes:
+          type: integer
+          format: int64
+          description: 剩余额度；已超额时为 0，不返回负数
+        estimatedUploads:
+          type: integer
+          description: 按现有包的平均体积估算还能上传几个；无历史包时为 0
+        buildCount:
+          type: integer
+          description: 记录总数，含已淘汰、不在对象存储里的
+        r2BuildCount:
+          type: integer
+          description: 仍占用对象存储的包数，即参与配额竞争的数量
+        maxVersions:
+          type: integer
+          description: 版本数上限，每个租户 66 个
+        remainingVersions:
+          type: integer
+          description: 还能再保留几个版本
+        pendingCount:
+          type: integer
+          description: 尚未同步到对象存储的包数
+        failedCount:
+          type: integer
+          description: 同步失败的包数，需要人工关注
+        groups:
+          type: array
+          description: 按项目/环境/平台分组，占用从大到小排序
+          items:
+            $ref: '#/components/schemas/StorageUsageGroup'
+
+    StorageUsageGroup:
+      type: object
+      description: 一行分组用量
+      required: [projectKey, environment, platform, buildCount, r2Bytes]
+      properties:
+        projectKey:
+          type: string
+        environment:
+          type: string
+        platform:
+          type: string
+        buildCount:
+          type: integer
+          description: 该组内仍占用对象存储的包数
+        r2Bytes:
+          type: integer
+          format: int64
 
     HealthStatus:
       type: object

@@ -10,6 +10,7 @@ import type { Build } from '../../api/builds';
 import { Button } from '../../components/Controls';
 import { ProjectSelect } from '../../components/ProjectSelect';
 import { Skeleton } from '../../components/Skeleton';
+import { StorageUsageBar } from '../../components/StorageUsageBar';
 import { Empty, ErrorState } from '../../components/States';
 import { useAllBuilds } from '../../hooks/useAllBuilds';
 import { useCurrentProject, useProjects } from '../../hooks/useProjects';
@@ -33,6 +34,9 @@ export function AppsPage(): JSX.Element {
 
   return (
     <section className="page">
+      {/* 容量条放在页面头部：管理员进入应用页就能看到配额余量，
+          不必为"还能传几个包"单独开一个页面。 */}
+      <StorageUsageBar />
       <div className="page-head">
         <div>
           <h1>应用</h1>

@@ -5170,3 +5170,86 @@ code {
   gap: var(--spacing-xs);
   margin: var(--spacing-xs) 0 0 var(--spacing-lg);
 }
+
+/* ---------- 存储容量条：应用页头部的用量概览 ---------- */
+/* 三档色彩对应三种状态：正常为品牌色，接近上限转警示，超额转危险。
+   进度条宽度由内联 style 提供（数据驱动），这里只管外观。 */
+.storage-usage {
+  display: grid;
+  gap: var(--spacing-xs);
+  padding: var(--spacing-sm) var(--spacing-md);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  background: var(--color-surface);
+}
+
+.storage-usage-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--spacing-sm);
+}
+
+.storage-usage-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-text-2);
+}
+
+.storage-usage-figure {
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--spacing-xs);
+  font-size: 13px;
+  color: var(--color-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.storage-usage-percent {
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.storage-usage-track {
+  height: 6px;
+  border-radius: 999px;
+  background: var(--color-surface-3);
+  overflow: hidden;
+}
+
+.storage-usage-fill {
+  height: 100%;
+  border-radius: inherit;
+  background: var(--color-primary);
+  transition: width 0.3s ease;
+}
+
+.storage-usage-hint {
+  margin: 0;
+  font-size: 12px;
+  color: var(--color-faint);
+}
+
+/* 接近上限：转警示色，让管理员在触顶前有反应时间 */
+.storage-usage-warn .storage-usage-fill {
+  background: var(--color-warn);
+}
+
+.storage-usage-warn .storage-usage-percent {
+  color: var(--color-warn);
+}
+
+/* 已超额：转危险色，提示淘汰已开始 */
+.storage-usage-danger {
+  border-color: var(--color-danger-border);
+  background: var(--color-danger-bg);
+}
+
+.storage-usage-danger .storage-usage-fill {
+  background: var(--color-danger);
+}
+
+.storage-usage-danger .storage-usage-percent,
+.storage-usage-danger .storage-usage-hint {
+  color: var(--color-danger);
+}
