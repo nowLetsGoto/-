@@ -283,6 +283,30 @@ curl -s --noproxy '*' -X POST http://127.0.0.1:10088/api/v1/builds/upload-ticket
 
 期望返回项目不存在的 404 或 400（而非签发票据成功）。
 
+## 7.5 验证访问时间被记录（淘汰排序的依据）
+
+淘汰按「最久未被访问优先」排序，前提是 `last_accessed_at` 真的被写入。
+此项一旦失效不会报错，只会在配额紧张时删错包，因此必须验证。
+
+**操作**：在后台或分享页下载任意一个包。
+
+**然后查该包的访问时间**：
+
+```bash
+psql "postgres://dandelion:dandelion@localhost:5432/dandelion?sslmode=disable" -c "
+SELECT left(id::text,8) AS id, download_count, last_accessed_at
+FROM team.builds WHERE r2_key <> ''
+ORDER BY created_at DESC LIMIT 3;"
+```
+
+期望：刚下载过的那个包 `last_accessed_at` 非空，且 `download_count` 相应递增。
+
+**判据**：如果出现「`download_count > 0` 但 `last_accessed_at` 为空」，
+说明记录链路断了——淘汰排序会退化为纯按上传时间，需要立刻排查。
+
+> 历史包在本次修复前下载过，其 `last_accessed_at` 仍为空。
+> 它们会在下一次被下载时补上，无需回填。
+
 ## 8. 验收清单
 
 | # | 检查项 | 期望 | 结果 |
@@ -297,6 +321,7 @@ curl -s --noproxy '*' -X POST http://127.0.0.1:10088/api/v1/builds/upload-ticket
 | 8 | 用量接口登录后 | `quotaBytes=9663676416`，`groups` 降序 | ☐ |
 | 9 | 应用页头部 | 容量条可见、数值与接口一致 | ☐ |
 | 10 | 淘汰实测 | 记录仍在、`r2_state=evicted`、`r2_key` 空 | ☐ |
+| 10b | 下载后访问时间 | `last_accessed_at` 非空且计数递增 | ☐ |
 | 11 | 上传票据传错项目 | 被拒，不签发票据 | ☐ |
 
 ## 9. 出问题时的日志位置
