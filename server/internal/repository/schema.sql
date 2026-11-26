@@ -157,6 +157,17 @@ BEGIN
     EXECUTE format($q$ALTER TABLE %I.builds ADD COLUMN IF NOT EXISTS pinned_by TEXT NOT NULL DEFAULT ''$q$, s);
     -- 最近下载时间：额度紧张时优先淘汰"没人下载的旧包"，比纯按时间更贴近实际价值。
     EXECUTE format('ALTER TABLE %I.builds ADD COLUMN IF NOT EXISTS last_accessed_at TIMESTAMPTZ', s);
+    -- 存量回填：已有 r2_key 的包，其对象就在桶里，用 file_size 作为占用估值为起点。
+    -- 只填 r2_bytes=0 的行，重复执行不会覆盖 Worker 后续测得的精确值。
+    EXECUTE format($q$
+      UPDATE %I.builds SET r2_bytes = file_size
+      WHERE r2_key IS NOT NULL AND r2_key <> '' AND r2_bytes = 0
+    $q$, s);
+    -- 有 r2_key 说明对象已上传成功，状态随之收敛，避免 Worker 反复重试。
+    EXECUTE format($q$
+      UPDATE %I.builds SET r2_state = 'synced'
+      WHERE r2_key IS NOT NULL AND r2_key <> '' AND r2_state = 'pending'
+    $q$, s);
   END LOOP;
 END $$;
 
