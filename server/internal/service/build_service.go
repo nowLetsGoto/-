@@ -14,6 +14,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"net/url"
 	"os"
@@ -47,6 +48,7 @@ type stagedLookup struct {
 	namePath         string
 	ext              string
 	originalFileName string
+	size             int64 // 暂存包体字节数；直传包为 0（字节只在 R2）。
 	// r2Key 非空表示文件已由浏览器直传到 R2，commit 跳过二次上传。
 	r2Key string
 }
@@ -147,35 +149,87 @@ func (s *BuildService) pruneOrphans() {
 // 接口恒返回 StageResult（stage 恒 200），绝不因解析问题阻塞上传。
 func (s *BuildService) Stage(_ context.Context, f StagedFile) contract.StageResult {
 	s.pruneOrphans()
-	result := contract.StageResult{
-		StageToken: f.Token,
-		Parsed:     contract.ParsedMeta{},
-		Warnings:   []string{},
-	}
 
 	file, err := os.Open(f.AbsPath)
 	if err != nil {
 		log.Printf("解析降级 token=%s 打开暂存文件失败 err=%v", f.Token, err)
-		result.Warnings = append(result.Warnings, "部分信息未自动识别，可手动修正")
-		return result
+		return parseResult(f.Token, contract.ParsedMeta{}, "部分信息未自动识别，可手动修正")
 	}
 	defer file.Close()
 	info, err := file.Stat()
 	if err != nil {
-		result.Warnings = append(result.Warnings, "部分信息未自动识别，可手动修正")
-		return result
-	}
-	platform, ok := contract.PlatformOfExt(f.Ext)
-	if !ok {
-		result.Warnings = append(result.Warnings, "部分信息未自动识别，可手动修正")
-		return result
+		return parseResult(f.Token, contract.ParsedMeta{}, "部分信息未自动识别，可手动修正")
 	}
 
-	parsed, err := parser.Parse(file, info.Size(), platform)
-	result.Parsed = parsed
+	parsed, err := parseMeta(file, info.Size(), f.Ext)
 	if err != nil {
-		log.Printf("解析降级 token=%s platform=%s fileName=%s err=%v", f.Token, platform, f.OriginalFileName, err)
-		result.Warnings = append(result.Warnings, parseWarning(err))
+		log.Printf("解析降级 token=%s ext=%s fileName=%s err=%v", f.Token, f.Ext, f.OriginalFileName, err)
+		return parseResult(f.Token, parsed, parseWarning(err))
+	}
+	return parseResult(f.Token, parsed, "")
+}
+
+// ParseFrom 用任意 ReaderAt 解析元数据，产出与 Stage 完全相同的 StageResult。
+//
+// 它为直传场景而生：传入 R2 的 HTTP Range 读取器，即可只读 manifest 所需字节，
+// 不必把整包拉回本地。数据来源（本地文件 / 远端对象）由此解耦，解析逻辑只有一份。
+func (s *BuildService) ParseFrom(token string, r io.ReaderAt, size int64, ext string) contract.StageResult {
+	s.pruneOrphans()
+	parsed, err := parseMeta(r, size, ext)
+	if err != nil {
+		log.Printf("解析降级 token=%s ext=%s err=%v", token, ext, err)
+		return parseResult(token, parsed, parseWarning(err))
+	}
+	return parseResult(token, parsed, "")
+}
+
+// materializeFile 把暂存的包落到正式路径，是 Create 唯一的落盘入口。
+//
+// 两条互斥路径，由暂存包体是否为 0 字节判定：
+//   - 普通上传：字节已在 tmp，原子 rename 即可（原流程）。
+//   - 浏览器直传：字节只在 R2，tmp 里是 0 字节占位，需从 R2 下载到 finalPath。
+//
+// 下载失败时删除半成品，避免留下无记录的孤儿包。
+func (s *BuildService) materializeFile(ctx context.Context, staged stagedLookup, finalPath string) error {
+	if staged.size > 0 {
+		if err := os.Rename(staged.absPath, finalPath); err != nil {
+			return fmt.Errorf("移动包文件失败: %w", err)
+		}
+		return nil
+	}
+
+	// 直传包：从 R2 下载。s.r2 非空是前提——直传暂存只在启用 R2 时产生。
+	out, err := os.OpenFile(finalPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		return fmt.Errorf("创建正式文件失败: %w", err)
+	}
+	written, downloadErr := s.r2.DownloadTo(ctx, staged.r2Key, out)
+	closeErr := out.Close()
+	if downloadErr != nil || closeErr != nil || written == 0 {
+		_ = os.Remove(finalPath)
+		if downloadErr != nil {
+			return fmt.Errorf("从对象存储落盘失败: %w", downloadErr)
+		}
+		return fmt.Errorf("写入正式文件失败: %v", closeErr)
+	}
+	_ = os.Remove(staged.absPath) // 清理 0 字节占位。
+	return nil
+}
+
+// parseMeta 是解析的唯一内核：把 ReaderAt + 扩展名交给 parser，不关心数据来自磁盘还是网络。
+func parseMeta(r io.ReaderAt, size int64, ext string) (contract.ParsedMeta, error) {
+	platform, ok := contract.PlatformOfExt(ext)
+	if !ok {
+		return contract.ParsedMeta{}, fmt.Errorf("未知平台扩展名: %s", ext)
+	}
+	return parser.Parse(r, size, platform)
+}
+
+// parseResult 统一把解析结果包装成 StageResult：有明确错误用其文案，字段缺失用通用提示。
+func parseResult(token string, parsed contract.ParsedMeta, warning string) contract.StageResult {
+	result := contract.StageResult{StageToken: token, Parsed: parsed, Warnings: []string{}}
+	if warning != "" {
+		result.Warnings = append(result.Warnings, warning)
 	} else if parsed.AppName == "" || parsed.PackageID == "" || parsed.Version == "" || parsed.BuildNumber == "" {
 		result.Warnings = append(result.Warnings, "部分信息未自动识别，可手动修正")
 	}
@@ -255,7 +309,7 @@ func (s *BuildService) validateStageToken(token string) (stagedLookup, error) {
 	if data, err := os.ReadFile(s.paths.StageR2KeyPath(token)); err == nil {
 		r2Key = strings.TrimSpace(string(data))
 	}
-	return stagedLookup{absPath: abs, namePath: namePath, ext: ext, originalFileName: original, r2Key: r2Key}, nil
+	return stagedLookup{absPath: abs, namePath: namePath, ext: ext, originalFileName: original, size: info.Size(), r2Key: r2Key}, nil
 }
 
 // Create 是提交的唯一编排：表单即最终真值，提交时不再解析、不再覆盖用户值。
@@ -286,9 +340,9 @@ func (s *BuildService) Create(ctx context.Context, in contract.CommitInput, iden
 	if err := os.MkdirAll(filepath.Dir(finalPath), 0o755); err != nil {
 		return contract.Build{}, fmt.Errorf("创建正式目录失败: %w", err)
 	}
-	// 两段式落盘：stage 已把文件放在 tmp，提交只做一次原子 rename；token 随即不可重用。
-	if err := os.Rename(staged.absPath, finalPath); err != nil {
-		return contract.Build{}, fmt.Errorf("移动包文件失败: %w", err)
+	// 落盘：普通上传直接 rename 暂存文件；直传包的字节只在 R2，从 R2 下载到正式目录。
+	if err := s.materializeFile(ctx, staged, finalPath); err != nil {
+		return contract.Build{}, err
 	}
 	_ = os.Remove(staged.namePath)
 	_ = os.Remove(s.paths.StageR2KeyPath(in.StageToken))

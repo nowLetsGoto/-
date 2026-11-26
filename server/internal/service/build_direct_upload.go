@@ -102,7 +102,11 @@ func (s *BuildService) IssueUploadTicket(ctx context.Context, in contract.Upload
 	}, nil
 }
 
-// StageFromR2 把已直传到 R2 的对象回拉本地，产出与 stage 相同的暂存文件。
+// StageFromR2 解析已直传到 R2 的对象，产出与 stage 相同的暂存上下文。
+//
+// 关键优化：解析只用 HTTP Range 读取 manifest 所需的字节（实测约 2.3MB），
+// 不再把整包（可达 300MB）从 R2 拉回本地——那曾让 stage 阶段耗时数分钟并触发前端超时。
+// 整包落盘推迟到 Create：届时直接从 R2 下载到正式目录，避免重复搬运。
 //
 // 校验点：会话存在且未过期、对象确实已上传、大小与声明一致。
 // 大小不一致说明浏览器传了别的文件（或传输被截断），一律拒绝。
@@ -121,7 +125,7 @@ func (s *BuildService) StageFromR2(ctx context.Context, uploadToken string) (con
 		return contract.StageResult{}, &contract.ValidationError{Message: "上传已过期，请重新选择文件"}
 	}
 
-	// 先确认对象真的在：浏览器可能失败在中途，此时不该回拉。
+	// 确认对象存在且大小一致：浏览器可能中途失败，或传了与声明不符的文件。
 	size, exists, err := s.r2.StatObject(ctx, session.R2Key)
 	if err != nil {
 		return contract.StageResult{}, err
@@ -138,18 +142,53 @@ func (s *BuildService) StageFromR2(ctx context.Context, uploadToken string) (con
 		return contract.StageResult{}, err
 	}
 
-	// 回拉本地：产生与 stage 同形态的 tmp 文件 + .name 伴生文件，后续流程完全复用。
+	// 写伴生文件，让后续 Create 能识别这是直传包、拿到对象名与原始文件名。
+	// 不写包体：直传包的字节只在 R2，Create 时直接落到正式目录。
+	if err := s.writeDirectStaging(uploadToken, *session); err != nil {
+		return contract.StageResult{}, err
+	}
+	if err := s.sessions.Delete(ctx, uploadToken); err != nil {
+		log.Printf("删除上传会话失败 token=%s err=%v", uploadToken, err)
+	}
+
+	// 解析：优先用 Range 只读 manifest 所需字节（秒级）；
+	// 未配公开域名时无法 Range，回落到整包回拉再解析（慢但功能完整）。
+	if publicURL, err := s.r2.PublicURL(session.R2Key); err == nil {
+		reader := storage.NewHTTPRangeReader(publicURL, storage.HTTPClientForRange())
+		return s.ParseFrom(uploadToken, reader, size, session.FileExt), nil
+	}
 	staged, err := s.pullFromR2ToStage(ctx, *session)
 	if err != nil {
 		return contract.StageResult{}, err
 	}
-	if err := s.sessions.Delete(ctx, uploadToken); err != nil {
-		// 会话删不掉不影响本次上传：过期清理会兜底。
-		log.Printf("删除上传会话失败 token=%s err=%v", uploadToken, err)
-	}
-	// R2 上的 direct/ 对象保留：commit 之后它就是该包的网络副本，
-	// 由 commit 回写 r2_key 指向它，避免再传一次。
 	return s.Stage(ctx, staged), nil
+}
+
+// writeDirectStaging 为直传包写暂存标记，不落整包字节。
+//
+// 三个文件各有单一职责：
+//   - token.ext：0 字节占位，让 validateStageToken 能识别暂存并推断平台；
+//     Create 见其为 0 字节便知字节只在 R2，需下载到正式目录。
+//   - token.name：原始文件名，供下载名与展示。
+//   - token.r2：R2 对象名，供 Create 回写 r2_key 与下载。
+func (s *BuildService) writeDirectStaging(token string, session repository.UploadSession) error {
+	if err := os.MkdirAll(s.paths.TmpDir(), 0o755); err != nil {
+		return fmt.Errorf("创建暂存目录失败: %w", err)
+	}
+	files := []struct {
+		path string
+		data []byte
+	}{
+		{s.paths.StagePath(token, session.FileExt), nil}, // 0 字节占位
+		{s.paths.StageNamePath(token), []byte(session.OriginalName)},
+		{s.paths.StageR2KeyPath(token), []byte(session.R2Key)},
+	}
+	for _, f := range files {
+		if err := os.WriteFile(f.path, f.data, 0o600); err != nil {
+			return fmt.Errorf("写入暂存标记 %s 失败: %w", f.path, err)
+		}
+	}
+	return nil
 }
 
 // AbortUpload 放弃直传：删除会话与 R2 上的临时对象。

@@ -16,7 +16,7 @@ servers:
 x-constants:
   maxUploadMB: 300
   stageTokenTTLSeconds: 3600
-  parseTimeoutSeconds: 5
+  parseTimeoutSeconds: 20
   parseReadLimitMB: 5
   downloadButtonCooldownSeconds: 3
   authTokenTTLSeconds: 43200

@@ -267,8 +267,10 @@ const (
 	MaxTeamDescLen       = 200
 	MaxRelationCount     = 200
 	StageTokenTTLSeconds = 3600
-	ParseTimeoutSeconds  = 5
-	ParseReadLimitMB     = 5
+	// 解析超时放宽到 20s：直传场景通过 HTTP Range 读取远端 manifest，
+	// 跨境网络下冷块回源可能耗时 10s+，5s 过于激进会导致元数据解析失败。
+	ParseTimeoutSeconds = 20
+	ParseReadLimitMB    = 5
 	// AuthTokenTTLSeconds 登录令牌有效期（12 小时）；与 x-constants.authTokenTTLSeconds 一致。
 	AuthTokenTTLSeconds = 43200
 )
