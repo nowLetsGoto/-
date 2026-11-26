@@ -408,6 +408,8 @@ func (s *BuildService) Create(ctx context.Context, in contract.CommitInput, iden
 			s.syncToR2Async(build, mode)
 		} else {
 			build.R2Key = staged.r2Key
+			// 预热 CDN：让首个下载者命中边缘缓存，而不是等待回源。
+			s.prewarmCDNAsync(staged.r2Key)
 		}
 		return build, nil
 	}

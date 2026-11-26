@@ -14,7 +14,10 @@ package service
 
 import (
 	"context"
+	"fmt"
+	"io"
 	"log"
+	"net/http"
 	"os"
 	"path"
 	"time"
@@ -29,6 +32,14 @@ const r2SignedURLTTL = 30 * time.Minute
 
 // r2SyncTimeout 限制单次上传时长，避免卡住的连接长期占用 goroutine。
 const r2SyncTimeout = 30 * time.Minute
+
+// r2PrewarmTimeout 限制预热请求时长。预热只读 256KB，正常远低于此值；
+// 给 30 秒余量足以应对跨境冷启动的回源握手。
+const r2PrewarmTimeout = 30 * time.Second
+
+// r2PrewarmBytes 是预热时读取的字节数。取 256KB 与 Range 读取的块大小一致：
+// 足够触发 Cloudflare 完整回源并建立缓存，又不为预热传输整个包。
+const r2PrewarmBytes = 256 * 1024
 
 // R2Enabled 报告是否启用了对象存储镜像。
 func (s *BuildService) R2Enabled() bool { return s.r2 != nil }
@@ -87,6 +98,8 @@ func (s *BuildService) syncToR2(build contract.Build, mode contract.SessionMode)
 		return
 	}
 	log.Printf("R2 同步完成 id=%s key=%s", build.ID, key)
+	// 镜像完成即预热 CDN：把首个下载者的回源等待转移到此处。
+	s.prewarmCDNAsync(key)
 }
 
 // syncToR2Async 在后台镜像，不阻塞当前请求。
@@ -101,3 +114,49 @@ func (s *BuildService) syncToR2Async(build contract.Build, mode contract.Session
 func (s *BuildService) contentTypeOf(platform string) (string, error) {
 	return storage.ContentType(platform)
 }
+
+// prewarmCDNAsync 在后台预热 Cloudflare 边缘缓存，让首个下载者不必等待回源。
+//
+// 原理：CDN 对未被访问过的对象首请求要回源 R2 并填充边缘节点，119MB 包实测
+// 首下载只有 0.5MB/s，填满缓存后可达 2.8MB/s。这里主动发一次小 Range 请求触发
+// 缓存填充，把这段等待从用户身上转移到发布瞬间。
+//
+// 只读前 256KB：足以让 Cloudflare 走完整回源路径并建立对象缓存条目，
+// 同时不为预热传输整个包。实测缓存命中后任意偏移读取都直接命中同一对象。
+//
+// 失败仅记日志——预热是纯加速旁路，绝不影响发布结果。
+//
+// 注意：不使用调用方的 ctx。Create 的请求上下文在响应返回后即被取消，
+// 而预热要在那之后继续跑，故用独立的后台上下文与超时。
+func (s *BuildService) prewarmCDNAsync(key string) {
+	if s.r2 == nil || key == "" {
+		return
+	}
+	url, err := s.r2.PublicURL(key)
+	if err != nil {
+		// 未配公开域名时没有 CDN 可预热（下载走 S3 或本机），直接跳过。
+		return
+	}
+
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), r2PrewarmTimeout)
+		defer cancel()
+
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+		if err != nil {
+			return
+		}
+		req.Header.Set("Range", fmt.Sprintf("bytes=0-%d", r2PrewarmBytes-1))
+		resp, err := prewarmClient.Do(req)
+		if err != nil {
+			log.Printf("CDN 预热失败 key=%s err=%v", key, err)
+			return
+		}
+		defer resp.Body.Close()
+		_, _ = io.Copy(io.Discard, resp.Body)
+		log.Printf("CDN 预热完成 key=%s status=%d cache=%s", key, resp.StatusCode, resp.Header.Get("cf-cache-status"))
+	}()
+}
+
+// prewarmClient 复用连接池，避免每次预热都重建 TLS 握手。
+var prewarmClient = storage.HTTPClientForRange()
