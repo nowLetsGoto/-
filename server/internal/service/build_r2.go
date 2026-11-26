@@ -60,9 +60,12 @@ func (s *BuildService) R2SignedURL(ctx context.Context, ref contract.FileRef) st
 }
 
 // syncToR2 把单个包镜像到 R2 并回写 r2_key。同步执行，由调用方决定是否异步。
-// 幂等：已同步过的包直接跳过。
+//
+// 幂等判据是 r2_state 而非 r2_key：淘汰只把状态改成 evicted 并保留 key
+// （供重推复用），若仍以 key 是否存在来判断「已同步」，
+// 被淘汰的包会永久跳过同步——点「同步到 R2」也推不上去。
 func (s *BuildService) syncToR2(build contract.Build, mode contract.SessionMode) {
-	if s.r2 == nil || build.R2Key != "" {
+	if s.r2 == nil || build.R2State == contract.R2StateSynced {
 		return
 	}
 	abs, err := s.paths.SafeResolve(build.RelativePath)
@@ -92,9 +95,9 @@ func (s *BuildService) syncToR2(build contract.Build, mode contract.SessionMode)
 		log.Printf("R2 同步失败 id=%s key=%s err=%v", build.ID, key, err)
 		return
 	}
-	if err := s.repos.For(mode).SetR2Key(ctx, build.ID, key); err != nil {
+	if err := s.repos.For(mode).MarkR2Synced(ctx, build.ID, key, info.Size()); err != nil {
 		// 对象已上传但回写失败：下次下载会再传一次（Put 覆盖，无害）。
-		log.Printf("R2 同步成功但回写 r2_key 失败 id=%s key=%s err=%v", build.ID, key, err)
+		log.Printf("R2 同步成功但回写状态失败 id=%s key=%s err=%v", build.ID, key, err)
 		return
 	}
 	log.Printf("R2 同步完成 id=%s key=%s", build.ID, key)
@@ -103,8 +106,11 @@ func (s *BuildService) syncToR2(build contract.Build, mode contract.SessionMode)
 }
 
 // syncToR2Async 在后台镜像，不阻塞当前请求。
+//
+// 这里不重复判断「是否已同步」：该判据只应存在一处（syncToR2 内部），
+// 两处各写一遍必然有一天只改一边。多起一个立即返回的 goroutine 代价可忽略。
 func (s *BuildService) syncToR2Async(build contract.Build, mode contract.SessionMode) {
-	if s.r2 == nil || build.R2Key != "" {
+	if s.r2 == nil {
 		return
 	}
 	go s.syncToR2(build, mode)

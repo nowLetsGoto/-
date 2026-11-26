@@ -393,6 +393,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/storage/usage": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 当前租户的对象存储用量
+         * @description 返回已用容量、配额余量、按项目/环境/平台的分组明细，以及待同步与同步失败的数量。 租户由登录态决定，不接受请求参数——否则等于允许越权查别家公司的用量。 所有派生量（剩余额度、可上传数量）由服务端算好，前端只展示， 避免两处各实现一遍配额口径而产生漂移。
+         */
+        get: operations["getStorageUsage"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/settings": {
         parameters: {
             query?: never;
@@ -1244,12 +1264,22 @@ export interface components {
             downloadPagePath: string;
             /** @description 带 shareToken 的相对路径 /d/{id}?shareToken=...，后台「下载页」按钮用它打开分享页（免登录）；分享失效时为空串 */
             downloadSharePath: string;
+            /** @description 非空表示该版本被固定、永不参与容量淘汰（manual 为人工钉住）；空串表示可淘汰 */
+            pinKind: string;
+            /**
+             * @description 对象存储侧状态。synced 表示对象在桶里、下载走 CDN 直链； evicted 表示已被容量淘汰，此时 r2_key 仍保留供「同步到 R2」重推复用。 前端据此决定是否显示重推按钮。
+             * @enum {string}
+             */
+            r2State: "pending" | "synced" | "evicted" | "failed";
+            /**
+             * @description 本机留底状态。present 表示本机已归档，可回落本地流式下载； absent 表示尚无副本（直传刚完成，等待拉回）。 与 r2State 各自独立：一个包可以「R2 有本机没有」，也可以「本机有 R2 已淘汰」。
+             * @enum {string}
+             */
+            localState: "absent" | "pulling" | "present" | "failed";
             /** @description 有效分享的绝对地址，二维码与复制的唯一来源；分享失效时为空串 */
             downloadPageUrl: string;
             /** @description 有效分享的绝对文件地址，下载按钮的唯一来源；分享失效时为空串 */
             downloadFileUrl: string;
-            /** @description 非空表示该版本被固定、永不参与容量淘汰（manual 为人工钉住）；空串表示可淘汰 */
-            pinKind: string;
             /**
              * Format: date-time
              * @description ISO 8601 UTC
@@ -1334,6 +1364,50 @@ export interface components {
             environment: components["schemas"]["Environment"];
             /** @description 实际生效的平台筛选，未筛选时为 all */
             platform: string;
+        };
+        /** @description 当前租户的对象存储用量视图；派生量全部由服务端算好 */
+        StorageUsage: {
+            /**
+             * Format: int64
+             * @description 已占用的对象存储字节数
+             */
+            usedBytes: number;
+            /**
+             * Format: int64
+             * @description 配额上限，当前为 9 GiB（给 10GB 免费额度留抖动余量）
+             */
+            quotaBytes: number;
+            /**
+             * Format: int64
+             * @description 剩余额度；已超额时为 0，不返回负数
+             */
+            freeBytes: number;
+            /** @description 按现有包的平均体积估算还能上传几个；无历史包时为 0 */
+            estimatedUploads: number;
+            /** @description 记录总数，含已淘汰、不在对象存储里的 */
+            buildCount: number;
+            /** @description 仍占用对象存储的包数，即参与配额竞争的数量 */
+            r2BuildCount: number;
+            /** @description 版本数上限，每个租户 66 个 */
+            maxVersions: number;
+            /** @description 还能再保留几个版本 */
+            remainingVersions: number;
+            /** @description 尚未同步到对象存储的包数 */
+            pendingCount: number;
+            /** @description 同步失败的包数，需要人工关注 */
+            failedCount: number;
+            /** @description 按项目/环境/平台分组，占用从大到小排序 */
+            groups: components["schemas"]["StorageUsageGroup"][];
+        };
+        /** @description 一行分组用量 */
+        StorageUsageGroup: {
+            projectKey: string;
+            environment: string;
+            platform: string;
+            /** @description 该组内仍占用对象存储的包数 */
+            buildCount: number;
+            /** Format: int64 */
+            r2Bytes: number;
         };
         HealthStatus: {
             status: string;
@@ -1498,7 +1572,7 @@ export interface components {
                 "application/json": components["schemas"]["ErrorResponse"];
             };
         };
-        /** @description 超过 200 MB 单包上限 */
+        /** @description 超过 300 MB 单包上限 */
         TooLarge: {
             headers: {
                 [name: string]: unknown;
@@ -2582,6 +2656,29 @@ export interface operations {
             403: components["responses"]["Forbidden"];
         };
     };
+    getStorageUsage: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 用量统计 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        code: number;
+                        data: components["schemas"]["StorageUsage"];
+                    };
+                };
+            };
+        };
+    };
     getSettings: {
         parameters: {
             query?: never;
@@ -2693,7 +2790,7 @@ export interface operations {
                 "multipart/form-data": {
                     /**
                      * Format: binary
-                     * @description .apk / .ipa / .hap，单包上限 200 MB
+                     * @description .apk / .ipa / .hap，单包上限 300 MB
                      */
                     file: string;
                     /** @description 项目 key */
@@ -2772,7 +2869,7 @@ export interface operations {
                 "multipart/form-data": {
                     /**
                      * Format: binary
-                     * @description 仅接受 .apk / .ipa，单包上限 200 MB
+                     * @description 仅接受 .apk / .ipa，单包上限 300 MB
                      */
                     file: string;
                 };
@@ -2804,6 +2901,8 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": {
+                    /** @description 项目 key。用于把"租户/项目"编进 R2 对象 key，使对象自带归属信息；也会提前校验项目存在与访问权限 */
+                    project: string;
                     /** @description 原始文件名，用于推导扩展名与下载展示名 */
                     fileName: string;
                     /**

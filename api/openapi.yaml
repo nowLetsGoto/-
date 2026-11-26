@@ -2766,6 +2766,8 @@ components:
         - downloadPageUrl
         - downloadFileUrl
         - pinKind
+        - r2State
+        - localState
         - createdAt
       properties:
         id:
@@ -2815,6 +2817,20 @@ components:
         pinKind:
           type: string
           description: 非空表示该版本被固定、永不参与容量淘汰（manual 为人工钉住）；空串表示可淘汰
+        r2State:
+          type: string
+          enum: [pending, synced, evicted, failed]
+          description: >
+            对象存储侧状态。synced 表示对象在桶里、下载走 CDN 直链；
+            evicted 表示已被容量淘汰，此时 r2_key 仍保留供「同步到 R2」重推复用。
+            前端据此决定是否显示重推按钮。
+        localState:
+          type: string
+          enum: [absent, pulling, present, failed]
+          description: >
+            本机留底状态。present 表示本机已归档，可回落本地流式下载；
+            absent 表示尚无副本（直传刚完成，等待拉回）。
+            与 r2State 各自独立：一个包可以「R2 有本机没有」，也可以「本机有 R2 已淘汰」。
         downloadPageUrl:
           type: string
           description: 有效分享的绝对地址，二维码与复制的唯一来源；分享失效时为空串

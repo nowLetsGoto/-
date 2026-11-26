@@ -157,6 +157,14 @@ BEGIN
     EXECUTE format($q$ALTER TABLE %I.builds ADD COLUMN IF NOT EXISTS pinned_by TEXT NOT NULL DEFAULT ''$q$, s);
     -- 最近下载时间：额度紧张时优先淘汰"没人下载的旧包"，比纯按时间更贴近实际价值。
     EXECUTE format('ALTER TABLE %I.builds ADD COLUMN IF NOT EXISTS last_accessed_at TIMESTAMPTZ', s);
+    -- 本机留底状态：absent 无副本 / pulling 拉取中 / present 已归档 / failed 失败。
+    -- 与 r2_state 分开记：一个包可以"R2 有、本机没有"（直传刚完成），
+    -- 也可以"本机有、R2 已淘汰"（空间回收后留底仍在），两者互不决定。
+    --
+    -- 默认 absent 而不是按 r2_key 推断：r2_key 与"本机有没有文件"并非一一对应
+    -- （普通上传的包也可能早已镜像到 R2，直传包则从未落过盘），
+    -- 而 SQL 看不到文件系统。真实值由巡检核对文件后修正。
+    EXECUTE format($q$ALTER TABLE %I.builds ADD COLUMN IF NOT EXISTS local_state TEXT NOT NULL DEFAULT 'absent'$q$, s);
     -- 存量回填：已有 r2_key 的包，其对象就在桶里，用 file_size 作为占用估值为起点。
     -- 只填 r2_bytes=0 的行，重复执行不会覆盖 Worker 后续测得的精确值。
     EXECUTE format($q$

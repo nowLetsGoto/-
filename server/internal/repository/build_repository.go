@@ -20,11 +20,13 @@ import (
 )
 
 // buildColumns 是行映射的唯一列清单，顺序与 rowToBuild 的 Scan 参数严格对应。
-// 只收录列表与详情真正要用的列：其余治理字段（r2_state/r2_bytes/pinned_* 等）
-// 由 storage 治理专用查询按需读取，不进这张热路径清单。
+//
+// 收录原则是「列表或详情要显示什么」：pin_kind / r2_state / local_state 决定行内
+// 显示哪些标记与操作，因此必须在；r2_bytes、last_accessed_at、pinned_by 等
+// 只参与内部决策，由治理专用查询按需读取，不进这条热路径。
 const buildColumns = `id, environment, platform, app_name, package_id, version, build_number,
 	changelog, original_file_name, file_size, file_ext, relative_path, meta_source,
-	download_count, created_at, owner_user_id, r2_key, pin_kind`
+	download_count, created_at, owner_user_id, r2_key, pin_kind, r2_state, local_state`
 
 // columns 在固定列后追加项目图标：公开下载页需要它，但 Build 表本身不冗余存，
 // 统一从同分区的 projects 表按 project_id 子查询，避免图标更新后包记录还是旧值。
@@ -205,16 +207,25 @@ func (r *BuildRepository) ListSiblingVersions(ctx context.Context, id string, in
 	return items, projectKey, nil
 }
 
-// SetR2Key 记录包在对象存储中的对象名。只在镜像成功后调用，
-// 空串表示未镜像（列默认值），因此这里不接受空 key。
-func (r *BuildRepository) SetR2Key(ctx context.Context, id, key string) error {
+// MarkR2Synced 记录「对象已就位」这一事实：对象名、占用字节、同步状态一次写全。
+//
+// 为什么三个字段一起写而不拆成 SetR2Key + SetState：
+// 它们是同一个事件（上传成功）的三个侧面，分开调用就有机会只写一半——
+// 出现「key 有了但状态还是 pending」的记录，巡检会反复重传同一个对象。
+//
+// bytes 允许为 0（对象确实可能是空文件），空 key 则直接返回：
+// 未镜像的包不该被误标为已同步。
+func (r *BuildRepository) MarkR2Synced(ctx context.Context, id, key string, bytes int64) error {
 	if key == "" {
 		return nil
 	}
 	_, err := r.db.ExecContext(ctx,
-		`UPDATE `+r.table+` SET r2_key = $2 WHERE id = $1`, id, key)
+		`UPDATE `+r.table+`
+SET r2_key = $2, r2_bytes = $3, r2_state = $4, r2_synced_at = now()
+WHERE id = $1`,
+		id, key, bytes, contract.R2StateSynced)
 	if err != nil {
-		return fmt.Errorf("更新 r2_key 失败: %w", err)
+		return fmt.Errorf("记录 R2 同步结果失败: %w", err)
 	}
 	return nil
 }
@@ -258,7 +269,7 @@ func rowToBuild(row rowScanner) (contract.Build, error) {
 		&b.ID, &b.Environment, &b.Platform, &b.AppName, &b.PackageID,
 		&b.Version, &b.BuildNumber, &b.Changelog, &b.OriginalFileName,
 		&b.FileSize, &b.FileExt, &b.RelativePath, &b.MetaSource,
-		&b.DownloadCount, &createdAt, &b.OwnerUserID, &b.R2Key, &b.PinKind, &b.ProjectIconURL,
+		&b.DownloadCount, &createdAt, &b.OwnerUserID, &b.R2Key, &b.PinKind, &b.R2State, &b.LocalState, &b.ProjectIconURL,
 	)
 	if err != nil {
 		return contract.Build{}, err

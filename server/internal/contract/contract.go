@@ -130,6 +130,38 @@ const (
 	MetaFallback = "fallback"
 )
 
+// 本机留底状态：描述包的字节在本机磁盘上处于什么情况，与 r2_state 各自独立。
+//
+// 为什么要两个状态字段：一个包可以「R2 有、本机没有」（直传刚完成，尚未拉回），
+// 也可以「本机有、R2 已淘汰」（空间回收后留底仍在）。二者描述不同事实，
+// 合成一个字段就会出现「既已淘汰又待拉回」这类无法表达的中间态。
+const (
+	// LocalAbsent 表示本机没有副本，需要从 R2 拉回。
+	LocalAbsent = "absent"
+	// LocalPulling 表示正在拉回，用于避免重复触发与前端提示"归档中"。
+	LocalPulling = "pulling"
+	// LocalPresent 表示本机已归档，是下载走本地流式的前提。
+	LocalPresent = "present"
+	// LocalFailed 表示拉回失败，等待下次巡检重试，需要人工关注。
+	LocalFailed = "failed"
+)
+
+// 对象存储状态：描述包的字节在 R2 桶里处于什么情况。
+//
+// 与 local_state 互补：两者组合才能表达「能不能下载、要不要重推」。
+// 例如 synced + absent 表示「能从 CDN 下载，但本机还没留底」，
+// evicted + present 表示「已被淘汰，但本机有副本，可随时重推」。
+const (
+	// R2StatePending 表示尚未同步到 R2。
+	R2StatePending = "pending"
+	// R2StateSynced 表示对象在桶里且可用，下载优先走 CDN 直链。
+	R2StateSynced = "synced"
+	// R2StateEvicted 表示对象已被容量淘汰。r2_key 仍保留，供重推复用。
+	R2StateEvicted = "evicted"
+	// R2StateFailed 表示同步失败，需要人工关注。
+	R2StateFailed = "failed"
+)
+
 // AccountLevel 是管理身份层级：决定「能管谁、管多大范围」，与业务角色完全正交。
 // 取值与 api/openapi.yaml 的 AccountLevel.enum、users.account_level 的 CHECK 约束一一对应。
 // 顺序从高到低；新增层级必须同时改三处并在此注释里说明，避免各层各自解释大小关系。
@@ -1163,10 +1195,17 @@ type Build struct {
 	// 分享页（免登录），符合运营人员点按钮的预期。无有效分享时为空串。
 	DownloadSharePath string `json:"downloadSharePath"`
 	// PinKind 非空表示该版本被固定，永不参与容量淘汰。前端据此显示"已固定"。
-	// 其余治理字段（同步状态、字节数、访问时间）不进列表 DTO：
-	// 列表不需要它们，多读只会让每次查询为无关数据付出代价。
-	PinKind   string `json:"pinKind"`
-	CreatedAt string `json:"createdAt"`
+	PinKind string `json:"pinKind"`
+	// R2State 是对象存储侧的同步状态（pending / synced / evicted）。
+	// 前端据此决定是否显示「同步到 R2」按钮：已淘汰的包需要人工重推。
+	R2State string `json:"r2State"`
+	// LocalState 是本机留底状态（absent / pulling / present / failed）。
+	// 前端据此显示「归档中」提示，并在 absent 时提示尚不可离线下载。
+	//
+	// 这两个状态字段都进列表：它们直接决定行内要显示什么操作，
+	// 而其余治理字段（r2_bytes、last_accessed_at 等）只用于内部决策，不进 DTO。
+	LocalState string `json:"localState"`
+	CreatedAt  string `json:"createdAt"`
 	// OwnerUserID 是上传者账号 id；system 表示由外部 API 或历史数据产生。
 	OwnerUserID string `json:"ownerUserId"`
 }

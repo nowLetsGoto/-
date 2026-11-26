@@ -13,6 +13,8 @@ import (
 	"database/sql"
 	"fmt"
 	"time"
+
+	"dandelion/server/internal/contract"
 )
 
 // RetentionRow 是一行参与淘汰决策的快照。
@@ -31,16 +33,18 @@ type RetentionRow struct {
 
 // ListRetentionCandidates 读出一个租户下所有仍在 R2 的包，供淘汰算法决策。
 //
-// 只取 r2_key 非空且 r2_bytes > 0 的行：没有对象名的包不在桶里，
-// 字节为 0 的包已被淘汰或尚未同步，两者都不占 R2 预算，不参与竞争。
+// 判据是 r2_state = 'synced' 且占用大于 0：已淘汰的包（r2_key 仍保留供重推）
+// 与尚未同步的包都不占桶空间，不参与竞争。用状态而非 key 是否为空来筛，
+// 是因为淘汰后 key 故意保留，按 key 判会把已回收的包重新算进候选，
+// 每轮巡检都重复处理同一批对象。
 func (r *BuildRepository) ListRetentionCandidates(ctx context.Context, tenantID string) ([]RetentionRow, error) {
 	query := `SELECT b.id, p.tenant_id, b.r2_key, b.r2_bytes, b.pin_kind, b.created_at, b.last_accessed_at
 FROM ` + r.table + ` b
 JOIN ` + r.project + ` p ON p.id = b.project_id
-WHERE p.tenant_id = $1 AND b.r2_key <> '' AND b.r2_bytes > 0
+WHERE p.tenant_id = $1 AND b.r2_state = $2 AND b.r2_bytes > 0
 ORDER BY b.created_at DESC`
 
-	rows, err := r.db.QueryContext(ctx, query, tenantID)
+	rows, err := r.db.QueryContext(ctx, query, tenantID, contract.R2StateSynced)
 	if err != nil {
 		return nil, fmt.Errorf("查询淘汰候选失败: %w", err)
 	}
@@ -63,22 +67,25 @@ ORDER BY b.created_at DESC`
 	return out, rows.Err()
 }
 
-// MarkEvicted 把包标记为"对象已离开 R2"。
+// MarkEvicted 把包标记为「对象已离开 R2」。
 //
-// 清空 r2_key 是这个标记的核心：下载路径以 r2_key 是否存在来决定走 CDN 还是本机，
-// 置空后就不会再签发一个已经失效的直链。同时把 r2_bytes 归零，
-// 让容量统计立刻反映"空间已释放"。
+// 保留 r2_key 而不清空：它是「同步到 R2」重推时的目标对象名。
+// 若清空，重推就得重新生成 key，而新 key 很可能丢掉
+// {租户}/{项目}/direct/ 这段归属前缀，孤儿对象将再也无法判断属于谁。
 //
-// 不删行：这是淘汰与人工删除的根本区别——历史版本、下载次数、分享记录都保留，
-// 用户仍能看到"曾经有过这个版本"，只是文件不再占用对象存储。
+// 因此「对象在不在」由 r2_state 判定，而不是看 r2_key 是否为空——
+// 下载路径必须同步改成读 r2_state，否则会拿旧 key 去签发一个已删除对象的直链。
+//
+// r2_bytes 归零、r2_synced_at 清空，让容量统计立刻反映空间已释放。
+// 不删行：这是淘汰与人工删除的根本区别——历史版本、下载次数、分享记录都保留。
 func (r *BuildRepository) MarkEvicted(ctx context.Context, ids []string) error {
 	if len(ids) == 0 {
 		return nil
 	}
 	query := `UPDATE ` + r.table + `
-SET r2_key = '', r2_bytes = 0, r2_state = 'evicted', r2_synced_at = NULL
+SET r2_bytes = 0, r2_state = $2, r2_synced_at = NULL
 WHERE id = ANY($1)`
-	if _, err := r.db.ExecContext(ctx, query, ids); err != nil {
+	if _, err := r.db.ExecContext(ctx, query, ids, contract.R2StateEvicted); err != nil {
 		return fmt.Errorf("标记淘汰失败: %w", err)
 	}
 	return nil

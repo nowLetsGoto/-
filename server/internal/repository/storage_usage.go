@@ -15,6 +15,8 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+
+	"dandelion/server/internal/contract"
 )
 
 // UsageGroup 是一行分组用量。
@@ -45,18 +47,20 @@ type StorageUsage struct {
 // 租户的包可能上千条，但聚合结果只有几行。
 func (r *BuildRepository) StorageUsageOf(ctx context.Context, tenantID string) (StorageUsage, error) {
 	// 表名来自 Partition 常量，非用户输入，拼接安全；不能用 const 是因为 r.table 是运行时值。
+	// 状态比较用参数绑定，避免把枚举值散落成裸字符串——改一处忘另一处是这类统计最常见的错。
 	totals := `
 SELECT COALESCE(SUM(b.r2_bytes), 0),
        COUNT(*),
        COUNT(*) FILTER (WHERE b.r2_bytes > 0),
-       COUNT(*) FILTER (WHERE b.r2_state = 'pending'),
-       COUNT(*) FILTER (WHERE b.r2_state = 'failed')
+       COUNT(*) FILTER (WHERE b.r2_state = $2),
+       COUNT(*) FILTER (WHERE b.r2_state = $3)
 FROM ` + r.table + ` b
 JOIN ` + r.project + ` p ON p.id = b.project_id
 WHERE p.tenant_id = $1`
 
 	var usage StorageUsage
-	err := r.db.QueryRowContext(ctx, totals, tenantID).Scan(
+	err := r.db.QueryRowContext(ctx, totals, tenantID,
+		contract.R2StatePending, contract.R2StateFailed).Scan(
 		&usage.TotalBytes, &usage.BuildCount, &usage.R2BuildCount,
 		&usage.PendingCount, &usage.FailedCount)
 	if err != nil && err != sql.ErrNoRows {

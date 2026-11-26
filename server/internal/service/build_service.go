@@ -400,14 +400,15 @@ func (s *BuildService) Create(ctx context.Context, in contract.CommitInput, iden
 		// 公司归属取自项目（项目是包的唯一归属载体），不是请求参数。
 		s.notifier.NotifyBuild(ctx, project.TenantID, build)
 	}
-	// 直传来源的对象已在桶里：直接回写 r2_key，省掉一次整包上传。
+	// 直传来源的对象已在桶里：记下对象名与占用，省掉一次整包上传。
 	if staged.r2Key != "" && s.r2 != nil {
-		if err := repo.SetR2Key(ctx, build.ID, staged.r2Key); err != nil {
-			log.Printf("直传包回写 r2_key 失败 id=%s key=%s err=%v", build.ID, staged.r2Key, err)
+		if err := repo.MarkR2Synced(ctx, build.ID, staged.r2Key, fileSize); err != nil {
+			log.Printf("直传包回写 R2 状态失败 id=%s key=%s err=%v", build.ID, staged.r2Key, err)
 			// 回写失败不阻断：交给后台镜像兜底。
 			s.syncToR2Async(build, mode)
 		} else {
 			build.R2Key = staged.r2Key
+			build.R2State = contract.R2StateSynced
 			// 预热 CDN：让首个下载者命中边缘缓存，而不是等待回源。
 			// 下载名元数据已在直传时写入，此处无需再补。
 			s.prewarmCDNAsync(staged.r2Key)
@@ -477,9 +478,14 @@ func (s *BuildService) List(ctx context.Context, q contract.ListQuery, identity 
 
 // resolveBuildFile 只接收已经授权的包，统一做路径与文件存在性检查。
 //
-// 直传包的字节只在 R2、本地无文件：此时跳过磁盘检查，Size 用数据库记录。
-// streamFile 见 R2Key 非空会 302 到 CDN，不读 AbsPath；仅当 R2 不可用时才回退本地，
-// 那种情况下 AbsPath 为空会安全地返回 NotFound，不会误下发错误内容。
+// 本地文件是否必须存在，取决于 R2 那边还有没有可用对象：
+//   - R2 有对象（r2_state=synced）：字节可从 CDN 取，本地缺失不算错，
+//     淘汰回收后本机仍可能没有副本，此时靠 R2 兜住可下载性；
+//   - R2 无对象（已淘汰或从未同步）：本地文件是唯一副本，必须存在。
+//
+// 判断依据是 r2_state 而非 r2_key 是否为空：淘汰只把状态改成 evicted 并保留 key，
+// 因为那个 key 是「同步到 R2」重推时的目标名。若仍用 key 是否为空来判断，
+// 淘汰后就会拿一个已失效的 key 去签发直链，用户点下载得到 404。
 func (s *BuildService) resolveBuildFile(build contract.Build) (contract.FileRef, error) {
 	id := build.ID
 	abs, err := s.paths.SafeResolve(build.RelativePath)
@@ -488,12 +494,18 @@ func (s *BuildService) resolveBuildFile(build contract.Build) (contract.FileRef,
 		return contract.FileRef{}, contract.NotFound(contract.ResourceBuild)
 	}
 
+	// r2Key 为「本包可用的 CDN 直链钥匙」；淘汰后置空，让下游自然回落到本地流式。
+	r2Key := ""
+	if build.R2State == contract.R2StateSynced {
+		r2Key = build.R2Key
+	}
+
 	size := build.FileSize
-	if build.R2Key == "" {
-		// 普通上传：本地文件是权威副本，必须存在。
+	if r2Key == "" {
+		// 没有可用的 R2 对象：本地文件成为唯一副本，必须存在。
 		info, err := os.Stat(abs)
 		if err != nil || info.IsDir() {
-			log.Printf("下载文件缺失 id=%s path=%s err=%v", id, abs, err)
+			log.Printf("下载文件缺失 id=%s path=%s r2State=%s err=%v", id, abs, build.R2State, err)
 			return contract.FileRef{}, contract.NotFound(contract.ResourceBuild)
 		}
 		size = info.Size()
@@ -512,7 +524,7 @@ func (s *BuildService) resolveBuildFile(build contract.Build) (contract.FileRef,
 		ContentType: contentType,
 		FileName:    fileName,
 		Size:        size,
-		R2Key:       build.R2Key,
+		R2Key:       r2Key,
 	}, nil
 }
 
