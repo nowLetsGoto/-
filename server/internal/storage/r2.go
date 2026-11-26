@@ -26,6 +26,7 @@ import (
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/aws/smithy-go"
 )
 
@@ -92,14 +93,15 @@ const objectCacheControl = "public, max-age=31536000, immutable"
 func ObjectCacheControl() string { return objectCacheControl }
 
 // Put 上传对象。size 用于设置 ContentLength，避免 SDK 走分块编码。
-func (r *R2) Put(ctx context.Context, key string, body io.Reader, size int64, contentType string) error {
+func (r *R2) Put(ctx context.Context, key string, body io.Reader, size int64, contentType, fileName string) error {
 	_, err := r.client.PutObject(ctx, &s3.PutObjectInput{
-		Bucket:        aws.String(r.cfg.Bucket),
-		Key:           aws.String(key),
-		Body:          body,
-		ContentLength: aws.Int64(size),
-		ContentType:   aws.String(contentType),
-		CacheControl:  aws.String(objectCacheControl),
+		Bucket:             aws.String(r.cfg.Bucket),
+		Key:                aws.String(key),
+		Body:               body,
+		ContentLength:      aws.Int64(size),
+		ContentType:        aws.String(contentType),
+		CacheControl:       aws.String(objectCacheControl),
+		ContentDisposition: aws.String(ContentDisposition(fileName)),
 	})
 	if err != nil {
 		return fmt.Errorf("上传 R2 失败 key=%s: %w", key, err)
@@ -179,6 +181,33 @@ func downloadHTTP(ctx context.Context, u string, dst io.Writer) (int64, error) {
 		return 0, fmt.Errorf("CDN 返回 HTTP %d", resp.StatusCode)
 	}
 	return io.Copy(dst, resp.Body)
+}
+
+// SetContentDisposition 补写对象的响应头元数据，让 CDN 直链带回原始文件名。
+//
+// 为什么需要单独一步：直传由浏览器用预签名 URL 完成，签名里若包含
+// Content-Disposition，前端 PUT 就必须原样带上该头，否则签名不匹配 403。
+// 为不改动前端，改为上传完成后由服务端用 CopyObject 改写自身元数据——
+// R2 内部复制不传输对象字节，代价很小。
+//
+// MetadataDirective 用 REPLACE 会整体替换元数据，故 ContentType 必须一并重写，
+// 否则下载时 MIME 变成默认值。
+//
+// 必须在 CDN 缓存该对象之前完成，否则旧响应头会被缓存一年（见 objectCacheControl）。
+func (r *R2) SetContentDisposition(ctx context.Context, key, fileName, contentType string) error {
+	_, err := r.client.CopyObject(ctx, &s3.CopyObjectInput{
+		Bucket:             aws.String(r.cfg.Bucket),
+		Key:                aws.String(key),
+		CopySource:         aws.String(url.PathEscape(r.cfg.Bucket + "/" + key)),
+		MetadataDirective:  types.MetadataDirectiveReplace,
+		ContentType:        aws.String(contentType),
+		CacheControl:       aws.String(objectCacheControl),
+		ContentDisposition: aws.String(ContentDisposition(fileName)),
+	})
+	if err != nil {
+		return fmt.Errorf("更新对象下载名失败 key=%s: %w", key, err)
+	}
+	return nil
 }
 
 // StatObject 返回对象大小；对象不存在时返回 (0, false, nil) —— 让调用方用

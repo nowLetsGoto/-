@@ -8,6 +8,7 @@ package storage
 import (
 	"errors"
 	"fmt"
+	"net/url"
 	"path"
 	"path/filepath"
 	"strings"
@@ -100,6 +101,21 @@ func CleanFileName(raw string) string {
 		return ""
 	}
 	return name
+}
+
+// ContentDisposition 生成下载响应头，让浏览器用原始中文文件名保存。
+//
+// 两个字段并存：filename 是纯 ASCII 兜底（旧浏览器），filename* 遵循 RFC 5987
+// 携带真实名称。同一逻辑同时用于本机流式下载与 R2 对象元数据——后者让 CDN 直链
+// 也带回正确文件名，否则浏览器只能拿 URL 末段的 UUID 当名字。
+func ContentDisposition(name string) string {
+	ascii := strings.Map(func(r rune) rune {
+		if r > 127 || r == '"' || r == '\\' || r == '\r' || r == '\n' {
+			return '_'
+		}
+		return r
+	}, name)
+	return fmt.Sprintf(`attachment; filename="%s"; filename*=UTF-8''%s`, ascii, url.PathEscape(name))
 }
 
 // 文件类型只投影契约目录，避免新增平台时维护第二份映射。

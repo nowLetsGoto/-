@@ -164,7 +164,7 @@ func runR2Sync(args []string) error {
 			continue
 		}
 		start := time.Now()
-		putErr := r2.Put(ctx, key, f, info.Size(), contentType)
+		putErr := r2.Put(ctx, key, f, info.Size(), contentType, it.fileName)
 		f.Close()
 		if putErr != nil {
 			log.Printf("%s 上传失败 %s: %v", prefix, it.fileName, putErr)

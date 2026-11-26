@@ -11,10 +11,8 @@ import (
 	"io"
 	"log"
 	"net/http"
-	"net/url"
 	"os"
 	"strconv"
-	"strings"
 
 	"github.com/go-chi/chi/v5"
 
@@ -250,12 +248,8 @@ func (h *BuildHandler) streamFile(w http.ResponseWriter, r *http.Request, id str
 	return nil
 }
 
+// contentDisposition 委托 storage 实现：本机下载与 R2 对象元数据共用同一套编码，
+// 保证两条下载路径返回的文件名一致。
 func contentDisposition(name string) string {
-	ascii := strings.Map(func(r rune) rune {
-		if r > 127 || r == '"' || r == '\\' || r == '\r' || r == '\n' {
-			return '_'
-		}
-		return r
-	}, name)
-	return fmt.Sprintf(`attachment; filename="%s"; filename*=UTF-8''%s`, ascii, url.PathEscape(name))
+	return storage.ContentDisposition(name)
 }

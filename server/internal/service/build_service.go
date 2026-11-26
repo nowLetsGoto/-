@@ -409,7 +409,10 @@ func (s *BuildService) Create(ctx context.Context, in contract.CommitInput, iden
 		} else {
 			build.R2Key = staged.r2Key
 			// 预热 CDN：让首个下载者命中边缘缓存，而不是等待回源。
-			s.prewarmCDNAsync(staged.r2Key)
+			// 同时补写下载名——直传对象由浏览器 PUT 生成，缺这个元数据会让
+			// 浏览器拿 URL 末段的 UUID 当文件名。
+			mime, _ := s.contentTypeOf(in.Platform)
+			s.prewarmCDNAsync(staged.r2Key, staged.originalFileName, mime)
 		}
 		return build, nil
 	}
