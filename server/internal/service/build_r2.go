@@ -99,7 +99,7 @@ func (s *BuildService) syncToR2(build contract.Build, mode contract.SessionMode)
 	}
 	log.Printf("R2 同步完成 id=%s key=%s", build.ID, key)
 	// 镜像完成即预热 CDN：把首个下载者的回源等待转移到此处。
-	s.prewarmCDNAsync(key, "", "")
+	s.prewarmCDNAsync(key)
 }
 
 // syncToR2Async 在后台镜像，不阻塞当前请求。
@@ -121,12 +121,6 @@ func (s *BuildService) contentTypeOf(platform string) (string, error) {
 // 首下载只有 0.5MB/s，填满缓存后可达 2.8MB/s。这里主动发一次小 Range 请求触发
 // 缓存填充，把这段等待从用户身上转移到发布瞬间。
 //
-// 传 fileName 时顺带补写 Content-Disposition：直传对象由浏览器 PUT 生成，
-// 没有下载名元数据，302 到 CDN 后浏览器只能拿 URL 末段 UUID 当文件名。
-//
-// 顺序很关键：必须先补元数据再预热。反过来会让不含文件名的响应头被 CDN
-// 缓存一年（objectCacheControl 是 immutable），之后无法纠正。
-//
 // 只读前 256KB：足以让 Cloudflare 走完整回源路径并建立对象缓存条目，
 // 同时不为预热传输整个包。
 //
@@ -134,7 +128,7 @@ func (s *BuildService) contentTypeOf(platform string) (string, error) {
 //
 // 注意：不使用调用方的 ctx。Create 的请求上下文在响应返回后即被取消，
 // 而预热要在那之后继续跑，故用独立的后台上下文与超时。
-func (s *BuildService) prewarmCDNAsync(key, fileName, contentType string) {
+func (s *BuildService) prewarmCDNAsync(key string) {
 	if s.r2 == nil || key == "" {
 		return
 	}
@@ -147,13 +141,6 @@ func (s *BuildService) prewarmCDNAsync(key, fileName, contentType string) {
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), r2PrewarmTimeout)
 		defer cancel()
-
-		if fileName != "" {
-			if err := s.r2.SetContentDisposition(ctx, key, fileName, contentType); err != nil {
-				// 补元数据失败不阻断预热：最坏情况是下载名不好看，包仍可下载。
-				log.Printf("CDN 对象下载名补写失败 key=%s err=%v", key, err)
-			}
-		}
 
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 		if err != nil {

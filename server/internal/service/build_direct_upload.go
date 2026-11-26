@@ -63,13 +63,15 @@ func (s *BuildService) IssueUploadTicket(ctx context.Context, in contract.Upload
 	if err != nil {
 		return contract.UploadTicket{}, err
 	}
+	// 原始文件名清洗后用于两处：对象元数据里的下载名，以及暂存记录。
+	originalName := storage.CleanFileName(in.FileName)
 	token, err := contract.NewStageToken()
 	if err != nil {
 		return contract.UploadTicket{}, fmt.Errorf("生成上传标识失败: %w", err)
 	}
 	key := path.Join(directKeyPrefix, token+"."+ext)
 
-	putURL, err := s.r2.PresignPutURL(ctx, key, in.Size, contentType, uploadTicketTTL)
+	putURL, err := s.r2.PresignPutURL(ctx, key, in.Size, contentType, originalName, uploadTicketTTL)
 	if err != nil {
 		return contract.UploadTicket{}, err
 	}
@@ -79,7 +81,7 @@ func (s *BuildService) IssueUploadTicket(ctx context.Context, in contract.Upload
 		DeclaredSize: in.Size,
 		ContentType:  contentType,
 		FileExt:      ext,
-		OriginalName: storage.CleanFileName(in.FileName),
+		OriginalName: originalName,
 		State:        repository.UploadStatePending,
 		ExpiresAt:    time.Now().Add(uploadTicketTTL),
 	}
@@ -91,12 +93,13 @@ func (s *BuildService) IssueUploadTicket(ctx context.Context, in contract.Upload
 	return contract.UploadTicket{
 		UploadToken: token,
 		PutURL:      putURL,
-		// 签名里包含 content-type 与 content-length，前端必须原样带上。
+		// 以下三个头都参与签名，前端 PUT 必须原样带上，缺任一个都会 403。
 		Header: map[string]string{
 			"Content-Type":   contentType,
 			"Content-Length": fmt.Sprint(in.Size),
-			// 签名里含 Cache-Control，浏览器 PUT 必须原样带上，否则 403。
-			"Cache-Control": storage.ObjectCacheControl(),
+			"Cache-Control":  storage.ObjectCacheControl(),
+			// 下载名元数据：上传即写入，CDN 首次缓存就带正确文件名。
+			"Content-Disposition": storage.ContentDisposition(originalName),
 		},
 		ExpiresInSeconds: int(uploadTicketTTL.Seconds()),
 	}, nil

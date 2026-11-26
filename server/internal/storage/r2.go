@@ -118,13 +118,19 @@ func (r *R2) Put(ctx context.Context, key string, body io.Reader, size int64, co
 //
 // size 与 contentType 一并纳入签名：R2 会校验实际请求体的长度与类型，
 // 避免用户拿到 URL 后上传任意大小的文件（例如把 300MB 的 URL 用来传 10GB）。
-func (r *R2) PresignPutURL(ctx context.Context, key string, size int64, contentType string, ttl time.Duration) (string, error) {
+//
+// ContentDisposition 也写入签名：前端 PUT 时必须原样带上该头（见 UploadTicket.Header），
+// 否则签名不匹配 403。必须在上传时就写好而非事后补写——对象一旦被 CDN 请求过，
+// 其响应头会被缓存一年（objectCacheControl 是 immutable），旧头再也无法纠正，
+// 浏览器就会拿 URL 末段的 UUID 当下载文件名。
+func (r *R2) PresignPutURL(ctx context.Context, key string, size int64, contentType, fileName string, ttl time.Duration) (string, error) {
 	out, err := r.presign.PresignPutObject(ctx, &s3.PutObjectInput{
-		Bucket:        aws.String(r.cfg.Bucket),
-		Key:           aws.String(key),
-		ContentType:   aws.String(contentType),
-		ContentLength: aws.Int64(size),
-		CacheControl:  aws.String(objectCacheControl),
+		Bucket:             aws.String(r.cfg.Bucket),
+		Key:                aws.String(key),
+		ContentType:        aws.String(contentType),
+		ContentLength:      aws.Int64(size),
+		CacheControl:       aws.String(objectCacheControl),
+		ContentDisposition: aws.String(ContentDisposition(fileName)),
 	}, s3.WithPresignExpires(ttl))
 	if err != nil {
 		return "", fmt.Errorf("生成 R2 上传签名失败 key=%s: %w", key, err)
