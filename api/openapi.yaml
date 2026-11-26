@@ -1232,8 +1232,11 @@ paths:
           application/json:
             schema:
               type: object
-              required: [fileName, size, contentType]
+              required: [project, fileName, size, contentType]
               properties:
+                project:
+                  type: string
+                  description: 项目 key。用于把"租户/项目"编进 R2 对象 key，使对象自带归属信息；也会提前校验项目存在与访问权限
                 fileName:
                   type: string
                   description: 原始文件名，用于推导扩展名与下载展示名

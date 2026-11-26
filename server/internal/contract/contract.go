@@ -1221,9 +1221,13 @@ type StageResult struct {
 	Warnings   []string   `json:"warnings"`
 }
 
-// UploadTicketInput 申请直传票据：只描述文件本身，不含项目与表单值。
-// size 与 fileName 用于校验和推导扩展名；contentType 一并纳入签名。
+// UploadTicketInput 申请直传票据：只描述文件本身与归属项目。
+//
+// Project 用于把租户与项目编进 R2 对象 key，使对象自带归属信息——
+// 这样即使数据库记录丢失，也能从对象路径反推出它属于哪个租户的哪个项目，
+// 支撑"每晚从 R2 反向补录"的恢复能力。
 type UploadTicketInput struct {
+	Project     string `json:"project"`
 	FileName    string `json:"fileName"`
 	Size        int64  `json:"size"`
 	ContentType string `json:"contentType"`

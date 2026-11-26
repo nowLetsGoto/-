@@ -60,10 +60,14 @@ export function stageBuild(file: File): Promise<StageResult> {
 
 /**
  * 申请直传票据。用于超过 Tunnel 100 MB 上限的大包。
+ *
+ * project 必须传入：服务端要用它把"租户/项目"编进 R2 对象 key，
+ * 使对象自带归属信息（数据库丢失时还能靠 key 还原归属）。
  * 未启用对象存储时服务端返回 400，调用方应回落到 stageBuild。
  */
-export function requestUploadTicket(file: File): Promise<UploadTicket> {
+export function requestUploadTicket(file: File, project: string): Promise<UploadTicket> {
   return postJSON<UploadTicket>(ROUTES.uploadTicket, {
+    project,
     fileName: file.name,
     size: file.size,
     contentType: file.type || 'application/octet-stream',

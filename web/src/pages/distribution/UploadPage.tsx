@@ -142,7 +142,8 @@ export function UploadPage(): JSX.Element {
       // 未启用对象存储时服务端会在取票据阶段拒绝，此处自动回落到 multipart。
       let result: StageResult | null = null;
       try {
-        const ticket = await requestUploadTicket(selected);
+        // project 一并传入：服务端据此把"租户/项目"编进 R2 对象 key。
+        const ticket = await requestUploadTicket(selected, key);
         uploadTokenRef.current = ticket.uploadToken;
         setUploadPercent(0);
         await putToR2(ticket, selected, setUploadPercent);

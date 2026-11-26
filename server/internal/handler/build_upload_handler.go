@@ -12,17 +12,20 @@ package handler
 import (
 	"net/http"
 
+	"dandelion/server/internal/authctx"
 	"dandelion/server/internal/contract"
 )
 
 // UploadTicket 申请直传票据。响应里带预签名 URL，前端据此直接 PUT 到 R2。
+//
+// 请求需带 project：对象 key 由"租户/项目"构成，缺失就无法为对象定归属。
 func (h *BuildHandler) UploadTicket(w http.ResponseWriter, r *http.Request) error {
 	var in contract.UploadTicketInput
-	if err := DecodeJSON(w, r, &in, "fileName/size/contentType"); err != nil {
+	if err := DecodeJSON(w, r, &in, "project/fileName/size/contentType"); err != nil {
 		return err
 	}
 	AttachLogFields(r, "fileName="+in.FileName)
-	ticket, err := h.svc.IssueUploadTicket(r.Context(), in)
+	ticket, err := h.svc.IssueUploadTicket(r.Context(), in, authctx.From(r.Context()))
 	if err != nil {
 		return err
 	}

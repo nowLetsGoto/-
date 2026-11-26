@@ -23,6 +23,7 @@ import (
 	"strings"
 	"time"
 
+	"dandelion/server/internal/authctx"
 	"dandelion/server/internal/contract"
 	"dandelion/server/internal/repository"
 	"dandelion/server/internal/storage"
@@ -32,15 +33,29 @@ const (
 	// uploadTicketTTL 是预签名 URL 与 uploadToken 的有效期。
 	// 家宽上行慢，300 MB 可能要传十几分钟，给足 1 小时。
 	uploadTicketTTL = time.Hour
-	// directKeyPrefix 把直传对象与已发布对象分开，便于区分来源与批量清理。
+	// directKeyPrefix 是直传对象在"租户/项目"之下的固定段，
+	// 与已发布对象分开，便于区分来源与批量清理。
 	directKeyPrefix = "direct"
 )
 
 // errDirectDisabled 用于在未配置 R2 时给出可读的拒绝原因。
 var errDirectDisabled = errors.New("未启用对象存储，无法使用直传上传")
 
+// directKey 构造直传对象名：{租户}/{项目}/{direct}/{token}.{ext}
+//
+// 为什么把租户与项目编进 key：浏览器在 commit 之前就完成 PUT，
+// 此刻数据库还没有这条记录。若 key 只含 token，对象就成了无主孤儿——
+// 数据库一旦丢失记录，再也无法判断它属于谁。带上两级归属后，
+// 每晚的反向同步可以仅凭 key 就还原归属，多租户也天然隔离。
+func directKey(tenantID, projectKey, token, ext string) string {
+	return path.Join(tenantID, projectKey, directKeyPrefix, token+"."+ext)
+}
+
 // IssueUploadTicket 校验文件并签发预签名 PUT 票据。
-func (s *BuildService) IssueUploadTicket(ctx context.Context, in contract.UploadTicketInput) (contract.UploadTicket, error) {
+//
+// 入参带 project：key 需要它来确定归属，同时也借此提前拒绝无效项目，
+// 免得用户传完 300MB 才在 commit 阶段发现项目不存在。
+func (s *BuildService) IssueUploadTicket(ctx context.Context, in contract.UploadTicketInput, identity contract.Identity) (contract.UploadTicket, error) {
 	if s.r2 == nil || s.sessions == nil {
 		return contract.UploadTicket{}, &contract.ValidationError{Message: errDirectDisabled.Error()}
 	}
@@ -58,6 +73,15 @@ func (s *BuildService) IssueUploadTicket(ctx context.Context, in contract.Upload
 			Message: fmt.Sprintf("文件超过 %d MB 上限", s.cfg.MaxUploadMB),
 		}
 	}
+	// 提前校验项目归属与权限：key 要用它，也避免传完才失败。
+	project, err := s.resolveProject(ctx, in.Project, identity.UserID, identity.Mode)
+	if err != nil {
+		return contract.UploadTicket{}, err
+	}
+	tenantID := authctx.ScopeFrom(ctx).TenantID
+	if tenantID == "" {
+		return contract.UploadTicket{}, &contract.ValidationError{Message: "无法确定所属公司，请重新登录"}
+	}
 
 	contentType, err := storage.ContentType(platform)
 	if err != nil {
@@ -69,7 +93,7 @@ func (s *BuildService) IssueUploadTicket(ctx context.Context, in contract.Upload
 	if err != nil {
 		return contract.UploadTicket{}, fmt.Errorf("生成上传标识失败: %w", err)
 	}
-	key := path.Join(directKeyPrefix, token+"."+ext)
+	key := directKey(tenantID, project.Key, token, ext)
 
 	putURL, err := s.r2.PresignPutURL(ctx, key, in.Size, contentType, originalName, uploadTicketTTL)
 	if err != nil {
@@ -210,12 +234,6 @@ func (s *BuildService) AbortUpload(ctx context.Context, uploadToken string) erro
 		}
 	}
 	return s.sessions.Delete(ctx, uploadToken)
-}
-
-// FormForDirectUpload 交付 commit 所需信息：把 direct/ 对象名记到暂存上下文里。
-// commit 完成后 r2_key 指向该对象，下载即可直接 302，无需二次同步。
-func (s *BuildService) DirectKeyOf(uploadToken string) string {
-	return path.Join(directKeyPrefix, uploadToken)
 }
 
 // pullFromR2ToStage 把 R2 对象读进 tmp，并写 .name 伴生文件。
