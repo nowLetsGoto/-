@@ -79,6 +79,9 @@ var allowedMethods = map[string]string{
 	contract.RouteWebhookTest:         "POST",
 	contract.RouteBuilds:              "GET, POST",
 	contract.RouteStage:               "POST",
+	contract.RouteUploadTicket:        "POST",
+	contract.RouteStageFromR2:         "POST",
+	contract.RouteUploadAbort:         "POST",
 	contract.RouteBuildByID:           "GET, PUT, DELETE",
 	contract.RouteBuildVersions:       "GET",
 	contract.RouteBuildFile:           "GET",
@@ -119,7 +122,8 @@ func allowedMethodsFor(req *http.Request) string {
 		return "GET, PUT"
 	case path == contract.RouteBuilds:
 		return "GET, POST"
-	case path == contract.RouteStage:
+	case path == contract.RouteStage, path == contract.RouteUploadTicket,
+		path == contract.RouteStageFromR2, path == contract.RouteUploadAbort:
 		return "POST"
 	case strings.HasPrefix(path, contract.RouteBuilds+"/"):
 		if strings.Count(strings.TrimPrefix(path, contract.RouteBuilds+"/"), "/") == 0 {
@@ -160,6 +164,10 @@ func NewRouter(d Deps) http.Handler {
 			private.Get("/builds/{id}/file", middleware.Wrap(d.Builds.DownloadFile))
 			// 发布/暂存：提交时项目在请求体里，由 handler 内部判定 build.write
 			private.Post("/builds/stage", middleware.Wrap(d.Builds.Stage))
+			// 大包直传：先取票据让浏览器直接 PUT 到 R2，避开 Tunnel 的 100MB 请求体上限。
+			private.Post("/builds/upload-ticket", middleware.Wrap(d.Builds.UploadTicket))
+			private.Post("/builds/stage-from-r2", middleware.Wrap(d.Builds.StageFromR2))
+			private.Post("/builds/upload-abort", middleware.Wrap(d.Builds.UploadAbort))
 			private.Post("/builds", middleware.Wrap(d.Builds.Commit))
 			private.With(authzmw.RequireProjectPermission(d.Authz, "build.read")).Get("/builds", middleware.Wrap(d.Builds.List))
 

@@ -36,6 +36,9 @@ type StagedFile struct {
 	AbsPath          string
 	Ext              string
 	OriginalFileName string
+	// DirectR2Key 非空表示该文件是浏览器直传到 R2 后再回拉的，
+	// 对象已在桶里，commit 时可跳过二次上传，直接把 r2_key 指向它。
+	DirectR2Key string
 }
 
 // stagedLookup 是提交时还原出的暂存文件信息。
@@ -44,6 +47,8 @@ type stagedLookup struct {
 	namePath         string
 	ext              string
 	originalFileName string
+	// r2Key 非空表示文件已由浏览器直传到 R2，commit 跳过二次上传。
+	r2Key string
 }
 
 // BuildNotifier 在发布成功后收到通知。
@@ -57,8 +62,12 @@ type BuildNotifier interface {
 // BuildService 持有配置、路径、分仓储与可选的通知旁路，由 main.go 装配层注入。
 // builds 与 projects 都是分区容器：调用方给出会话模式，服务层据此选取对应的表。
 type BuildService struct {
-	cfg      config.Config
-	paths    *storage.Paths
+	cfg   config.Config
+	paths *storage.Paths
+	// r2 为 nil 表示未配置对象存储，所有下载走本机磁盘（与改造前一致）。
+	r2 *storage.R2
+	// sessions 是浏览器直传 R2 的会话仓储；r2 为 nil 时它也为 nil。
+	sessions *repository.UploadSessionRepository
 	repos    repository.Partitioned[*repository.BuildRepository]
 	projects repository.Partitioned[*projectrepo.Repository]
 	notifier BuildNotifier
@@ -70,13 +79,15 @@ type BuildService struct {
 func NewBuildService(
 	cfg config.Config,
 	paths *storage.Paths,
+	r2 *storage.R2,
+	sessions *repository.UploadSessionRepository,
 	repos repository.Partitioned[*repository.BuildRepository],
 	projects repository.Partitioned[*projectrepo.Repository],
 	notifier BuildNotifier,
 	shares repository.Partitioned[*repository.BuildShareRepository],
 	authz buildPermissionChecker,
 ) *BuildService {
-	return &BuildService{cfg: cfg, paths: paths, repos: repos, projects: projects, notifier: notifier,
+	return &BuildService{cfg: cfg, paths: paths, r2: r2, sessions: sessions, repos: repos, projects: projects, notifier: notifier,
 		shares: repository.NewPartitioned[shareLookup](shares.For(contract.ModeTeam), shares.For(contract.ModeSolo)),
 		signer: newShareSigner(cfg.AuthSecret), authz: authz}
 }
@@ -203,7 +214,8 @@ func (s *BuildService) validateStageToken(token string) (stagedLookup, error) {
 			continue
 		}
 		name := entry.Name()
-		if !strings.HasPrefix(name, token+".") || name == token+".name" {
+		// 跳过两个伴生文件：.name 是原始文件名，.r2 记录直传对象名。
+		if !strings.HasPrefix(name, token+".") || name == token+".name" || name == token+".r2" {
 			continue
 		}
 		candidate := strings.TrimPrefix(name, token+".")
@@ -238,7 +250,12 @@ func (s *BuildService) validateStageToken(token string) (stagedLookup, error) {
 			original = clean
 		}
 	}
-	return stagedLookup{absPath: abs, namePath: namePath, ext: ext, originalFileName: original}, nil
+	// .r2 伴生文件只在浏览器直传时存在：记录已在桶里的对象名。
+	r2Key := ""
+	if data, err := os.ReadFile(s.paths.StageR2KeyPath(token)); err == nil {
+		r2Key = strings.TrimSpace(string(data))
+	}
+	return stagedLookup{absPath: abs, namePath: namePath, ext: ext, originalFileName: original, r2Key: r2Key}, nil
 }
 
 // Create 是提交的唯一编排：表单即最终真值，提交时不再解析、不再覆盖用户值。
@@ -274,6 +291,7 @@ func (s *BuildService) Create(ctx context.Context, in contract.CommitInput, iden
 		return contract.Build{}, fmt.Errorf("移动包文件失败: %w", err)
 	}
 	_ = os.Remove(staged.namePath)
+	_ = os.Remove(s.paths.StageR2KeyPath(in.StageToken))
 	info, err := os.Stat(finalPath)
 	if err != nil {
 		return contract.Build{}, fmt.Errorf("读取包文件大小失败: %w", err)
@@ -342,6 +360,20 @@ func (s *BuildService) Create(ctx context.Context, in contract.CommitInput, iden
 		// 公司归属取自项目（项目是包的唯一归属载体），不是请求参数。
 		s.notifier.NotifyBuild(ctx, project.TenantID, build)
 	}
+	// 直传来源的对象已在桶里：直接回写 r2_key，省掉一次整包上传。
+	if staged.r2Key != "" && s.r2 != nil {
+		if err := repo.SetR2Key(ctx, build.ID, staged.r2Key); err != nil {
+			log.Printf("直传包回写 r2_key 失败 id=%s key=%s err=%v", build.ID, staged.r2Key, err)
+			// 回写失败不阻断：交给后台镜像兜底。
+			s.syncToR2Async(build, mode)
+		} else {
+			build.R2Key = staged.r2Key
+		}
+		return build, nil
+	}
+	// 镜像到 R2 是纯加速旁路：后台执行，失败只记日志。
+	// 首次下载若还没传完，会自动回落到本机流式，用户无感。
+	s.syncToR2Async(build, mode)
 	return build, nil
 }
 
@@ -418,6 +450,7 @@ func (s *BuildService) resolveBuildFile(build contract.Build) (contract.FileRef,
 		ContentType: contentType,
 		FileName:    fileName,
 		Size:        info.Size(),
+		R2Key:       build.R2Key,
 	}, nil
 }
 

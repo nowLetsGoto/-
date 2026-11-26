@@ -15,7 +15,15 @@ import type {
   Platform,
   StageResult,
 } from '../../api/builds';
-import { commitBuild, isShareableUrl, stageBuild } from '../../api/builds';
+import {
+  abortUpload,
+  commitBuild,
+  isShareableUrl,
+  putToR2,
+  requestUploadTicket,
+  stageBuild,
+  stageFromR2,
+} from '../../api/builds';
 import { ApiError, errorMessage } from '../../api/client';
 import { Button, Input, Segmented, TextArea } from '../../components/Controls';
 import { FileDropzone } from '../../components/FileDropzone';
@@ -32,6 +40,14 @@ const PARSED_FIELDS: ReadonlyArray<ParsedField> = [
   'version',
   'buildNumber',
 ];
+
+/**
+ * 判断是否属于"对象存储未启用"，只有这种情况才静默回落到 multipart 上传。
+ * 服务端此时返回 400 且文案固定；其余错误（网络、大小不符、签名过期）必须让用户看到。
+ */
+function isDirectUploadUnavailable(err: unknown): boolean {
+  return err instanceof ApiError && err.code === 400 && err.message.includes('对象存储');
+}
 
 interface FormState {
   environment: Environment;
@@ -65,6 +81,10 @@ export function UploadPage(): JSX.Element {
   const [file, setFile] = useState<File | null>(null);
   const [stageToken, setStageToken] = useState('');
   const [parsing, setParsing] = useState(false);
+  // 直传进度（0-100）。-1 表示未在直传；走 multipart 通道时保持 -1。
+  const [uploadPercent, setUploadPercent] = useState(-1);
+  // 记住本次直传的凭证，用于改选文件时清理 R2 上的临时对象。
+  const uploadTokenRef = useRef('');
   const [submitting, setSubmitting] = useState(false);
   const [warnings, setWarnings] = useState<ReadonlyArray<string>>([]);
   const [error, setError] = useState('');
@@ -78,43 +98,80 @@ export function UploadPage(): JSX.Element {
     setForm((previous) => ({ ...previous, [key]: value }));
   };
 
+  const applyStageResult = (result: StageResult): void => {
+    setStageToken(result.stageToken);
+    setWarnings(result.warnings);
+    // 仅未 touched 的字段填入解析值；用户改过的字段即便重新选文件也不被覆盖。
+    setForm((previous) => {
+      const next = { ...previous };
+      for (const key of PARSED_FIELDS) {
+        if (!touchedRef.current.has(key)) {
+          next[key] = result.parsed[key];
+        }
+      }
+      return next;
+    });
+  };
+
+  /** 改选文件时先放弃上一次直传，避免 R2 上留下孤立对象。 */
+  const discardPendingUpload = async (): Promise<void> => {
+    const token = uploadTokenRef.current;
+    uploadTokenRef.current = '';
+    if (!token) return;
+    try {
+      await abortUpload(token);
+    } catch {
+      // 清理失败不影响用户：服务端有过期兜底。
+    }
+  };
+
   const handleSelect = async (selected: File, hint: Platform | null): Promise<void> => {
+    await discardPendingUpload();
     setFile(selected);
     setCreated(null);
     setError('');
     setWarnings([]);
     setStageToken('');
+    setUploadPercent(-1);
     setParsing(true);
     if (hint) {
       setForm((previous) => ({ ...previous, platform: hint }));
     }
     try {
-      const result: StageResult = await stageBuild(selected);
-      setStageToken(result.stageToken);
-      setWarnings(result.warnings);
-      // 仅未 touched 的字段填入解析值；用户改过的字段即便重新选文件也不被覆盖。
-      setForm((previous) => {
-        const next = { ...previous };
-        for (const key of PARSED_FIELDS) {
-          if (!touchedRef.current.has(key)) {
-            next[key] = result.parsed[key];
-          }
+      // 优先直传 R2：字节不经过本机与 Tunnel，因此不受 100 MB 请求体上限约束。
+      // 未启用对象存储时服务端会在取票据阶段拒绝，此处自动回落到 multipart。
+      let result: StageResult | null = null;
+      try {
+        const ticket = await requestUploadTicket(selected);
+        uploadTokenRef.current = ticket.uploadToken;
+        setUploadPercent(0);
+        await putToR2(ticket, selected, setUploadPercent);
+        result = await stageFromR2(ticket.uploadToken);
+        uploadTokenRef.current = '';
+      } catch (directErr) {
+        // 只在"未启用对象存储"时静默回落；其余错误（网络、大小不符）要提示用户。
+        if (!isDirectUploadUnavailable(directErr)) {
+          throw directErr;
         }
-        return next;
-      });
+        result = await stageBuild(selected);
+      }
+      applyStageResult(result);
     } catch (err) {
       setError(errorMessage(err));
       setFile(null);
     } finally {
+      setUploadPercent(-1);
       setParsing(false);
     }
   };
 
   const handleRemove = (): void => {
+    void discardPendingUpload();
     setFile(null);
     setStageToken('');
     setWarnings([]);
     setError('');
+    setUploadPercent(-1);
     setCreated(null);
     setParsing(false);
   };
@@ -247,7 +304,13 @@ export function UploadPage(): JSX.Element {
             onSelect={(f, p) => void handleSelect(f, p)}
             onRemove={handleRemove}
           />
-          {parsing ? <p className="notice">解析中… 正在识别应用名、包名与版本号</p> : null}
+          {parsing ? (
+            <p className="notice">
+              {uploadPercent >= 0 && uploadPercent < 100
+                ? `正在上传到对象存储… ${uploadPercent}%（大包请耐心等待，可后台进行）`
+                : '解析中… 正在识别应用名、包名与版本号'}
+            </p>
+          ) : null}
           {warnings.length > 0 ? <p className="notice">部分信息未自动识别，可手动修正</p> : null}
         </div>
 

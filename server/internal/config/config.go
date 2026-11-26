@@ -17,7 +17,8 @@ import (
 
 // DefaultMaxUploadMB 与 api/openapi.yaml 的 x-constants.maxUploadMB 一一对应，
 // 由 internal/contract/contract_test.go 锁死，两处任改其一测试即失败。
-const DefaultMaxUploadMB = 200
+// 直传 R2 大包时放宽到 300MB；对应 Nginx client_max_body_size 需同步到 310m。
+const DefaultMaxUploadMB = 300
 
 const (
 	defaultDatabaseURL   = "postgres://dandelion:dandelion@localhost:5432/dandelion?sslmode=disable"
@@ -53,6 +54,15 @@ type Config struct {
 	AdminPassword string
 	// AuthSecret 用于登录令牌签名及独立分享子密钥派生；不进日志、不进响应。
 	AuthSecret string
+
+	// R2 是 Cloudflare R2 的镜像通道配置。四项必填全空表示不启用，
+	// 此时下载完全走本机磁盘（与改造前行为一致）。
+	// 文件权威副本始终在本机磁盘，R2 只用于给公网下载加速。
+	R2AccountID     string
+	R2AccessKeyID   string
+	R2SecretKey     string
+	R2Bucket        string
+	R2PublicBaseURL string
 }
 
 // get 是全仓唯一读取环境变量的函数；空值回落到默认值。
@@ -77,6 +87,14 @@ func Load() (Config, error) {
 	}
 	cfg.IsProduction = cfg.GOEnv != "development" && cfg.GOEnv != "dev"
 
+	// R2 镜像通道：四项必填全给了才启用，缺任意一项即视为未配置（纯本地下载）。
+	// 不在这里 fail-fast —— R2 是可选加速，配错不应该让服务起不来。
+	cfg.R2AccountID = get("R2_ACCOUNT_ID", "")
+	cfg.R2AccessKeyID = get("R2_ACCESS_KEY_ID", "")
+	cfg.R2SecretKey = get("R2_SECRET_ACCESS_KEY", "")
+	cfg.R2Bucket = get("R2_BUCKET", "")
+	cfg.R2PublicBaseURL = get("R2_PUBLIC_BASE_URL", "")
+
 	root, err := filepath.Abs(get("STORAGE_DIR", defaultStorageDir))
 	if err != nil {
 		return Config{}, fmt.Errorf("解析存储根目录失败: %w", err)
@@ -88,7 +106,7 @@ func Load() (Config, error) {
 	if err != nil || limit <= 0 {
 		return Config{}, fmt.Errorf("MAX_UPLOAD_MB 必须是正整数，当前为 %q", rawLimit)
 	}
-	// 契约与 Nginx（210m）都按 200MB 定死，配置只允许调小，不允许放大后绕过前置限制。
+	// 契约与 Nginx（310m）都按 300MB 定死，配置只允许调小，不允许放大后绕过前置限制。
 	if limit > DefaultMaxUploadMB {
 		return Config{}, fmt.Errorf("MAX_UPLOAD_MB 不得超过契约上限 %d MB", DefaultMaxUploadMB)
 	}

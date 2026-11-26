@@ -1,0 +1,40 @@
+# Dockerfile.runtime · 只含已编译二进制的运行镜像。
+#
+# 职责：把 CI 或开发机交叉编译好的 linux/amd64 单二进制打成可运行镜像。
+# 输入：同目录下的 dandelion（已内嵌前端与 schema.sql）。
+# 输出：约 100 MB 的运行镜像。
+# 边界：不做任何编译——2 GB 内存的云主机跑不动 node + go 的完整构建，
+#       所以前端与 Go 都在 CI 里构建好，这里只负责"装进去"。
+#       二进制是 CGO_ENABLED=0 的静态链接程序，不依赖 glibc 之外的运行库。
+
+FROM debian:bookworm-slim
+
+# 换腾讯云内网镜像源。默认的 deb.debian.org 在国内小带宽下，
+# 仅 Packages 索引就要下 8.8 MB（实测 176 秒）；内网源同机房直连通常 5-10 秒。
+# 同时兼容两种源清单格式：旧的 /etc/apt/sources.list 与 bookworm 的 deb822 .sources。
+RUN set -eux; \
+    for f in /etc/apt/sources.list /etc/apt/sources.list.d/debian.sources; do \
+        if [ -f "$f" ]; then \
+            sed -i \
+                -e 's|deb\.debian\.org|mirrors.tencentyun.com|g' \
+                -e 's|security\.debian\.org|mirrors.tencentyun.com|g' \
+                "$f"; \
+        fi; \
+    done; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends ca-certificates curl; \
+    rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+COPY dandelion /app/dandelion
+
+# 二进制自带静态资源与 SPA fallback，只需一个端口。
+ENV HOST=0.0.0.0 \
+    PORT=8080 \
+    STORAGE_DIR=/app/storage \
+    GO_ENV=production
+
+EXPOSE 8080
+
+CMD ["/app/dandelion"]

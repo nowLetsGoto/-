@@ -22,7 +22,7 @@ import (
 // buildColumns 是行映射的唯一列清单，顺序与 rowToBuild 的 Scan 参数严格对应。
 const buildColumns = `id, environment, platform, app_name, package_id, version, build_number,
 	changelog, original_file_name, file_size, file_ext, relative_path, meta_source,
-	download_count, created_at, owner_user_id`
+	download_count, created_at, owner_user_id, r2_key`
 
 // columns 在固定列后追加项目图标：公开下载页需要它，但 Build 表本身不冗余存，
 // 统一从同分区的 projects 表按 project_id 子查询，避免图标更新后包记录还是旧值。
@@ -206,6 +206,20 @@ func (r *BuildRepository) ListSiblingVersions(ctx context.Context, id string, in
 // IncrDownloadCount 单语句原子自增；仅在流成功完成后由 service 旁路调用。
 // 包里没这一行时同样返回 contract.NotFound(contract.ResourceBuild)：调用方据此判断"不在这个分区"，
 // 不至于把跨分区探测的正常落空当成故障。
+// SetR2Key 记录包在对象存储中的对象名。只在镜像成功后调用，
+// 空串表示未镜像（列默认值），因此这里不接受空 key。
+func (r *BuildRepository) SetR2Key(ctx context.Context, id, key string) error {
+	if key == "" {
+		return nil
+	}
+	_, err := r.db.ExecContext(ctx,
+		`UPDATE `+r.table+` SET r2_key = $2 WHERE id = $1`, id, key)
+	if err != nil {
+		return fmt.Errorf("更新 r2_key 失败: %w", err)
+	}
+	return nil
+}
+
 func (r *BuildRepository) IncrDownloadCount(ctx context.Context, id string) (int64, error) {
 	var count int64
 	err := r.db.QueryRowContext(ctx,
@@ -233,7 +247,7 @@ func rowToBuild(row rowScanner) (contract.Build, error) {
 		&b.ID, &b.Environment, &b.Platform, &b.AppName, &b.PackageID,
 		&b.Version, &b.BuildNumber, &b.Changelog, &b.OriginalFileName,
 		&b.FileSize, &b.FileExt, &b.RelativePath, &b.MetaSource,
-		&b.DownloadCount, &createdAt, &b.OwnerUserID, &b.ProjectIconURL,
+		&b.DownloadCount, &createdAt, &b.OwnerUserID, &b.R2Key, &b.ProjectIconURL,
 	)
 	if err != nil {
 		return contract.Build{}, err

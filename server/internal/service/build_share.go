@@ -145,6 +145,10 @@ func (s *BuildService) ResolveSharedFile(ctx context.Context, id, token string) 
 		return contract.FileRef{}, "", err
 	}
 	ref, err := s.resolveBuildFile(build)
+	if err == nil {
+		// 历史包首次下载时补传 R2：本次仍走本机，下次起走直链。
+		s.syncToR2Async(build, mode)
+	}
 	return ref, mode, err
 }
 

@@ -6,7 +6,7 @@
  *       commitBuild 只发 JSON（恰好 8 字段），绝不携带文件与 metaSource；isShareableUrl 只做可达性判断，不生成地址。
  */
 import type { components } from './schema';
-import { del, get, getShared, postForm, postJSON, putJSON } from './client';
+import { ApiError, del, get, getShared, postForm, postJSON, putJSON } from './client';
 
 type Schemas = components['schemas'];
 
@@ -21,12 +21,24 @@ export type Platform = Schemas['Platform'];
 export type MetaSource = Schemas['MetaSource'];
 export type PublicBuildVersion = Schemas['PublicBuildVersion'];
 
+/** 直传 R2 的票据。字段与 /builds/upload-ticket 响应一一对应。 */
+export interface UploadTicket {
+  uploadToken: string;
+  putUrl: string;
+  /** PUT 时必须原样带上的头：签名里含 content-type 与 length。 */
+  header: Record<string, string>;
+  expiresInSeconds: number;
+}
+
 /** 契约路径的前端唯一镜像；页面不得自行拼 /api/v1 路径。 */
 const ROUTES = {
   sharedBuild: (id: string): string => `/api/v1/public/builds/${encodeURIComponent(id)}`,
   sharedVersions: (id: string): string =>
     `/api/v1/public/builds/${encodeURIComponent(id)}/versions`,
   stage: '/api/v1/builds/stage',
+  uploadTicket: '/api/v1/builds/upload-ticket',
+  stageFromR2: '/api/v1/builds/stage-from-r2',
+  uploadAbort: '/api/v1/builds/upload-abort',
   builds: '/api/v1/builds',
   buildById: (id: string): string => `/api/v1/builds/${encodeURIComponent(id)}`,
   buildVersions: (id: string): string => `/api/v1/builds/${encodeURIComponent(id)}/versions`,
@@ -44,6 +56,66 @@ export function stageBuild(file: File): Promise<StageResult> {
   const form = new FormData();
   form.append('file', file);
   return postForm<StageResult>(ROUTES.stage, form);
+}
+
+/**
+ * 申请直传票据。用于超过 Tunnel 100 MB 上限的大包。
+ * 未启用对象存储时服务端返回 400，调用方应回落到 stageBuild。
+ */
+export function requestUploadTicket(file: File): Promise<UploadTicket> {
+  return postJSON<UploadTicket>(ROUTES.uploadTicket, {
+    fileName: file.name,
+    size: file.size,
+    contentType: file.type || 'application/octet-stream',
+  });
+}
+
+/**
+ * 用 XHR 把文件直接 PUT 到 R2。返回 Promise，onProgress 收到 0-100 的百分比。
+ *
+ * 为什么用 XHR 而不是 fetch：fetch 没有上传进度事件，
+ * 而 300 MB 的包在慢速上行下要传十几分钟，没有进度条用户会以为卡死。
+ * 这里不带 Authorization —— 授权信息已经在预签名 URL 的查询参数里。
+ */
+export function putToR2(
+  ticket: UploadTicket,
+  file: File,
+  onProgress?: (percent: number) => void,
+): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open('PUT', ticket.putUrl, true);
+    for (const [key, value] of Object.entries(ticket.header)) {
+      xhr.setRequestHeader(key, value);
+    }
+    xhr.upload.onprogress = (event) => {
+      if (event.lengthComputable && onProgress) {
+        onProgress(Math.round((event.loaded / event.total) * 100));
+      }
+    };
+    xhr.onload = () => {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        onProgress?.(100);
+        resolve();
+        return;
+      }
+      // R2 的失败响应是 XML（S3 协议），这里只取状态码给用户，细节留给控制台。
+      reject(new ApiError(`上传到对象存储失败（HTTP ${xhr.status}）`, xhr.status));
+    };
+    xhr.onerror = () => reject(new ApiError('上传到对象存储失败，请检查网络', 0));
+    xhr.onabort = () => reject(new ApiError('上传已取消', 0));
+    xhr.send(file);
+  });
+}
+
+/** 回拉已直传到 R2 的对象并解析，返回与 stageBuild 一致的 StageResult。 */
+export function stageFromR2(uploadToken: string): Promise<StageResult> {
+  return postJSON<StageResult>(ROUTES.stageFromR2, { uploadToken });
+}
+
+/** 放弃直传，让服务端删掉会话与 R2 临时对象。失败可忽略（过期会兜底清理）。 */
+export function abortUpload(uploadToken: string): Promise<unknown> {
+  return postJSON<unknown>(ROUTES.uploadAbort, { uploadToken });
 }
 
 /** 提交发布 commit：只发 token 与表单最终值（恰好 8 字段），不携带文件、不携带 metaSource。 */

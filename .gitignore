@@ -13,3 +13,15 @@ server/public/*
 
 # 迁移前的数据库快照：含真实用户数据，只留本地，绝不入库。
 .backup/
+
+# 部署产物：构建生成，不入库（用 make build 重新生成）。
+dandelion-deploy.tar.gz
+deploy/server/dandelion
+
+# 本地排查用的一次性脚本与工作记录，不入库。
+scripts/r2probe/
+scripts/speedtest-real.sh
+scripts/migrate-tunnel-to-r2-account.sh
+scripts/sync-r2-all.sh
+server/cmd/r2probe/
+.workbuddy/memory/

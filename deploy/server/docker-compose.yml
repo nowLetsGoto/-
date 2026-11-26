@@ -1,0 +1,79 @@
+# docker-compose.yml · 云主机单机部署（公网 IP + 端口访问）。
+#
+# 职责：PostgreSQL 16 + 已编译好的 Go 二进制，两个容器组成本服务。
+# 输入：同目录 .env（DB_PASSWORD / PUBLIC_BASE_URL / ADMIN_* / AUTH_SECRET / R2_*）、
+#       schema.sql（建表）、data-migration.sql（迁入的账号与项目数据）。
+# 输出：宿主机 10088 端口对外提供完整服务（API + 前端 + 下载页）。
+# 边界：数据库不暴露到宿主机，只在 compose 内网可达；
+#       schema 与迁移数据仅在 pgdata 卷为空（首次启动）时执行，之后改动需手工导入。
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: dandelion
+      POSTGRES_USER: dandelion
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+    command:
+      - postgres
+      # 2 GB 内存的机器上别让 PG 按默认值吃内存。
+      - -c
+      - shared_buffers=128MB
+      - -c
+      - max_connections=50
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      # 文件名前缀决定执行顺序：先建表，再灌数据。
+      - ./schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+      - ./data-migration.sql:/docker-entrypoint-initdb.d/02-data.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U dandelion -d dandelion"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  server:
+    build:
+      context: .
+      dockerfile: Dockerfile.runtime
+    restart: unless-stopped
+    environment:
+      # 容器内按服务名连接数据库，不走宿主机端口。
+      DATABASE_URL: postgres://dandelion:${DB_PASSWORD}@db:5432/dandelion?sslmode=disable
+      # 对外基址：二维码、复制地址、下载按钮三个绝对 URL 的唯一来源。
+      # 必须是 http://<公网IP>:10088，末尾不能带斜杠。
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL}
+      PORT: "8080"
+      HOST: 0.0.0.0
+      STORAGE_DIR: /app/storage
+      MAX_UPLOAD_MB: "300"
+      GO_ENV: production
+      ADMIN_USERNAME: ${ADMIN_USERNAME}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD}
+      AUTH_SECRET: ${AUTH_SECRET}
+      # Cloudflare R2 镜像通道（可选）。留空则下载完全走本机磁盘。
+      # 文件权威副本始终是挂载的 /app/storage 宿主机目录，R2 只用于给公网下载加速。
+      R2_ACCOUNT_ID: ${R2_ACCOUNT_ID:-}
+      R2_ACCESS_KEY_ID: ${R2_ACCESS_KEY_ID:-}
+      R2_SECRET_ACCESS_KEY: ${R2_SECRET_ACCESS_KEY:-}
+      R2_BUCKET: ${R2_BUCKET:-}
+      R2_PUBLIC_BASE_URL: ${R2_PUBLIC_BASE_URL:-}
+    volumes:
+      # 安装包落在宿主机目录，容器重建不丢数据。
+      - ./storage:/app/storage
+    ports:
+      # 对外 10088，容器内 8080。
+      - "10088:8080"
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8080/healthz > /dev/null || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+
+volumes:
+  pgdata:

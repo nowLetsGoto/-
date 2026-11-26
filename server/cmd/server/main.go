@@ -62,6 +62,14 @@ import (
 )
 
 func main() {
+	// 子命令：把本机已有安装包补齐到 R2。跑完即退出，不启动 HTTP 服务。
+	// 放在配置加载之前分派，避免同步工具被建表/监听逻辑牵连。
+	if len(os.Args) > 1 && os.Args[1] == "r2sync" {
+		if err := runR2Sync(os.Args[2:]); err != nil {
+			log.Fatalf("R2 同步失败: %v", err)
+		}
+		return
+	}
 	if err := run(); err != nil {
 		log.Fatalf("Dandelion 启动失败: %v", err)
 	}
@@ -80,6 +88,28 @@ func run() error {
 	for _, dir := range []string{paths.TmpDir(), paths.UploadsDir()} {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			return fmt.Errorf("创建运行时目录失败 %s: %w", dir, err)
+		}
+	}
+
+	// 对象存储镜像：未配置时返回 nil，下载完全走本机磁盘（与改造前一致）。
+	// 配置错误也不阻断启动——R2 只是加速通道，不该让它成为服务的硬依赖。
+	r2, err := storage.NewR2(context.Background(), storage.R2Config{
+		AccountID:     cfg.R2AccountID,
+		AccessKeyID:   cfg.R2AccessKeyID,
+		SecretKey:     cfg.R2SecretKey,
+		Bucket:        cfg.R2Bucket,
+		PublicBaseURL: cfg.R2PublicBaseURL,
+	})
+	if err != nil {
+		return fmt.Errorf("初始化对象存储失败: %w", err)
+	}
+	if r2 != nil {
+		if r2.IsPublicCDN() {
+			// 公开 CDN 直链：国内走 Cloudflare 节点，比 S3 签名端点快 10-30 倍。
+			log.Printf("对象存储镜像已启用 bucket=%s 下载通道=公开CDN(%s)", cfg.R2Bucket, cfg.R2PublicBaseURL)
+		} else {
+			// 私有桶签名 URL：桶保持私有，但走 S3 端点，国内较慢。
+			log.Printf("对象存储镜像已启用 bucket=%s 下载通道=私有签名(S3端点，较慢；配 R2_PUBLIC_BASE_URL 可提速)", cfg.R2Bucket)
 		}
 	}
 
@@ -104,6 +134,13 @@ func run() error {
 	// 不依赖当前工作目录；容器里由 initdb 先建表，应用启动再执行一次作为双保险。
 	if err := repository.EnsureSchema(startupCtx, db); err != nil {
 		return err
+	}
+
+	// 直传会话仓储只在启用 R2 时有意义：它为预签名上传记录对象名与声明大小。
+	// 未启用时保持 nil，服务层的直传接口会给出「未启用对象存储」的明确拒绝。
+	var uploadSessions *repository.UploadSessionRepository
+	if r2 != nil {
+		uploadSessions = repository.NewUploadSessionRepository(db)
 	}
 
 	// 业务数据分两个分区：单人写 solo、团队写 team，各有一套 projects / builds / audit_logs。
@@ -136,7 +173,7 @@ func run() error {
 	settingsService := settingssvc.NewService(settingsRepo)
 	webhookService := webhooksvc.NewService(settingsRepo)
 
-	svc := service.NewBuildService(cfg, paths, buildRepos, projectRepos, webhookService, repository.NewBuildSharePartitioned(db), authzService)
+	svc := service.NewBuildService(cfg, paths, r2, uploadSessions, buildRepos, projectRepos, webhookService, repository.NewBuildSharePartitioned(db), authzService)
 	if err := svc.PurgeTmp(); err != nil {
 		return err
 	}

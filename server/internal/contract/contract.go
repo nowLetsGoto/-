@@ -226,15 +226,20 @@ const (
 	RouteAPIKeyRotate         = APIPrefix + "/settings/api-key/rotate"
 	RouteOpenBuilds           = APIPrefix + "/open/builds"
 	RouteStage                = APIPrefix + "/builds/stage"
-	RouteBuilds               = APIPrefix + "/builds"
-	RouteBuildByID            = APIPrefix + "/builds/{id}"
-	RouteBuildVersions        = APIPrefix + "/builds/{id}/versions"
-	RouteBuildFile            = APIPrefix + "/builds/{id}/file"
-	RouteSharedBuild          = APIPrefix + "/public/builds/{id}"
-	RouteSharedBuildVersions  = APIPrefix + "/public/builds/{id}/versions"
-	RouteSharedBuildFile      = APIPrefix + "/public/builds/{id}/file"
-	RouteHealth               = "/healthz"
-	RouteDownloadPage         = "/d/{id}"
+	// 直传 R2：先取票据，浏览器 PUT 到 R2，再让后端回拉解析。
+	// 三个接口合起来替代 stage，用于超过 Tunnel 100MB 上限的大包。
+	RouteUploadTicket        = APIPrefix + "/builds/upload-ticket"
+	RouteStageFromR2         = APIPrefix + "/builds/stage-from-r2"
+	RouteUploadAbort         = APIPrefix + "/builds/upload-abort"
+	RouteBuilds              = APIPrefix + "/builds"
+	RouteBuildByID           = APIPrefix + "/builds/{id}"
+	RouteBuildVersions       = APIPrefix + "/builds/{id}/versions"
+	RouteBuildFile           = APIPrefix + "/builds/{id}/file"
+	RouteSharedBuild         = APIPrefix + "/public/builds/{id}"
+	RouteSharedBuildVersions = APIPrefix + "/public/builds/{id}/versions"
+	RouteSharedBuildFile     = APIPrefix + "/public/builds/{id}/file"
+	RouteHealth              = "/healthz"
+	RouteDownloadPage        = "/d/{id}"
 )
 
 // 契约级上限，与 x-constants 对齐。
@@ -281,7 +286,7 @@ var APIRoutes = []string{
 	RoutePeople, RoutePersonByID, RouteTeams, RouteTeamByID,
 	RoutePermissions, RouteMenus, RouteRoles, RouteRoleByID,
 	RouteSettings, RouteWebhookTest, RouteAPIKeyRotate, RouteOpenBuilds,
-	RouteStage, RouteBuilds, RouteBuildByID, RouteBuildVersions, RouteBuildFile, RouteSharedBuild, RouteSharedBuildVersions, RouteSharedBuildFile, RouteHealth,
+	RouteStage, RouteUploadTicket, RouteStageFromR2, RouteUploadAbort, RouteBuilds, RouteBuildByID, RouteBuildVersions, RouteBuildFile, RouteSharedBuild, RouteSharedBuildVersions, RouteSharedBuildFile, RouteHealth,
 }
 
 // Webhook 可推送字段的键：与 api/openapi.yaml 的 x-webhook-fields 键集合一致。
@@ -1141,6 +1146,9 @@ type Build struct {
 	FileSize         int64  `json:"fileSize"`
 	FileExt          string `json:"fileExt"`
 	RelativePath     string `json:"relativePath"`
+	// R2Key 是文件在对象存储中的对象名；空串表示尚未镜像，下载走本机磁盘。
+	// 不对外暴露（json:"-"）：它是存储实现细节，前端只需要下载地址。
+	R2Key            string `json:"-"`
 	MetaSource       string `json:"metaSource"`
 	DownloadCount    int64  `json:"downloadCount"`
 	DownloadPagePath string `json:"downloadPagePath"`
@@ -1203,6 +1211,33 @@ type StageResult struct {
 	Warnings   []string   `json:"warnings"`
 }
 
+// UploadTicketInput 申请直传票据：只描述文件本身，不含项目与表单值。
+// size 与 fileName 用于校验和推导扩展名；contentType 一并纳入签名。
+type UploadTicketInput struct {
+	FileName    string `json:"fileName"`
+	Size        int64  `json:"size"`
+	ContentType string `json:"contentType"`
+}
+
+// UploadTicket 是直传 R2 的凭据。
+//
+// 流程：前端拿 putUrl 直接 PUT 文件到 R2（字节不经过本机与 Tunnel），
+// 成功后调 stage-from-r2 让后端回拉本地并解析元信息，拿到 stageToken 再走原有 commit。
+type UploadTicket struct {
+	UploadToken string `json:"uploadToken"`
+	PutURL      string `json:"putUrl"`
+	// Header 是 PUT 时必须原样带上的请求头。签名里包含 content-type 与 length，
+	// 少带或不一致会被 R2 拒绝。
+	Header map[string]string `json:"header"`
+	// ExpiresInSeconds 告知前端签名有效期，便于在失败时提示"请重新选择文件"。
+	ExpiresInSeconds int `json:"expiresInSeconds"`
+}
+
+// StageFromR2Input 让后端把已直传到 R2 的对象回拉本地并解析。
+type StageFromR2Input struct {
+	UploadToken string `json:"uploadToken"`
+}
+
 // CommitInput 是提交发布请求体，**恰好 9 个字段**：项目 + token + 表单最终值。
 // 不含文件、不含解析结果、不含 touched 标记，也不含 metaSource（来源由服务端派生）。
 type CommitInput struct {
@@ -1257,6 +1292,10 @@ type FileRef struct {
 	ContentType string
 	FileName    string
 	Size        int64
+
+	// R2Key 非空表示该文件已镜像到 R2，可直接用签名直链下载；
+	// 为空则 handler 走本机磁盘流式，并在后台补传 R2。
+	R2Key string
 }
 
 // IsValidEnvironment / IsValidPlatform 是唯一的枚举校验入口。

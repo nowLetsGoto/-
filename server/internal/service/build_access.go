@@ -89,5 +89,10 @@ func (s *BuildService) ResolveFile(ctx context.Context, id string, identity cont
 	if err != nil {
 		return contract.FileRef{}, err
 	}
-	return s.resolveBuildFile(b)
+	ref, err := s.resolveBuildFile(b)
+	if err == nil {
+		// 历史包首次下载时补传 R2：本次仍走本机，下次起走直链。
+		s.syncToR2Async(b, identity.Mode)
+	}
+	return ref, err
 }

@@ -517,6 +517,66 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/builds/upload-ticket": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 申请浏览器直传 R2 的预签名票据
+         * @description 用于超过 Cloudflare Tunnel 100 MB 请求体上限的大包。 返回预签名 PUT 地址与必需请求头，浏览器直接 PUT 到 R2，字节不经过本机； 上传成功后调 /builds/stage-from-r2 回拉并解析，再走原有 commit。 未启用 R2 时返回 400，前端应回落到 /builds/stage。
+         */
+        post: operations["issueUploadTicket"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/builds/stage-from-r2": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 回拉已直传到 R2 的对象并解析元信息
+         * @description 校验会话有效性、对象存在性与实际大小后，把对象读回本地暂存目录， 产出与 /builds/stage 完全一致的 StageResult（含 stageToken 与解析结果）。 大小不一致、对象缺失、会话过期都返回 400，前端应提示重新上传。
+         */
+        post: operations["stageFromR2"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/builds/upload-abort": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 放弃直传并清理 R2 临时对象
+         * @description 前端在改选文件、关闭页面或 PUT 失败时调用。不调用也会由会话过期清理兜底， 因此该接口失败不影响后续上传。
+         */
+        post: operations["abortUpload"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/builds": {
         parameters: {
             query?: never;
@@ -2728,6 +2788,103 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             413: components["responses"]["TooLarge"];
             500: components["responses"]["InternalError"];
+        };
+    };
+    issueUploadTicket: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** @description 原始文件名，用于推导扩展名与下载展示名 */
+                    fileName: string;
+                    /**
+                     * Format: int64
+                     * @description 文件字节数，纳入签名，R2 会校验实际长度
+                     */
+                    size: number;
+                    /** @description MIME 类型，纳入签名，PUT 时必须一致 */
+                    contentType: string;
+                };
+            };
+        };
+        responses: {
+            /** @description 票据签发成功 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        uploadToken?: string;
+                        putUrl?: string;
+                        header?: {
+                            [key: string]: string;
+                        };
+                        expiresInSeconds?: number;
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+        };
+    };
+    stageFromR2: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    uploadToken: string;
+                };
+            };
+        };
+        responses: {
+            /** @description 回拉并解析完成（解析成败都成功） */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StageResponse"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+        };
+    };
+    abortUpload: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    uploadToken: string;
+                };
+            };
+        };
+        responses: {
+            /** @description 已清理 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
         };
     };
     listBuilds: {

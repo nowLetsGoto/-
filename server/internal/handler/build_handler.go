@@ -212,6 +212,16 @@ func shareHeaders(w http.ResponseWriter) {
 }
 
 func (h *BuildHandler) streamFile(w http.ResponseWriter, r *http.Request, id string, mode contract.SessionMode, ref contract.FileRef) error {
+	// 已镜像到 R2 就 302 跳转到签名直链：文件字节直接由 R2 下发，
+	// 不占用本机带宽（家宽 / 小带宽云主机的主要瓶颈）。
+	// 跳转后浏览器不再回源，因此这里主动计数——真正的传输结果由 R2 负责。
+	if signed := h.svc.R2SignedURL(r.Context(), ref); signed != "" {
+		h.svc.IncrDownloadCount(id, mode)
+		shareHeaders(w)
+		http.Redirect(w, r, signed, http.StatusFound)
+		return nil
+	}
+
 	file, err := os.Open(ref.AbsPath)
 	if err != nil {
 		return NotFound("包文件不存在或已被移除")

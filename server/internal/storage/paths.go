@@ -46,6 +46,12 @@ func (p *Paths) StageNamePath(token string) string {
 	return filepath.Join(p.TmpDir(), token+".name")
 }
 
+// StageR2KeyPath 是直传上传的伴生文件：记录该暂存文件在 R2 上的对象名。
+// commit 读到它就跳过二次上传，直接把 build 的 r2_key 指向已有对象。
+func (p *Paths) StageR2KeyPath(token string) string {
+	return filepath.Join(p.TmpDir(), token+".r2")
+}
+
 // RelativePath 只含 uploads 内部层级，数据库路径统一使用正斜杠。
 func (p *Paths) RelativePath(environment, platform, id, ext string) string {
 	return path.Join(environment, platform, id+"."+ext)

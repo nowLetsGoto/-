@@ -567,3 +567,44 @@ ALTER TABLE solo.projects DROP COLUMN IF EXISTS role_key;
 -- DROP INDEX 对约束无效，两种形态都清。
 ALTER TABLE roles DROP CONSTRAINT IF EXISTS roles_key_key;
 DROP INDEX IF EXISTS roles_key_key;
+
+-- R2 对象名：空串表示该包尚未镜像到 R2（历史包在上传后才会有）。
+-- 下载时 cos_key 非空则 302 跳转到 R2 签名直链，绕开本机带宽；
+-- 为空则走本地流式，同时后台补传。磁盘始终是权威副本，此列只是加速开关。
+DO $$
+DECLARE
+  s TEXT;
+BEGIN
+  FOREACH s IN ARRAY ARRAY['team', 'solo'] LOOP
+    EXECUTE format($q$ALTER TABLE %I.builds ADD COLUMN IF NOT EXISTS r2_key TEXT NOT NULL DEFAULT ''$q$, s);
+  END LOOP;
+END $$;
+
+-- upload_sessions · 浏览器直传 R2 的上传会话。
+--
+-- 存在的理由：Cloudflare Tunnel 免费版请求体上限 100 MB，300 MB 的包传不到本机。
+-- 改成浏览器拿预签名 URL 直接 PUT 到 R2，字节完全不经过本机和 Tunnel。
+-- 这里记录"谁在什么时间要把多大的什么文件放到哪个 key"，用于：
+--   1) 签发预签名 URL 后校验回执（大小、content-type）；
+--   2) 记住 R2 上有哪些孤立对象，会话过期后清理；
+--   3) 回拉本地时定位源对象。
+-- 状态机：pending（已签发 URL，等浏览器上传）→ uploaded（R2 已确认）→ completed（已回拉并入库）；
+--         任一步失败或超时则 expired。
+CREATE TABLE IF NOT EXISTS public.upload_sessions (
+    token            TEXT PRIMARY KEY,
+    -- key 是 R2 对象名，形如 direct/{token}.apk；与 final 的 uploads/ 路径分开，便于区分来源。
+    r2_key           TEXT NOT NULL,
+    -- 声明的大小与类型来自前端选文件时的信息，用于校验实际对象，防止偷换大小。
+    declared_size    BIGINT NOT NULL,
+    content_type     TEXT NOT NULL,
+    file_ext         TEXT NOT NULL,
+    original_name    TEXT NOT NULL DEFAULT '',
+    state            TEXT NOT NULL DEFAULT 'pending',
+    created_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
+    expires_at       TIMESTAMPTZ NOT NULL
+);
+
+-- 过期清理按 expires_at 扫描；只关心未完成的会话。
+CREATE INDEX IF NOT EXISTS idx_upload_sessions_pending
+    ON public.upload_sessions (expires_at)
+    WHERE state IN ('pending', 'uploaded');
