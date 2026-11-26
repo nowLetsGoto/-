@@ -48,7 +48,6 @@ type stagedLookup struct {
 	namePath         string
 	ext              string
 	originalFileName string
-	size             int64 // 暂存包体字节数；直传包为 0（字节只在 R2）。
 	// r2Key 非空表示文件已由浏览器直传到 R2，commit 跳过二次上传。
 	r2Key string
 }
@@ -183,39 +182,6 @@ func (s *BuildService) ParseFrom(token string, r io.ReaderAt, size int64, ext st
 	return parseResult(token, parsed, "")
 }
 
-// materializeFile 把暂存的包落到正式路径，是 Create 唯一的落盘入口。
-//
-// 两条互斥路径，由暂存包体是否为 0 字节判定：
-//   - 普通上传：字节已在 tmp，原子 rename 即可（原流程）。
-//   - 浏览器直传：字节只在 R2，tmp 里是 0 字节占位，需从 R2 下载到 finalPath。
-//
-// 下载失败时删除半成品，避免留下无记录的孤儿包。
-func (s *BuildService) materializeFile(ctx context.Context, staged stagedLookup, finalPath string) error {
-	if staged.size > 0 {
-		if err := os.Rename(staged.absPath, finalPath); err != nil {
-			return fmt.Errorf("移动包文件失败: %w", err)
-		}
-		return nil
-	}
-
-	// 直传包：从 R2 下载。s.r2 非空是前提——直传暂存只在启用 R2 时产生。
-	out, err := os.OpenFile(finalPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
-	if err != nil {
-		return fmt.Errorf("创建正式文件失败: %w", err)
-	}
-	written, downloadErr := s.r2.DownloadTo(ctx, staged.r2Key, out)
-	closeErr := out.Close()
-	if downloadErr != nil || closeErr != nil || written == 0 {
-		_ = os.Remove(finalPath)
-		if downloadErr != nil {
-			return fmt.Errorf("从对象存储落盘失败: %w", downloadErr)
-		}
-		return fmt.Errorf("写入正式文件失败: %v", closeErr)
-	}
-	_ = os.Remove(staged.absPath) // 清理 0 字节占位。
-	return nil
-}
-
 // parseMeta 是解析的唯一内核：把 ReaderAt + 扩展名交给 parser，不关心数据来自磁盘还是网络。
 func parseMeta(r io.ReaderAt, size int64, ext string) (contract.ParsedMeta, error) {
 	platform, ok := contract.PlatformOfExt(ext)
@@ -309,7 +275,7 @@ func (s *BuildService) validateStageToken(token string) (stagedLookup, error) {
 	if data, err := os.ReadFile(s.paths.StageR2KeyPath(token)); err == nil {
 		r2Key = strings.TrimSpace(string(data))
 	}
-	return stagedLookup{absPath: abs, namePath: namePath, ext: ext, originalFileName: original, size: info.Size(), r2Key: r2Key}, nil
+	return stagedLookup{absPath: abs, namePath: namePath, ext: ext, originalFileName: original, r2Key: r2Key}, nil
 }
 
 // Create 是提交的唯一编排：表单即最终真值，提交时不再解析、不再覆盖用户值。
@@ -336,19 +302,35 @@ func (s *BuildService) Create(ctx context.Context, in contract.CommitInput, iden
 	if err != nil {
 		return contract.Build{}, err
 	}
-	finalPath := s.paths.FinalPath(in.Environment, in.Platform, id, ext)
-	if err := os.MkdirAll(filepath.Dir(finalPath), 0o755); err != nil {
-		return contract.Build{}, fmt.Errorf("创建正式目录失败: %w", err)
-	}
-	// 落盘：普通上传直接 rename 暂存文件；直传包的字节只在 R2，从 R2 下载到正式目录。
-	if err := s.materializeFile(ctx, staged, finalPath); err != nil {
-		return contract.Build{}, err
-	}
-	_ = os.Remove(staged.namePath)
-	_ = os.Remove(s.paths.StageR2KeyPath(in.StageToken))
-	info, err := os.Stat(finalPath)
-	if err != nil {
-		return contract.Build{}, fmt.Errorf("读取包文件大小失败: %w", err)
+
+	// 直传包只存在于 R2：不落本地、不下载整包，发布只需写库记录 + r2_key。
+	// 文件大小从 R2 元数据读取（一次轻量 HEAD，非整包传输）。
+	var fileSize int64
+	if staged.r2Key != "" {
+		size, exists, err := s.r2.StatObject(ctx, staged.r2Key)
+		if err != nil || !exists {
+			return contract.Build{}, fmt.Errorf("对象存储中找不到包文件: %w", err)
+		}
+		fileSize = size
+		// 清理暂存标记，直传包无需本地文件。
+		_ = os.Remove(staged.absPath)
+		_ = os.Remove(staged.namePath)
+		_ = os.Remove(s.paths.StageR2KeyPath(in.StageToken))
+	} else {
+		// 普通上传：rename 暂存文件到正式目录，作为权威副本。
+		finalPath := s.paths.FinalPath(in.Environment, in.Platform, id, ext)
+		if err := os.MkdirAll(filepath.Dir(finalPath), 0o755); err != nil {
+			return contract.Build{}, fmt.Errorf("创建正式目录失败: %w", err)
+		}
+		if err := os.Rename(staged.absPath, finalPath); err != nil {
+			return contract.Build{}, fmt.Errorf("移动包文件失败: %w", err)
+		}
+		_ = os.Remove(staged.namePath)
+		info, err := os.Stat(finalPath)
+		if err != nil {
+			return contract.Build{}, fmt.Errorf("读取包文件大小失败: %w", err)
+		}
+		fileSize = info.Size()
 	}
 
 	// 仅对空字段兜底；任何非空表单值（含用户手工修正值）都原样入库。
@@ -387,7 +369,7 @@ func (s *BuildService) Create(ctx context.Context, in contract.CommitInput, iden
 		BuildNumber:      buildNumber,
 		Changelog:        strings.TrimSpace(in.Changelog),
 		OriginalFileName: staged.originalFileName,
-		FileSize:         info.Size(),
+		FileSize:         fileSize,
 		FileExt:          ext,
 		RelativePath:     s.paths.RelativePath(in.Environment, in.Platform, id, ext),
 		MetaSource:       metaSource,
@@ -396,9 +378,13 @@ func (s *BuildService) Create(ctx context.Context, in contract.CommitInput, iden
 	}
 
 	if err := repo.Insert(ctx, project.ID, &build); err != nil {
-		// 失败补偿：写库失败必须删除已 move 的正式文件，避免磁盘留下无记录的孤儿包。
-		if removeErr := os.Remove(finalPath); removeErr != nil && !errors.Is(removeErr, os.ErrNotExist) {
-			log.Printf("失败补偿删除正式文件失败 path=%s err=%v", finalPath, removeErr)
+		// 失败补偿：普通上传已把文件 move 到正式目录，写库失败要删除它避免孤儿包。
+		// 直传包没有本地文件，无需补偿（R2 对象由后续过期清理处理）。
+		if staged.r2Key == "" {
+			orphan := s.paths.FinalPath(in.Environment, in.Platform, id, ext)
+			if removeErr := os.Remove(orphan); removeErr != nil && !errors.Is(removeErr, os.ErrNotExist) {
+				log.Printf("失败补偿删除正式文件失败 path=%s err=%v", orphan, removeErr)
+			}
 		}
 		return contract.Build{}, err
 	}
@@ -479,6 +465,10 @@ func (s *BuildService) List(ctx context.Context, q contract.ListQuery, identity 
 }
 
 // resolveBuildFile 只接收已经授权的包，统一做路径与文件存在性检查。
+//
+// 直传包的字节只在 R2、本地无文件：此时跳过磁盘检查，Size 用数据库记录。
+// streamFile 见 R2Key 非空会 302 到 CDN，不读 AbsPath；仅当 R2 不可用时才回退本地，
+// 那种情况下 AbsPath 为空会安全地返回 NotFound，不会误下发错误内容。
 func (s *BuildService) resolveBuildFile(build contract.Build) (contract.FileRef, error) {
 	id := build.ID
 	abs, err := s.paths.SafeResolve(build.RelativePath)
@@ -486,11 +476,18 @@ func (s *BuildService) resolveBuildFile(build contract.Build) (contract.FileRef,
 		log.Printf("下载路径校验失败 id=%s rel=%s err=%v", id, build.RelativePath, err)
 		return contract.FileRef{}, contract.NotFound(contract.ResourceBuild)
 	}
-	info, err := os.Stat(abs)
-	if err != nil || info.IsDir() {
-		log.Printf("下载文件缺失 id=%s path=%s err=%v", id, abs, err)
-		return contract.FileRef{}, contract.NotFound(contract.ResourceBuild)
+
+	size := build.FileSize
+	if build.R2Key == "" {
+		// 普通上传：本地文件是权威副本，必须存在。
+		info, err := os.Stat(abs)
+		if err != nil || info.IsDir() {
+			log.Printf("下载文件缺失 id=%s path=%s err=%v", id, abs, err)
+			return contract.FileRef{}, contract.NotFound(contract.ResourceBuild)
+		}
+		size = info.Size()
 	}
+
 	contentType, err := storage.ContentType(build.Platform)
 	if err != nil {
 		return contract.FileRef{}, err
@@ -503,7 +500,7 @@ func (s *BuildService) resolveBuildFile(build contract.Build) (contract.FileRef,
 		AbsPath:     abs,
 		ContentType: contentType,
 		FileName:    fileName,
-		Size:        info.Size(),
+		Size:        size,
 		R2Key:       build.R2Key,
 	}, nil
 }
