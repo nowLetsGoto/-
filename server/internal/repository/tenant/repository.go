@@ -3,9 +3,11 @@
 //
 //	原子创建「公司 + 其平台管理员账号」——这两件事必须同一事务，
 //	否则会留下「有公司没管理员」的孤儿，谁都进不去那家公司。
+//
 // 输入：连接池、公司 DTO、已派生的密码哈希。
 // 输出：公司记录 / 平台管理员账号 id。
 // 边界：不做业务判断（层级归属由 service 决定）、不碰密码学（哈希由 service 传入）；
+//
 //	平台设置副本属于 P4，本阶段不复制。
 package tenant
 
@@ -29,6 +31,29 @@ type Repository struct {
 
 func NewRepository(db *sql.DB) *Repository {
 	return &Repository{db: db}
+}
+
+// ListTenantIDs 返回全部公司 id，供存储淘汰巡检逐个处理。
+//
+// 不排除任何状态：停用的公司其包仍占着对象存储，照样要纳入淘汰，
+// 否则禁用一家公司并不能回收它占用的空间。
+// 不返回名称等展示字段——调用方只需要"处理谁"，多查字段只是无谓开销。
+func (r *Repository) ListTenantIDs(ctx context.Context) ([]string, error) {
+	rows, err := r.db.QueryContext(ctx, `SELECT id::text FROM tenants ORDER BY created_at`)
+	if err != nil {
+		return nil, fmt.Errorf("查询公司列表失败: %w", err)
+	}
+	defer rows.Close()
+
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("读取公司 id 失败: %w", err)
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
 }
 
 // NameByID 按公司 id 取名字。

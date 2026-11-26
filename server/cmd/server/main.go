@@ -250,6 +250,12 @@ func run() error {
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 	defer stop()
+
+	// 存储淘汰巡检：每 2 小时遍历所有租户，把超出配额的对象移出 R2。
+	// 在 HTTP 服务之前启动，让它随 ctx 一起在退出信号到来时停止；
+	// 未配置对象存储时内部直接返回，不影响服务启动。
+	svc.RunRetentionWorker(ctx, tenantRepository)
+
 	go func() {
 		<-ctx.Done()
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
