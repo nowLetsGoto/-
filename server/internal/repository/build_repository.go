@@ -205,9 +205,6 @@ func (r *BuildRepository) ListSiblingVersions(ctx context.Context, id string, in
 	return items, projectKey, nil
 }
 
-// IncrDownloadCount 单语句原子自增；仅在流成功完成后由 service 旁路调用。
-// 包里没这一行时同样返回 contract.NotFound(contract.ResourceBuild)：调用方据此判断"不在这个分区"，
-// 不至于把跨分区探测的正常落空当成故障。
 // SetR2Key 记录包在对象存储中的对象名。只在镜像成功后调用，
 // 空串表示未镜像（列默认值），因此这里不接受空 key。
 func (r *BuildRepository) SetR2Key(ctx context.Context, id, key string) error {
@@ -222,17 +219,29 @@ func (r *BuildRepository) SetR2Key(ctx context.Context, id, key string) error {
 	return nil
 }
 
-func (r *BuildRepository) IncrDownloadCount(ctx context.Context, id string) (int64, error) {
+// RecordDownload 记录一次下载：计数自增，同时刷新访问时间。
+//
+// 两件事合在一条语句里，是因为它们描述的是同一个事实——"这个包刚被下载过"。
+// 拆成两次调用会让它们有机会只改一处：淘汰算法依赖 last_accessed_at 判断
+// "谁没人用"，一旦计数还在走而时间没更新，排序就悄悄退化成纯按上传时间，
+// 而且不会报错，只会在配额紧张时删错包。
+//
+// 包里没这一行时返回 contract.NotFound：调用方据此判断"不在这个分区"，
+// 不至于把跨分区探测的正常落空当成故障。
+func (r *BuildRepository) RecordDownload(ctx context.Context, id string) (int64, error) {
 	var count int64
 	err := r.db.QueryRowContext(ctx,
-		`UPDATE `+r.table+` SET download_count = download_count + 1 WHERE id = $1 RETURNING download_count`,
+		`UPDATE `+r.table+`
+SET download_count = download_count + 1, last_accessed_at = now()
+WHERE id = $1
+RETURNING download_count`,
 		id,
 	).Scan(&count)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) || errors.Is(err, pgx.ErrNoRows) {
 			return 0, contract.NotFound(contract.ResourceBuild)
 		}
-		return 0, fmt.Errorf("下载计数失败: %w", err)
+		return 0, fmt.Errorf("记录下载失败: %w", err)
 	}
 	return count, nil
 }

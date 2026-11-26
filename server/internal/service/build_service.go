@@ -516,14 +516,19 @@ func (s *BuildService) resolveBuildFile(build contract.Build) (contract.FileRef,
 	}, nil
 }
 
-// IncrDownloadCount 只在已授权且完整流式传输后调用，分区沿用本次授权结果。
-func (s *BuildService) IncrDownloadCount(id string, mode contract.SessionMode) {
+// RecordDownload 记录一次已授权的下载：计数自增并刷新访问时间。
+//
+// 分区沿用本次授权结果，不重新解析——授权时已确定包在哪个分区，
+// 重查一次既多一次往返，也可能因身份变化被路由到另一个分区。
+//
+// 失败只记日志：下载本身已经完成，统计字段不该让用户看到错误。
+func (s *BuildService) RecordDownload(id string, mode contract.SessionMode) {
 	if !mode.IsValid() {
 		return
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	if _, err := s.repos.For(mode).IncrDownloadCount(ctx, id); err != nil {
-		log.Printf("下载计数旁路失败（不影响本次下载）id=%s err=%v", id, err)
+	if _, err := s.repos.For(mode).RecordDownload(ctx, id); err != nil {
+		log.Printf("记录下载旁路失败（不影响本次下载）id=%s err=%v", id, err)
 	}
 }

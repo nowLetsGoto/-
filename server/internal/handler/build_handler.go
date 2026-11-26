@@ -214,7 +214,7 @@ func (h *BuildHandler) streamFile(w http.ResponseWriter, r *http.Request, id str
 	// 不占用本机带宽（家宽 / 小带宽云主机的主要瓶颈）。
 	// 跳转后浏览器不再回源，因此这里主动计数——真正的传输结果由 R2 负责。
 	if signed := h.svc.R2SignedURL(r.Context(), ref); signed != "" {
-		h.svc.IncrDownloadCount(id, mode)
+		h.svc.RecordDownload(id, mode)
 		shareHeaders(w)
 		http.Redirect(w, r, signed, http.StatusFound)
 		return nil
@@ -241,7 +241,7 @@ func (h *BuildHandler) streamFile(w http.ResponseWriter, r *http.Request, id str
 
 	written, copyErr := io.Copy(w, file)
 	if copyErr == nil && written == size {
-		h.svc.IncrDownloadCount(id, mode)
+		h.svc.RecordDownload(id, mode)
 	} else {
 		log.Printf("下载未完成，不计数 id=%s written=%d size=%d err=%v", id, written, size, copyErr)
 	}

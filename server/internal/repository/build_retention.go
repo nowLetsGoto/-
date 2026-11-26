@@ -83,11 +83,3 @@ WHERE id = ANY($1)`
 	}
 	return nil
 }
-
-// TouchAccessedAt 记录一次下载时间，供淘汰时判断"哪些包没人用"。
-//
-// 失败不返回错误：下载本身已经成功，统计字段的写入不该影响用户体验。
-func (r *BuildRepository) TouchAccessedAt(ctx context.Context, id string) {
-	_, _ = r.db.ExecContext(ctx,
-		`UPDATE `+r.table+` SET last_accessed_at = now() WHERE id = $1`, id)
-}
