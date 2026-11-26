@@ -359,7 +359,11 @@ function PackageCard({
         <time dateTime={build.createdAt}>{formatDate(build.createdAt)}</time>
       </div>
       <div className="package-card-footer">
-        <Link className="button package-download" to={build.downloadPagePath}>
+        {/* 优先打开分享页（免登录）；无有效分享时退回内部预览（需登录）。 */}
+        <Link
+          className="button package-download"
+          to={build.downloadSharePath || build.downloadPagePath}
+        >
           下载页
           <Icon name="external" size={14} />
         </Link>

@@ -2734,6 +2734,7 @@ components:
         - metaSource
         - downloadCount
         - downloadPagePath
+        - downloadSharePath
         - downloadPageUrl
         - downloadFileUrl
         - createdAt
@@ -2778,7 +2779,10 @@ components:
           description: 下载成功后才原子自增；起点 0、只增不减
         downloadPagePath:
           type: string
-          description: 相对路径 /d/{id}；唯一用途是前端 react-router 内部跳转，严禁用于二维码 / 复制 / 下载
+          description: 相对路径 /d/{id}，内部预览用（需登录）；无分享时的回退值
+        downloadSharePath:
+          type: string
+          description: 带 shareToken 的相对路径 /d/{id}?shareToken=...，后台「下载页」按钮用它打开分享页（免登录）；分享失效时为空串
         downloadPageUrl:
           type: string
           description: 有效分享的绝对地址，二维码与复制的唯一来源；分享失效时为空串

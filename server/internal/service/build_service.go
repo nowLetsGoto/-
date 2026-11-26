@@ -420,20 +420,28 @@ func (s *BuildService) Create(ctx context.Context, in contract.CommitInput, iden
 	return build, nil
 }
 
-// buildURLs 是唯一 URL 生成处，仅使用 PUBLIC_BASE_URL；内部预览路径不含凭证。
-func (s *BuildService) buildURLs(id, token string) (pagePath, pageURL, fileURL string) {
+// buildURLs 是唯一 URL 生成处，仅使用 PUBLIC_BASE_URL。
+//
+// 返回四个地址，边界严格区分：
+//   - pagePath：内部预览相对路径，不含凭证（需登录）；
+//   - sharePath：分享相对路径，带 shareToken（免登录），供后台按钮 SPA 跳转；
+//   - pageURL：分享的绝对地址，对外分发与二维码；
+//   - fileURL：分享的下载直链。
+//
+// 无有效分享时后三者均为空串，由前端回退到 pagePath。
+func (s *BuildService) buildURLs(id, token string) (pagePath, sharePath, pageURL, fileURL string) {
 	pagePath = strings.Replace(contract.RouteDownloadPage, "{id}", id, 1)
 	if token == "" {
-		return pagePath, "", ""
+		return pagePath, "", "", ""
 	}
 	query := "?" + url.Values{"shareToken": {token}}.Encode()
-	base := strings.TrimRight(s.cfg.PublicBaseURL, "/")
 	fileRel := strings.Replace(contract.RouteSharedBuildFile, "{id}", id, 1)
-	return pagePath, base + pagePath + query, base + fileRel + query
+	base := strings.TrimRight(s.cfg.PublicBaseURL, "/")
+	return pagePath, pagePath + query, base + pagePath + query, base + fileRel + query
 }
 
 func (s *BuildService) fillURLs(b *contract.Build, token string) {
-	b.DownloadPagePath, b.DownloadPageURL, b.DownloadFileURL = s.buildURLs(b.ID, token)
+	b.DownloadPagePath, b.DownloadSharePath, b.DownloadPageURL, b.DownloadFileURL = s.buildURLs(b.ID, token)
 }
 
 // List 返回该项目的按时间倒序列表，空结果为空数组；统一填充三个 URL 字段。

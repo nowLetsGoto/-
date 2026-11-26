@@ -1156,7 +1156,11 @@ type Build struct {
 	DownloadPagePath string `json:"downloadPagePath"`
 	DownloadPageURL  string `json:"downloadPageUrl"`
 	DownloadFileURL  string `json:"downloadFileUrl"`
-	CreatedAt        string `json:"createdAt"`
+	// DownloadSharePath 是带分享凭证的相对路径，供后台「下载页」按钮做 SPA 跳转。
+	// 与 DownloadPagePath 只差 query：后者是内部预览（需登录），前者打开对外
+	// 分享页（免登录），符合运营人员点按钮的预期。无有效分享时为空串。
+	DownloadSharePath string `json:"downloadSharePath"`
+	CreatedAt         string `json:"createdAt"`
 	// OwnerUserID 是上传者账号 id；system 表示由外部 API 或历史数据产生。
 	OwnerUserID string `json:"ownerUserId"`
 }

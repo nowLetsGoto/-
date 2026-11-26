@@ -266,11 +266,11 @@ export function UploadPage(): JSX.Element {
             <p className="notice">当前对外基址不可被手机访问，请配置 PUBLIC_BASE_URL 后再扫码</p>
           ) : null}
           <div className="actions">
-            {/* downloadPagePath 的唯一用途：react-router 内部跳转 */}
+            {/* 优先跳分享页（免登录）；无有效分享时退回内部预览（需登录）。 */}
             <Button
               className="button button-primary"
               type="button"
-              onClick={() => navigate(created.downloadPagePath)}
+              onClick={() => navigate(created.downloadSharePath || created.downloadPagePath)}
             >
               去下载页
             </Button>
