@@ -75,6 +75,8 @@ var allowedMethods = map[string]string{
 	contract.RouteTeams:               "GET, POST",
 	contract.RouteTeamByID:            "GET, PUT",
 	contract.RouteOpenBuilds:          "POST",
+	contract.RouteOpenUploadTicket:    "POST",
+	contract.RouteOpenStageFromR2:     "POST",
 	contract.RouteSettings:            "GET, PUT",
 	contract.RouteStorageUsage:        "GET",
 	contract.RouteWebhookTest:         "POST",
@@ -129,6 +131,9 @@ func allowedMethodsFor(req *http.Request) string {
 		return "GET"
 	case path == contract.RouteBuilds:
 		return "GET, POST"
+	case path == contract.RouteOpenBuilds, path == contract.RouteOpenUploadTicket,
+		path == contract.RouteOpenStageFromR2:
+		return "POST"
 	case path == contract.RouteStage, path == contract.RouteUploadTicket,
 		path == contract.RouteStageFromR2, path == contract.RouteUploadAbort:
 		return "POST"
@@ -164,7 +169,11 @@ func NewRouter(d Deps) http.Handler {
 		api.Post("/public/builds/{id}/download-count", middleware.Wrap(d.Builds.SharedDownloadCount))
 
 		// 外部系统上传：X-API-Key 鉴权，与管理端登录态互不影响。
-		api.With(apikey.Require(d.APIKey)).Post("/open/builds", middleware.Wrap(d.Open.Upload))
+		// 一步式 multipart 保留给小包；大包走取票据 → 直传 R2 → 提交元信息三步。
+		open := api.With(apikey.Require(d.APIKey))
+		open.Post("/open/builds", middleware.Wrap(d.Open.Upload))
+		open.Post("/open/builds/upload-ticket", middleware.Wrap(d.Open.UploadTicket))
+		open.Post("/open/builds/stage-from-r2", middleware.Wrap(d.Open.StageFromR2))
 
 		// 管理动作（上传 / 发布 / 列表 / 系统设置）需要登录；分组只加中间件，不改路由前缀。
 		api.Group(func(private chi.Router) {

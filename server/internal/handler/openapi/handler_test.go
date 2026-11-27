@@ -92,3 +92,39 @@ func TestUnboundKeyIsDistinctError(t *testing.T) {
 		t.Fatal("错误文案不能为空：CI 日志靠它定位问题")
 	}
 }
+
+// TestBuildCommitInput 锁定「调用方字段 > 解析结果」的合并规则。
+// 一步式 multipart 与三步直传都走这里，规则分叉会让同一份 CI 脚本在不同入口得到不同包信息。
+func TestBuildCommitInput(t *testing.T) {
+	parsed := contract.ParsedMeta{
+		AppName: "解析应用名", PackageID: "com.parsed", Version: "1.2.3", BuildNumber: "12",
+	}
+	got := buildCommitInput(
+		"world2-1", "test", "android",
+		"用户指定名", "", "", "13", "本次更新", parsed,
+	)
+
+	if got.Project != "world2-1" || got.Environment != "test" || got.Platform != "android" {
+		t.Fatalf("项目/环境/平台应原样传出，got=%+v", got)
+	}
+	if got.AppName != "用户指定名" {
+		t.Fatalf("调用方给的应用名优先，got=%q", got.AppName)
+	}
+	if got.PackageID != "com.parsed" || got.Version != "1.2.3" {
+		t.Fatalf("空字段应用解析结果，got packageID=%q version=%q", got.PackageID, got.Version)
+	}
+	if got.BuildNumber != "13" || got.Changelog != "本次更新" {
+		t.Fatalf("构建号与更新说明应以调用方为准，got=%+v", got)
+	}
+}
+
+// TestExternalIdentity 确认外部上传只写团队分区的匿名身份。
+func TestExternalIdentity(t *testing.T) {
+	identity := externalIdentity()
+	if identity.Mode != contract.ModeTeam {
+		t.Fatalf("外部上传必须写 team 分区，got=%q", identity.Mode)
+	}
+	if identity.UserID != "" {
+		t.Fatalf("外部上传没有账号，UserID 必须为空（入库兜底为 system），got=%q", identity.UserID)
+	}
+}

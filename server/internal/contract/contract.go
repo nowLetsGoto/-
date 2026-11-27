@@ -277,8 +277,12 @@ const (
 	RouteStorageUsage = APIPrefix + "/storage/usage"
 	RouteWebhookTest  = APIPrefix + "/settings/webhook/test"
 	RouteAPIKeyRotate = APIPrefix + "/settings/api-key/rotate"
-	RouteOpenBuilds   = APIPrefix + "/open/builds"
-	RouteStage        = APIPrefix + "/builds/stage"
+	RouteOpenBuilds = APIPrefix + "/open/builds"
+	// 外部系统的大包直传：先取票据、CI 直接 PUT 到 R2，再提交元信息完成发布。
+	// 与页面上传共用 service，只把「字节从哪来」改成外部调用方。
+	RouteOpenUploadTicket = APIPrefix + "/open/builds/upload-ticket"
+	RouteOpenStageFromR2  = APIPrefix + "/open/builds/stage-from-r2"
+	RouteStage            = APIPrefix + "/builds/stage"
 	// 直传 R2：先取票据，浏览器 PUT 到 R2，再让后端回拉解析。
 	// 三个接口合起来替代 stage，用于超过 Tunnel 100MB 上限的大包。
 	RouteUploadTicket  = APIPrefix + "/builds/upload-ticket"
@@ -350,7 +354,7 @@ var APIRoutes = []string{
 	RouteProjects, RouteProjectByKey,
 	RoutePeople, RoutePersonByID, RouteTeams, RouteTeamByID,
 	RoutePermissions, RouteMenus, RouteRoles, RouteRoleByID,
-	RouteSettings, RouteWebhookTest, RouteAPIKeyRotate, RouteOpenBuilds, RouteStorageUsage,
+	RouteSettings, RouteWebhookTest, RouteAPIKeyRotate, RouteOpenBuilds, RouteOpenUploadTicket, RouteOpenStageFromR2, RouteStorageUsage,
 	RouteStage, RouteUploadTicket, RouteStageFromR2, RouteUploadAbort, RouteBuilds, RouteBuildByID, RouteBuildVersions, RouteBuildFile, RouteBuildSyncToR2, RouteBuildLocalPull, RouteBuildSyncProgress, RouteSharedBuild, RouteSharedBuildVersions, RouteSharedBuildFile, RouteSharedDownloadCount, RouteHealth,
 }
 
@@ -1337,6 +1341,22 @@ type StageFromR2Input struct {
 type CommitInput struct {
 	Project     string `json:"project"`
 	StageToken  string `json:"stageToken"`
+	Environment string `json:"environment"`
+	Platform    string `json:"platform"`
+	AppName     string `json:"appName"`
+	PackageID   string `json:"packageId"`
+	Version     string `json:"version"`
+	BuildNumber string `json:"buildNumber"`
+	Changelog   string `json:"changelog"`
+}
+
+// OpenStageFromR2Input 是外部 API 直传的最后一步。
+//
+// 它只包含 uploadToken 与表单字段，不传文件：字节已由调用方 PUT 到 R2，
+// 服务端校验后会复用 StageFromR2 与 Create 完成发布。字段留空时由解析结果补齐。
+type OpenStageFromR2Input struct {
+	UploadToken string `json:"uploadToken"`
+	Project     string `json:"project"`
 	Environment string `json:"environment"`
 	Platform    string `json:"platform"`
 	AppName     string `json:"appName"`

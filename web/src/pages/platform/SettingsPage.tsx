@@ -412,9 +412,33 @@ function ApiPanel({
 
   // 仅用于生成给人复制的示例；真正的下载地址由服务端按 PUBLIC_BASE_URL 生成。
   const origin = window.location.origin;
+  const key = plainKey || '<你的 API Key>';
+  // 大包推荐三步直传：字节不经过 Tunnel，也不会受 100 MB 请求体上限影响。
+  // 票据里的 header 必须原样带上，示例只写占位符，避免前端硬编码签名头。
+  const curlDirect = [
+    '# 1. 取票据',
+    `curl -X POST ${origin}/api/v1/open/builds/upload-ticket \\`,
+    `  -H "X-API-Key: ${key}" \\`,
+    '  -H "Content-Type: application/json" \\',
+    `  -d '{"project":"${projectKey}","fileName":"app-release.apk","size":124927223,"contentType":"application/vnd.android.package-archive"}'`,
+    '',
+    '# 2. 直传 R2（把票据返回的 putUrl 与 header 原样代入）',
+    'curl -X PUT "$PUT_URL" \\',
+    '  -H "Content-Type: <票据 header.Content-Type>" \\',
+    '  -H "Cache-Control: <票据 header.Cache-Control>" \\',
+    '  -H "Content-Disposition: <票据 header.Content-Disposition>" \\',
+    '  --data-binary @./app-release.apk',
+    '',
+    '# 3. 提交元信息，返回 201 + Build',
+    `curl -X POST ${origin}/api/v1/open/builds/stage-from-r2 \\`,
+    `  -H "X-API-Key: ${key}" \\`,
+    '  -H "Content-Type: application/json" \\',
+    `  -d '{"uploadToken":"<票据 uploadToken>","project":"${projectKey}","environment":"test","platform":"android","changelog":"修复登录态过期"}'`,
+  ].join('\n');
   const curl = [
+    '# 小包兼容：一步式 multipart',
     `curl -X POST ${origin}/api/v1/open/builds \\`,
-    `  -H "X-API-Key: ${plainKey || '<你的 API Key>'}" \\`,
+    `  -H "X-API-Key: ${key}" \\`,
     `  -F "project=${projectKey}" \\`,
     '  -F "file=@./app-release.apk" \\',
     '  -F "environment=test" \\',
@@ -434,7 +458,10 @@ function ApiPanel({
           <div>
             <dt>接口</dt>
             <dd>
-              <code>POST /api/v1/open/builds</code>
+              <code>POST /api/v1/open/builds/upload-ticket</code> → PUT R2 →{' '}
+              <code>POST /api/v1/open/builds/stage-from-r2</code>
+              <br />
+              <span className="settings-hint">小包仍可用一步式 POST /api/v1/open/builds</span>
             </dd>
           </div>
           <div>
@@ -569,14 +596,28 @@ function ApiPanel({
 
       <div className="settings-block">
         <h2>调用示例</h2>
+        <p className="settings-hint">
+          大包走三步直传：字节直接到 R2，发布后后台异步拉回本机，进度与页面上传共用同一套。 票据里的
+          header 必须原样带上。
+        </p>
+        <pre className="code-block">{curlDirect}</pre>
+        <div className="settings-actions">
+          <Button
+            className="button button-ghost"
+            type="button"
+            onClick={() => onCopy(curlDirect, '直传示例已复制')}
+          >
+            复制直传示例
+          </Button>
+        </div>
         <pre className="code-block">{curl}</pre>
         <div className="settings-actions">
           <Button
             className="button button-ghost"
             type="button"
-            onClick={() => onCopy(curl, '示例已复制')}
+            onClick={() => onCopy(curl, '一步式示例已复制')}
           >
-            复制示例
+            复制一步式示例
           </Button>
         </div>
         <p className="settings-hint">完整说明见仓库 docs/09-OPEN-API.md。</p>

@@ -1,9 +1,12 @@
-// Package openapi · 对外开放接口：给 CI 与脚本用的一步式上传。
-// 职责：一次 multipart 请求完成「写 tmp → 解析 → 落盘写库 → 生成地址」，返回完整 Build。
-// 输入：multipart 文件 + 环境 / 平台 + 可选文本字段；输出：201 + Build。
-// 边界：不重复实现暂存与发布逻辑（复用 handler.ReadUpload 与 service 的 Stage/Create），
+// Package openapi · 对外开放接口：给 CI 与脚本用的上传。
 //
-//	不做鉴权（在 middleware/apikey），不提供查询 / 删除能力。
+// 职责：暴露两种入口——一步式 multipart（小包兼容）与三步直传 R2（大包推荐），
+//
+//	两者共用 service 的 Stage / StageFromR2 / Create，不在本层实现任何业务规则。
+//
+// 输入：multipart 或直传票据 + JSON 元信息；输出：201 + Build。
+// 边界：鉴权在 middleware/apikey；本层只做解码、字段合并与身份构造，
+//	不写 SQL、不拼对象名、不实现第二套发布流程。
 package openapi
 
 import (
@@ -41,18 +44,12 @@ func (h *Handler) Upload(w http.ResponseWriter, r *http.Request) error {
 	// 先解析：外部调用方常常只传文件与环境，应用名 / 版本号由服务端补齐更省事。
 	parsed := h.svc.Stage(r.Context(), form.Staged)
 
-	in := contract.CommitInput{
-		Project:     form.Fields["project"],
-		StageToken:  form.Staged.Token,
-		Environment: form.Fields["environment"],
-		Platform:    form.Fields["platform"],
-		// 优先用调用方给的值，其次用解析结果，最后才由 Create 用文件名兜底。
-		AppName:     firstNonEmpty(form.Fields["appName"], parsed.Parsed.AppName),
-		PackageID:   firstNonEmpty(form.Fields["packageId"], parsed.Parsed.PackageID),
-		Version:     firstNonEmpty(form.Fields["version"], parsed.Parsed.Version),
-		BuildNumber: firstNonEmpty(form.Fields["buildNumber"], parsed.Parsed.BuildNumber),
-		Changelog:   form.Fields["changelog"],
-	}
+	in := buildCommitInput(
+		form.Fields["project"], form.Fields["environment"], form.Fields["platform"],
+		form.Fields["appName"], form.Fields["packageId"], form.Fields["version"],
+		form.Fields["buildNumber"], form.Fields["changelog"], parsed.Parsed,
+	)
+	in.StageToken = form.Staged.Token
 	if err := handler.ValidateCommitInput(in); err != nil {
 		return err
 	}
@@ -63,13 +60,102 @@ func (h *Handler) Upload(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 
-	// 外部系统没有登录态：按团队模式的匿名身份处理（UserID 为空 → 包记为 system），
-	// 因此只写 team 分区，永远进不了任何人的单人空间。
-	build, err := h.svc.Create(ctx, in, contract.Identity{Mode: contract.ModeTeam})
+	build, err := h.svc.Create(ctx, in, externalIdentity())
 	if err != nil {
 		return err
 	}
 	return handler.OKWithStatus(w, http.StatusCreated, build)
+}
+
+// UploadTicket 给外部系统签发 R2 预签名 PUT 票据。
+//
+// 与页面上传共用 IssueUploadTicket：对象 key、签名头、有效期、归属校验完全一致。
+// 调用方拿到票据后自行 PUT 字节到 R2，再调 StageFromR2 完成发布。
+func (h *Handler) UploadTicket(w http.ResponseWriter, r *http.Request) error {
+	var in contract.UploadTicketInput
+	if err := handler.DecodeJSON(w, r, &in, "project/fileName/size/contentType"); err != nil {
+		return err
+	}
+	ctx, err := keyScopedContext(r)
+	if err != nil {
+		return err
+	}
+	ticket, err := h.svc.IssueUploadTicket(ctx, in, externalIdentity())
+	if err != nil {
+		return err
+	}
+	return handler.OK(w, ticket)
+}
+
+// StageFromR2 收尾外部直传：校验对象 → 解析 → 写库 → 返回 Build。
+//
+// 与一步式上传的唯一区别是字节来源：这里 uploadToken 已指向 R2 上校验过的对象，
+// 所以不需要 multipart，也无需本层再搬一次文件。
+func (h *Handler) StageFromR2(w http.ResponseWriter, r *http.Request) error {
+	var in contract.OpenStageFromR2Input
+	if err := handler.DecodeJSON(w, r, &in, "uploadToken/project/environment/platform/appName/packageId/version/buildNumber/changelog"); err != nil {
+		return err
+	}
+	if strings.TrimSpace(in.Project) == "" {
+		return handler.BadRequest("project 不能为空")
+	}
+
+	// 先校验字段长度再消费 uploadToken：输入不合法时不该删掉仍有效的上传会话。
+	if err := handler.ValidateCommitInput(buildCommitInput(
+		in.Project, in.Environment, in.Platform,
+		in.AppName, in.PackageID, in.Version, in.BuildNumber, in.Changelog, contract.ParsedMeta{},
+	)); err != nil {
+		return err
+	}
+
+	ctx, err := keyScopedContext(r)
+	if err != nil {
+		return err
+	}
+	parsed, err := h.svc.StageFromR2(ctx, in.UploadToken)
+	if err != nil {
+		return err
+	}
+
+	commit := buildCommitInput(
+		in.Project, in.Environment, in.Platform,
+		in.AppName, in.PackageID, in.Version, in.BuildNumber, in.Changelog, parsed.Parsed,
+	)
+	commit.StageToken = parsed.StageToken
+	handler.AttachLogFields(r, "source=openapi direct project="+commit.Project+" environment="+commit.Environment+" platform="+commit.Platform)
+
+	build, err := h.svc.Create(ctx, commit, externalIdentity())
+	if err != nil {
+		return err
+	}
+	return handler.OKWithStatus(w, http.StatusCreated, build)
+}
+
+// externalIdentity 表示外部系统写入：团队模式的匿名账号。
+//
+// UserID 为空会让包记为 system；只写 team 分区，永远进不了任何人的单人空间。
+func externalIdentity() contract.Identity {
+	return contract.Identity{Mode: contract.ModeTeam}
+}
+
+// buildCommitInput 把「调用方字段 + 解析结果」合成发布请求体。
+//
+// 优先级：调用方给的值 > 解析值 > Create 内部的文件名兜底。
+// 一步式和直传式都必须走这里，避免两条入口对同一份表单产生不同解释。
+func buildCommitInput(
+	project, environment, platform, appName, packageID, version, buildNumber, changelog string,
+	parsed contract.ParsedMeta,
+) contract.CommitInput {
+	return contract.CommitInput{
+		Project:     project,
+		Environment: environment,
+		Platform:    platform,
+		AppName:     firstNonEmpty(appName, parsed.AppName),
+		PackageID:   firstNonEmpty(packageID, parsed.PackageID),
+		Version:     firstNonEmpty(version, parsed.Version),
+		BuildNumber: firstNonEmpty(buildNumber, parsed.BuildNumber),
+		Changelog:   changelog,
+	}
 }
 
 // keyScopedContext 把 API Key 的归属公司变成**唯一**可信的租户范围。

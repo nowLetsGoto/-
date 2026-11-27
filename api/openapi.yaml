@@ -1110,9 +1110,11 @@ paths:
       operationId: openUploadBuild
       summary: 外部系统一步式上传安装包（CI / 脚本调用）
       description: >
-        multipart/form-data，一次请求完成「写入暂存 + 解析 + 落盘 + 写库 + 生成地址」。
+        一步式 multipart，一次请求完成「写入暂存 + 解析 + 落盘 + 写库 + 生成地址」。
         鉴权用 X-API-Key（在系统设置页获取），不依赖管理员登录态。
         文本字段可省略：省略时用解析出的包信息补齐，再缺才用文件名兜底。
+        大包请改用 /open/builds/upload-ticket → PUT putUrl → /open/builds/stage-from-r2，
+        字节直传 R2，不受 Tunnel 请求体上限约束；两步链路与本接口共用同一套发布逻辑。
       security:
         - apiKeyAuth: []
       requestBody:
@@ -1162,6 +1164,77 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '413':
           $ref: '#/components/responses/TooLarge'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /open/builds/upload-ticket:
+    post:
+      operationId: openUploadTicket
+      summary: 外部系统直传 R2 第一步：签发预签名 PUT 票据
+      description: >
+        大包走三步直传，字节直接从调用方传到 R2，绕过 Cloudflare Tunnel 的 100 MB 请求体上限。
+        本步只传文件元信息，服务端校验项目归属并签发票据；PUT 时须原样带上返回的 header，
+        Content-Length 由客户端按文件大小自动发送。票据有效期 1 小时。
+        一步式 multipart 的 /open/builds 仍保留给小包。
+      security:
+        - apiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UploadTicketInput'
+      responses:
+        '200':
+          description: 票据签发成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponse'
+                  - type: object
+                    required: [data]
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/UploadTicket'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /open/builds/stage-from-r2:
+    post:
+      operationId: openStageFromR2
+      summary: 外部系统直传 R2 第三步：提交元信息并发布
+      description: >
+        调用方 PUT 完成后，用 uploadToken 调本接口。服务端校验对象存在且大小一致，
+        解析包元信息并写库，返回与页面上传完全一致的 Build。
+        包发布后后台会异步把对象拉回本机留底，进度与页面上传共用同一套字段。
+      security:
+        - apiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OpenStageFromR2Input'
+      responses:
+        '201':
+          description: 发布成功，返回完整 Build
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BuildResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
         '500':
           $ref: '#/components/responses/InternalError'
 
@@ -1256,43 +1329,20 @@ paths:
         content:
           application/json:
             schema:
-              type: object
-              required: [project, fileName, size, contentType]
-              properties:
-                project:
-                  type: string
-                  description: 项目 key。用于把"租户/项目"编进 R2 对象 key，使对象自带归属信息；也会提前校验项目存在与访问权限
-                fileName:
-                  type: string
-                  description: 原始文件名，用于推导扩展名与下载展示名
-                size:
-                  type: integer
-                  format: int64
-                  description: 文件字节数，纳入签名，R2 会校验实际长度
-                contentType:
-                  type: string
-                  description: MIME 类型，纳入签名，PUT 时必须一致
+              $ref: '#/components/schemas/UploadTicketInput'
       responses:
         '200':
           description: 票据签发成功
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  uploadToken:
-                    type: string
-                  putUrl:
-                    type: string
-                  header:
-                    type: object
-                    description: >
-                      PUT 时必须显式设置的请求头（参与签名）。Content-Length 也参与签名，
-                      但由浏览器按文件大小自动发送，不在此列表中——手动设置会被浏览器拒绝。
-                    additionalProperties:
-                      type: string
-                  expiresInSeconds:
-                    type: integer
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponse'
+                  - type: object
+                    required: [data]
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/UploadTicket'
         '400':
           $ref: '#/components/responses/BadRequest'
         '401':
@@ -2884,6 +2934,76 @@ components:
           type: string
           maxLength: 2000
 
+    UploadTicketInput:
+      type: object
+      description: 申请 R2 直传票据；页面与外部 API 共用
+      required: [project, fileName, size, contentType]
+      properties:
+        project:
+          type: string
+          description: 项目 key，用于构造带租户与项目归属的对象名
+        fileName:
+          type: string
+          description: 原始文件名，用于推导扩展名与下载展示名
+        size:
+          type: integer
+          format: int64
+          description: 文件字节数，纳入签名，R2 会校验实际长度
+        contentType:
+          type: string
+          description: MIME 类型，纳入签名，PUT 时必须一致
+    UploadTicket:
+      type: object
+      description: R2 预签名 PUT 票据
+      required: [uploadToken, putUrl, header, expiresInSeconds]
+      properties:
+        uploadToken:
+          type: string
+          description: 短期上传凭据，最后一步提交时用
+        putUrl:
+          type: string
+          format: uri
+          description: 预签名 PUT 地址，字节直接传到这里，不经过应用服务器
+        header:
+          type: object
+          description: >
+            PUT 时必须显式设置的请求头（参与签名）。Content-Length 也参与签名，
+            但由客户端按文件大小自动发送，不在此列表中——手动设置会被浏览器拒绝。
+          additionalProperties:
+            type: string
+        expiresInSeconds:
+          type: integer
+          description: 票据有效期（秒），过期需重新申请
+    OpenStageFromR2Input:
+      type: object
+      description: 外部 API 直传的最后一步；只提交元信息，不传文件
+      required: [uploadToken, project, environment, platform]
+      properties:
+        uploadToken:
+          type: string
+          description: 取票据时拿到的 uploadToken
+        project:
+          type: string
+          description: 项目 key
+        environment:
+          $ref: '#/components/schemas/Environment'
+        platform:
+          $ref: '#/components/schemas/Platform'
+        appName:
+          type: string
+          maxLength: 100
+        packageId:
+          type: string
+          maxLength: 100
+        version:
+          type: string
+          maxLength: 50
+        buildNumber:
+          type: string
+          maxLength: 50
+        changelog:
+          type: string
+          maxLength: 2000
     Build:
       type: object
       description: 完整包 DTO；三个 URL 字段由服务端派生；对外地址携带单版本分享凭证，授权失效时为空

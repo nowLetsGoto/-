@@ -488,9 +488,49 @@ export interface paths {
         put?: never;
         /**
          * 外部系统一步式上传安装包（CI / 脚本调用）
-         * @description multipart/form-data，一次请求完成「写入暂存 + 解析 + 落盘 + 写库 + 生成地址」。 鉴权用 X-API-Key（在系统设置页获取），不依赖管理员登录态。 文本字段可省略：省略时用解析出的包信息补齐，再缺才用文件名兜底。
+         * @description 一步式 multipart，一次请求完成「写入暂存 + 解析 + 落盘 + 写库 + 生成地址」。 鉴权用 X-API-Key（在系统设置页获取），不依赖管理员登录态。 文本字段可省略：省略时用解析出的包信息补齐，再缺才用文件名兜底。 大包请改用 /open/builds/upload-ticket → PUT putUrl → /open/builds/stage-from-r2， 字节直传 R2，不受 Tunnel 请求体上限约束；两步链路与本接口共用同一套发布逻辑。
          */
         post: operations["openUploadBuild"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/open/builds/upload-ticket": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 外部系统直传 R2 第一步：签发预签名 PUT 票据
+         * @description 大包走三步直传，字节直接从调用方传到 R2，绕过 Cloudflare Tunnel 的 100 MB 请求体上限。 本步只传文件元信息，服务端校验项目归属并签发票据；PUT 时须原样带上返回的 header， Content-Length 由客户端按文件大小自动发送。票据有效期 1 小时。 一步式 multipart 的 /open/builds 仍保留给小包。
+         */
+        post: operations["openUploadTicket"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/open/builds/stage-from-r2": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 外部系统直传 R2 第三步：提交元信息并发布
+         * @description 调用方 PUT 完成后，用 uploadToken 调本接口。服务端校验对象存在且大小一致， 解析包元信息并写库，返回与页面上传完全一致的 Build。 包发布后后台会异步把对象拉回本机留底，进度与页面上传共用同一套字段。
+         */
+        post: operations["openStageFromR2"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1317,6 +1357,50 @@ export interface components {
             version: string;
             buildNumber?: string;
             environment: components["schemas"]["Environment"];
+            changelog?: string;
+        };
+        /** @description 申请 R2 直传票据；页面与外部 API 共用 */
+        UploadTicketInput: {
+            /** @description 项目 key，用于构造带租户与项目归属的对象名 */
+            project: string;
+            /** @description 原始文件名，用于推导扩展名与下载展示名 */
+            fileName: string;
+            /**
+             * Format: int64
+             * @description 文件字节数，纳入签名，R2 会校验实际长度
+             */
+            size: number;
+            /** @description MIME 类型，纳入签名，PUT 时必须一致 */
+            contentType: string;
+        };
+        /** @description R2 预签名 PUT 票据 */
+        UploadTicket: {
+            /** @description 短期上传凭据，最后一步提交时用 */
+            uploadToken: string;
+            /**
+             * Format: uri
+             * @description 预签名 PUT 地址，字节直接传到这里，不经过应用服务器
+             */
+            putUrl: string;
+            /** @description PUT 时必须显式设置的请求头（参与签名）。Content-Length 也参与签名， 但由客户端按文件大小自动发送，不在此列表中——手动设置会被浏览器拒绝。 */
+            header: {
+                [key: string]: string;
+            };
+            /** @description 票据有效期（秒），过期需重新申请 */
+            expiresInSeconds: number;
+        };
+        /** @description 外部 API 直传的最后一步；只提交元信息，不传文件 */
+        OpenStageFromR2Input: {
+            /** @description 取票据时拿到的 uploadToken */
+            uploadToken: string;
+            /** @description 项目 key */
+            project: string;
+            environment: components["schemas"]["Environment"];
+            platform: components["schemas"]["Platform"];
+            appName?: string;
+            packageId?: string;
+            version?: string;
+            buildNumber?: string;
             changelog?: string;
         };
         /** @description 完整包 DTO；三个 URL 字段由服务端派生；对外地址携带单版本分享凭证，授权失效时为空 */
@@ -2953,6 +3037,64 @@ export interface operations {
             500: components["responses"]["InternalError"];
         };
     };
+    openUploadTicket: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UploadTicketInput"];
+            };
+        };
+        responses: {
+            /** @description 票据签发成功 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiResponse"] & {
+                        data: components["schemas"]["UploadTicket"];
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    openStageFromR2: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OpenStageFromR2Input"];
+            };
+        };
+        responses: {
+            /** @description 发布成功，返回完整 Build */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BuildResponse"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["InternalError"];
+        };
+    };
     login: {
         parameters: {
             query?: never;
@@ -3032,19 +3174,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": {
-                    /** @description 项目 key。用于把"租户/项目"编进 R2 对象 key，使对象自带归属信息；也会提前校验项目存在与访问权限 */
-                    project: string;
-                    /** @description 原始文件名，用于推导扩展名与下载展示名 */
-                    fileName: string;
-                    /**
-                     * Format: int64
-                     * @description 文件字节数，纳入签名，R2 会校验实际长度
-                     */
-                    size: number;
-                    /** @description MIME 类型，纳入签名，PUT 时必须一致 */
-                    contentType: string;
-                };
+                "application/json": components["schemas"]["UploadTicketInput"];
             };
         };
         responses: {
@@ -3054,14 +3184,8 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        uploadToken?: string;
-                        putUrl?: string;
-                        /** @description PUT 时必须显式设置的请求头（参与签名）。Content-Length 也参与签名， 但由浏览器按文件大小自动发送，不在此列表中——手动设置会被浏览器拒绝。 */
-                        header?: {
-                            [key: string]: string;
-                        };
-                        expiresInSeconds?: number;
+                    "application/json": components["schemas"]["ApiResponse"] & {
+                        data: components["schemas"]["UploadTicket"];
                     };
                 };
             };
