@@ -424,12 +424,17 @@ function SyncProgressBar({
   /** 重试请求进行中，用于禁用按钮避免连点。 */
   retrying?: boolean;
 }): JSX.Element {
-  const running = progress.state === 'running';
-  const percent = running
-    ? progress.total > 0
-      ? Math.min(100, Math.round((progress.bytes / progress.total) * 100))
-      : 0
-    : 100;
+  // 成功固定 100%；进行中与失败都按真实字节算。
+  //
+  // 失败时不能画满：那条满格的红色进度条会让人以为「已经下完但出错了」，
+  // 而实际上它是断在 22% 之类的位置。停在断点，用户才知道重试是从头再来、
+  // 以及上次是在哪儿失败的。
+  const percent =
+    progress.state === 'succeeded'
+      ? 100
+      : progress.total > 0
+        ? Math.min(100, Math.round((progress.bytes / progress.total) * 100))
+        : 0;
   const label =
     progress.state === 'succeeded'
       ? `${verb}完成`
@@ -453,7 +458,11 @@ function SyncProgressBar({
         {/* 右侧固定占位：运行中显示百分比，失败时换成重试按钮。
             两者不共存——失败后进度已停，再显示一个静止的百分比没有意义，
             而这个位置正是用户视线落点，放重试最容易被找到。 */}
-        {running ? <span>{percent}%</span> : null}
+        {/* 百分比只在「进行中」与「失败」两种状态下显示：
+            成功时条已满，数字是多余的；失败时反而更需要它——
+            用户据此知道上次断在哪儿。失败态的百分比与重试按钮并排，
+            两者都在标签行右侧，视线一致。 */}
+        {progress.state !== 'succeeded' ? <span>{percent}%</span> : null}
         {progress.state === 'failed' && onRetry ? (
           <button
             className="package-sync-retry"

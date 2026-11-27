@@ -16,6 +16,8 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"sync/atomic"
+	"time"
 
 	"dandelion/server/internal/contract"
 	"dandelion/server/internal/repository"
@@ -33,6 +35,21 @@ const localPullSpaceRatio = 1.2
 // 用带缓冲 channel 当信号量，比引入 errgroup + 限流器更直白——
 // 这里只需要「最多 N 个同时进行」，不需要取消传播或错误聚合。
 var localPullSlots = make(chan struct{}, 2)
+
+// localPullStallTimeout 是「多久没有任何进展」就判定下载已死。
+//
+// 为什么用停滞时间而不是总时长：
+// 总时长超时无法区分「慢但在动」与「彻底卡死」，只能取一个宽松上限，
+// 于是正常要 3 分钟的包被给了 20 分钟，真卡死时用户要盯 20 分钟进度条不动。
+// 实测本机下行约 600KB/s，119MB 约 3 分钟；若链路更慢到 10 分钟也仍然在动，
+// 用总时长判就会误杀，用停滞判则完全不受影响。
+//
+// 给 90 秒：两倍于常用的 TCP 重传窗口，网络抖动造成的短暂停顿不会误判，
+// 而真正卡死的连接（实测停了两小时）会在 90 秒内被发现。
+const localPullStallTimeout = 90 * time.Second
+
+// 单个包不再设总时长上限：停滞检测已经能兜住死连接，
+// 再加一个总时长只会误杀慢速链路上的正常下载。
 
 // PullLocal 把一个包的字节从 R2 拉到本机正式目录，并推进 local_state。
 //
@@ -64,7 +81,24 @@ func (s *BuildService) PullLocal(ctx context.Context, mode contract.SessionMode,
 		return // 已有执行体在搬这个包，本次让路。
 	}
 
-	if err := s.pullLocalToDisk(ctx, repo, id); err != nil {
+	// 停滞检测取代总时长超时。
+	//
+	// 原先一个包可以独占整批 30 分钟预算一直挂着：实测有个包卡在 22%
+	// 两个多小时，进度条一动不动，而数据库里它始终是 pulling，看不出死活。
+	// 改成总时长 20 分钟又太长——正常只需 3 分钟，用户要盯着不动的进度条等 20 分钟。
+	//
+	// 现在的判据是「有没有进展」而非「花了多久」：只要字节数还在增长就继续下，
+	// 一旦连续 localPullStallTimeout 没有任何新增就判定连接已死。
+	// 这样慢速链路不会被误杀，真卡死也能在一分半内发现。
+	runCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	// 进度用原子变量在下载与守护之间共享：
+	// 守护需要看到「最新写到哪了」，而下载协程正在用它写文件，不能加锁阻塞。
+	var pulled atomic.Int64
+	go watchStall(runCtx, cancel, id, &pulled, localPullStallTimeout)
+
+	if err := s.pullLocalToDisk(runCtx, repo, id, &pulled); err != nil {
 		log.Printf("本机留底失败 id=%s err=%v（下一轮巡检会重试）", id, err)
 		// 先记原因再改状态：卡片要同时看到「失败」和「为什么失败」，
 		// 顺序反了会让前端在两次查询之间读到「失败但没有原因」。
@@ -101,7 +135,13 @@ func (s *BuildService) setLocalState(repo *repository.BuildRepository, id, state
 //
 // 从 PullLocal 拆出来，是为了让状态机读起来只有三步，
 // 而不被 open / rename / stat 的细节淹没。
-func (s *BuildService) pullLocalToDisk(ctx context.Context, repo *repository.BuildRepository, id string) error {
+// pullLocalToDisk 真正搬字节。
+//
+// pulled 与下载共享同一个原子计数：守护协程靠它判断「还在不在动」，
+// 每次写入既上报数据库（给用户看）也更新它（给守护看）。
+func (s *BuildService) pullLocalToDisk(
+	ctx context.Context, repo *repository.BuildRepository, id string, pulled *atomic.Int64,
+) error {
 	target, err := repo.GetLocalTarget(ctx, id)
 	if err != nil {
 		return err
@@ -136,7 +176,10 @@ func (s *BuildService) pullLocalToDisk(ctx context.Context, repo *repository.Bui
 
 	// 临时文件与目标同目录：跨文件系统 rename 会退化成复制，那样就没有原子性。
 	tmp := dst + ".pulling"
-	onProgress := func(pulled int64) { s.reportProgress(repo, target.ID, pulled) }
+	onProgress := func(n int64) {
+		pulled.Store(n)
+		s.reportProgress(repo, target.ID, n)
+	}
 	written, err := s.downloadToFile(ctx, target.R2Key, tmp, target.FileSize, onProgress)
 	if err != nil {
 		_ = os.Remove(tmp)
@@ -154,6 +197,55 @@ func (s *BuildService) pullLocalToDisk(ctx context.Context, repo *repository.Bui
 		return fmt.Errorf("落盘失败: %w", err)
 	}
 	return nil
+}
+
+// watchStall 在下载停滞超过 threshold 时取消下载。
+//
+// 参数：ctx（下载的上下文，取消它会中断 io.Copy）、cancel（同一上下文的取消函数）、
+// id（仅用于日志）、pulled（下载协程持续更新的字节数）、threshold（停滞多久算死）。
+// 边界：只观察与取消，不重试、不改状态——那些是 PullLocal 的收尾工作。
+//
+// 阈值作为参数而不是直接读常量：测试要把它压到毫秒级才能在秒内跑完，
+// 而全局可变状态会让并行测试互相干扰。
+//
+// 判据是「与上次相比有没有增长」而不是「绝对值够不够大」：
+// 后者会把刚开始下载的包（字节数还很少）误判为停滞。
+func watchStall(ctx context.Context, cancel context.CancelFunc, id string, pulled *atomic.Int64, threshold time.Duration) {
+	// 检查间隔取阈值的 1/6：这个比例保证「刚好跨过阈值」能被察觉，
+	// 又不会让高频轮询本身成为负担。写死 15 秒会出问题——
+	// 阈值被调小时（测试里要压到毫秒级）间隔反而比阈值大，永远等不到超时。
+	checkEvery := threshold / 6
+	if checkEvery <= 0 {
+		checkEvery = time.Millisecond
+	}
+
+	ticker := time.NewTicker(checkEvery)
+	defer ticker.Stop()
+
+	last := pulled.Load()
+	stalledFor := time.Duration(0)
+
+	for {
+		select {
+		case <-ctx.Done():
+			return // 下载正常结束或被其他地方取消，守护随之退出。
+		case <-ticker.C:
+			current := pulled.Load()
+			if current != last {
+				last = current
+				stalledFor = 0
+				continue
+			}
+
+			stalledFor += checkEvery
+			if stalledFor >= threshold {
+				log.Printf("下载停滞 %s 无进展，取消本次拉回 id=%s（已下 %d 字节）",
+					stalledFor, id, current)
+				cancel()
+				return
+			}
+		}
+	}
 }
 
 // reportProgress 上报进度，失败只记日志。
