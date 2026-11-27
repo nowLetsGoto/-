@@ -1023,6 +1023,8 @@ export interface components {
         TunnelStatus: {
             /** @description 本机是否找到隧道配置文件。 */
             configured: boolean;
+            /** @description 账号凭据 cert.pem 是否存在。为 false 时页面显示浏览器授权指引—— 那是换机器后的第一步，cloudflared 没有它无法启动。 */
+            authorized: boolean;
             /** @description launchd 是否注册了隧道服务。 */
             running: boolean;
             /** @description 公网基址是否可达——用户真正关心的结果。 */

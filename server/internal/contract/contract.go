@@ -570,6 +570,9 @@ type R2UpdateRequest struct {
 type TunnelStatus struct {
 	// Configured 表示本机存在隧道配置。
 	Configured bool `json:"configured"`
+	// Authorized 表示账号凭据 cert.pem 存在。
+	// 为 false 时页面要显示「浏览器授权」指引——那是换机器后的第一步。
+	Authorized bool `json:"authorized"`
 	// Running 表示隧道进程正在运行（用 launchctl print 判定，非探活）。
 	Running bool `json:"running"`
 	// Reachable 表示 PUBLIC_BASE_URL 从当前机器能访问——这是用户真正关心的结果。

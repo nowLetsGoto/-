@@ -136,6 +136,7 @@ export function SettingsPage(): JSX.Element {
         if (!cancelled)
           setTunnel({
             configured: false,
+            authorized: false,
             running: false,
             reachable: false,
             tunnelId: '',

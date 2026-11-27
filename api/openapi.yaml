@@ -2177,11 +2177,16 @@ components:
     TunnelStatus:
       type: object
       description: 公网隧道的只读状态。
-      required: [configured, running, reachable, tunnelId, hostname, upstream, connectors, message]
+      required: [configured, authorized, running, reachable, tunnelId, hostname, upstream, connectors, message]
       properties:
         configured:
           type: boolean
           description: 本机是否找到隧道配置文件。
+        authorized:
+          type: boolean
+          description: >
+            账号凭据 cert.pem 是否存在。为 false 时页面显示浏览器授权指引——
+            那是换机器后的第一步，cloudflared 没有它无法启动。
         running:
           type: boolean
           description: launchd 是否注册了隧道服务。

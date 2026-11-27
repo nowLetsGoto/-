@@ -51,10 +51,19 @@ func (s *Service) Status(ctx context.Context) (contract.TunnelStatus, error) {
 	data, err := os.ReadFile(confPath)
 	if err != nil {
 		status.Configured = false
+		// 连 config.yml 都没有时，也顺带看一下凭据——换机器第一步是授权，
+		// 页面该把这条指引放在最前面。
+		_, certErr := os.Stat(filepath.Join(os.Getenv("HOME"), ".cloudflared", "cert.pem"))
+		status.Authorized = certErr == nil
 		status.Message = "本机未找到隧道配置（~/.cloudflared/config.yml）。公网访问需要先配置 cloudflared。"
 		return status, nil
 	}
 	status.Configured = true
+	// 凭据与配置分开判断：config.yml 可以在没登录时手写出来，
+	// 但 cloudflared 启动仍会因 cert.pem 缺失而失败。
+	// 页面要据此提示授权，而不是笼统说"隧道未配置"。
+	_, certErr := os.Stat(filepath.Join(os.Getenv("HOME"), ".cloudflared", "cert.pem"))
+	status.Authorized = certErr == nil
 	status.TunnelID = parseField(string(data), "tunnel")
 	status.Upstream = parseIngressService(string(data))
 	status.Running = isRunning()

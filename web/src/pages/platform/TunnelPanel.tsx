@@ -76,7 +76,56 @@ export function TunnelPanel({ data, canWrite, onUpdate }: TunnelPanelProps): JSX
         </p>
       </div>
 
+      {/* 授权入口：链接到 Cloudflare 控制台，不伪装成「页面一键授权」。
+          OAuth 必须由人在浏览器里选账号并点同意，页面能做的只是把门指出来。 */}
+      <div className="settings-block">
+        <div className="settings-row">
+          <div>
+            <div className="settings-label">
+              {data.authorized ? 'Cloudflare 账号授权' : '⚠ 需要先完成浏览器授权'}
+            </div>
+            <p className="settings-hint">
+              {data.authorized ? (
+                <>
+                  本机凭据 <code>~/.cloudflared/cert.pem</code> 已存在。
+                  需要换账号时重新授权即可覆盖。
+                </>
+              ) : (
+                <>本机没有账号凭据，隧道无法启动。授权必须在浏览器里点「允许」—— 页面无法代劳。</>
+              )}
+            </p>
+          </div>
+          <a
+            className="button button-ghost"
+            href="https://dash.cloudflare.com/"
+            target="_blank"
+            rel="noreferrer"
+          >
+            打开 Cloudflare 控制台 ↗
+          </a>
+        </div>
+
+        {/* 小字说明放在链接下方：先给出可点的门，再解释为什么还要敲命令。
+            序颠倒会让用户先读到一段解释才看到入口。 */}
+        <p className="settings-hint">
+          在本机终端执行 <code>/opt/homebrew/bin/cloudflared tunnel login</code>
+          ，命令会打印一个授权 URL；把它复制到浏览器打开，在上面链接登录的账号里点「授权」。 完成后{' '}
+          <code>cert.pem</code> 自动写入本机，刷新本页即可看到状态变化。 换机器请运行{' '}
+          <code>bash scripts/setup-cloudflare.sh</code> 完成其余引导。
+        </p>
+      </div>
+
       <dl className="kv-list">
+        <div>
+          <dt>浏览器授权</dt>
+          <dd>
+            <span
+              className={data.authorized ? 'status-dot status-online' : 'status-dot status-failed'}
+            >
+              {data.authorized ? '已授权' : '未授权'}
+            </span>
+          </dd>
+        </div>
         <div>
           <dt>连接状态</dt>
           <dd>
