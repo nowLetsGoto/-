@@ -46,6 +46,7 @@ const ROUTES = {
   buildById: (id: string): string => `/api/v1/builds/${encodeURIComponent(id)}`,
   buildVersions: (id: string): string => `/api/v1/builds/${encodeURIComponent(id)}/versions`,
   buildSyncToR2: (id: string): string => `/api/v1/builds/${encodeURIComponent(id)}/sync-to-r2`,
+  buildLocalPull: (id: string): string => `/api/v1/builds/${encodeURIComponent(id)}/local-pull`,
   buildSyncProgress: (id: string): string =>
     `/api/v1/builds/${encodeURIComponent(id)}/sync-progress`,
   storageUsage: '/api/v1/storage/usage',
@@ -181,6 +182,16 @@ export function deleteBuild(id: string): Promise<void> {
  */
 export function syncBuildToR2(id: string): Promise<Build> {
   return postJSON<Build>(ROUTES.buildSyncToR2(id), {});
+}
+
+/**
+ * 重新把包从对象存储下载到本机（失败后的主动重试）。
+ *
+ * 异步受理：整包可能上百 MB，同步等待会被代理超时切断。
+ * 返回的包已置为重新排队，后续进度靠轮询列表的 localPulledBytes 更新。
+ */
+export function retryLocalPull(id: string): Promise<Build> {
+  return postJSON<Build>(ROUTES.buildLocalPull(id), {});
 }
 
 /** 查询后台重推的实时进度，供包卡片画进度条。 */

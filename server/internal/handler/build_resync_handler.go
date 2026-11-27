@@ -34,6 +34,24 @@ func (h *BuildHandler) SyncToR2(w http.ResponseWriter, r *http.Request) error {
 	return OKWithStatus(w, http.StatusAccepted, build)
 }
 
+// RetryLocalPull 受理「重新下载到本机」。
+//
+// 与 SyncToR2 方向相反：那个把本机副本推上云端，这个把云端对象拉回本机。
+// 同样必须 POST——它会真实下载上百 MB 并改变服务端状态。
+//
+// 返回 200 而非 202：调用后立刻回状态（已置为重新排队），
+// 前端据此马上能画出进度条，不必等第一次轮询。
+func (h *BuildHandler) RetryLocalPull(w http.ResponseWriter, r *http.Request) error {
+	id := chi.URLParam(r, "id")
+	AttachLogFields(r, "id="+id)
+
+	build, err := h.svc.RetryLocalPull(r.Context(), id, authctx.From(r.Context()))
+	if err != nil {
+		return err
+	}
+	return OK(w, build)
+}
+
 // SyncProgress 返回一次后台重推的实时进度。
 func (h *BuildHandler) SyncProgress(w http.ResponseWriter, r *http.Request) error {
 	id := chi.URLParam(r, "id")

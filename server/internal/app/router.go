@@ -87,6 +87,7 @@ var allowedMethods = map[string]string{
 	contract.RouteBuildVersions:       "GET",
 	contract.RouteBuildFile:           "GET",
 	contract.RouteBuildSyncToR2:       "POST",
+	contract.RouteBuildLocalPull:      "POST",
 	contract.RouteBuildSyncProgress:   "GET",
 	contract.RouteSharedBuild:         "GET",
 	contract.RouteSharedBuildVersions: "GET",
@@ -131,7 +132,7 @@ func allowedMethodsFor(req *http.Request) string {
 	case path == contract.RouteStage, path == contract.RouteUploadTicket,
 		path == contract.RouteStageFromR2, path == contract.RouteUploadAbort:
 		return "POST"
-	case strings.HasSuffix(path, "/sync-to-r2"):
+	case strings.HasSuffix(path, "/sync-to-r2"), strings.HasSuffix(path, "/local-pull"):
 		// 必须排在下面的通用前缀判断之前：重推是写操作，
 		// 落到默认的 GET 会让 405 响应给出错误的 Allow 头。
 		return "POST"
@@ -179,6 +180,8 @@ func NewRouter(d Deps) http.Handler {
 			private.Get("/builds/{id}/file", middleware.Wrap(d.Builds.DownloadFile))
 			// 重推已淘汰的包：POST 因为会真实上传对象并改状态，不可被缓存或预取。
 			private.Post("/builds/{id}/sync-to-r2", middleware.Wrap(d.Builds.SyncToR2))
+			// 反向操作：把 R2 对象重新拉回本机，仅用于失败后主动重试。
+			private.Post("/builds/{id}/local-pull", middleware.Wrap(d.Builds.RetryLocalPull))
 			// 查询重推进度：GET 只读，供包卡片画进度条与成功/失败状态。
 			private.Get("/builds/{id}/sync-progress", middleware.Wrap(d.Builds.SyncProgress))
 			// 发布/暂存：提交时项目在请求体里，由 handler 内部判定 build.write

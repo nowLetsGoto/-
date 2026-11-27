@@ -1335,6 +1335,13 @@ export interface components {
              */
             r2State: "pending" | "synced" | "evicted" | "failed";
             /**
+             * Format: int64
+             * @description 已下载到本机的字节数，配合 fileSize 可算进度百分比。 存数据库而不是只放内存：切换菜单、换标签页或刷新后仍需继续显示。
+             */
+            localPulledBytes: number;
+            /** @description 拉回失败的可读原因，失败时前端显示红字提示。 只有文案，不含堆栈或内部路径——它是给管理员的操作依据。 */
+            localError: string;
+            /**
              * @description 本机留底状态。present 表示本机已归档，可回落本地流式下载； absent 表示尚无副本（直传刚完成，等待拉回）。 与 r2State 各自独立：一个包可以「R2 有本机没有」，也可以「本机有 R2 已淘汰」。
              * @enum {string}
              */

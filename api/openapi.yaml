@@ -1536,6 +1536,46 @@ paths:
         '500':
           $ref: '#/components/responses/InternalError'
 
+  /builds/{id}/local-pull:
+    post:
+      operationId: retryLocalPull
+      summary: 重新把包从对象存储下载到本机
+      description: >
+        与 sync-to-r2 方向相反：那个把本机副本推上云端，这个把云端对象拉回本机。
+        
+        用于失败后的主动重试。自动重试要等下一轮巡检（最长 2 小时），
+        管理员看到红色失败提示时，若只能干等，这个提示就成了信息死路。
+        
+        异步执行：整包可能上百 MB，同步等待会被 Cloudflare 的 100 秒代理超时切断。
+        响应立刻返回已置为重新排队的包，前端后续轮询 localPulledBytes 看进度。
+        
+        不可重试的情况：对象不在桶里（非 synced）、本机已有副本、正在下载中。
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: 已受理并重新排队
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [code, data]
+                properties:
+                  code:
+                    type: integer
+                  data:
+                    $ref: '#/components/schemas/Build'
+        '400':
+          description: 状态不允许重试（不在 R2 / 已有副本 / 正在下载）
+        '404':
+          description: 包不存在或无权访问
+
   /builds/{id}/sync-to-r2:
     post:
       operationId: syncBuildToR2
@@ -2867,6 +2907,8 @@ components:
         - pinKind
         - r2State
         - localState
+        - localPulledBytes
+        - localError
         - createdAt
       properties:
         id:
@@ -2923,6 +2965,17 @@ components:
             对象存储侧状态。synced 表示对象在桶里、下载走 CDN 直链；
             evicted 表示已被容量淘汰，此时 r2_key 仍保留供「同步到 R2」重推复用。
             前端据此决定是否显示重推按钮。
+        localPulledBytes:
+          type: integer
+          format: int64
+          description: >
+            已下载到本机的字节数，配合 fileSize 可算进度百分比。
+            存数据库而不是只放内存：切换菜单、换标签页或刷新后仍需继续显示。
+        localError:
+          type: string
+          description: >
+            拉回失败的可读原因，失败时前端显示红字提示。
+            只有文案，不含堆栈或内部路径——它是给管理员的操作依据。
         localState:
           type: string
           enum: [absent, pulling, present, failed]

@@ -291,6 +291,9 @@ const (
 	// RouteBuildSyncToR2 把已被容量淘汰的包重新推到对象存储。
 	// 本机是权威副本，淘汰只回收 R2——想恢复 CDN 加速下载就走这个接口。
 	RouteBuildSyncToR2 = APIPrefix + "/builds/{id}/sync-to-r2"
+	// RouteBuildLocalPull 重新触发「下载到本机」。失败态用它主动重试，
+	// 不必等下一轮巡检（最长 2 小时）。
+	RouteBuildLocalPull = APIPrefix + "/builds/{id}/local-pull"
 	// RouteBuildSyncProgress 查询一次后台重推的上传进度，供包卡片显示进度条。
 	RouteBuildSyncProgress   = APIPrefix + "/builds/{id}/sync-progress"
 	RouteSharedBuild         = APIPrefix + "/public/builds/{id}"
@@ -348,7 +351,7 @@ var APIRoutes = []string{
 	RoutePeople, RoutePersonByID, RouteTeams, RouteTeamByID,
 	RoutePermissions, RouteMenus, RouteRoles, RouteRoleByID,
 	RouteSettings, RouteWebhookTest, RouteAPIKeyRotate, RouteOpenBuilds, RouteStorageUsage,
-	RouteStage, RouteUploadTicket, RouteStageFromR2, RouteUploadAbort, RouteBuilds, RouteBuildByID, RouteBuildVersions, RouteBuildFile, RouteBuildSyncToR2, RouteBuildSyncProgress, RouteSharedBuild, RouteSharedBuildVersions, RouteSharedBuildFile, RouteSharedDownloadCount, RouteHealth,
+	RouteStage, RouteUploadTicket, RouteStageFromR2, RouteUploadAbort, RouteBuilds, RouteBuildByID, RouteBuildVersions, RouteBuildFile, RouteBuildSyncToR2, RouteBuildLocalPull, RouteBuildSyncProgress, RouteSharedBuild, RouteSharedBuildVersions, RouteSharedBuildFile, RouteSharedDownloadCount, RouteHealth,
 }
 
 // Webhook 可推送字段的键：与 api/openapi.yaml 的 x-webhook-fields 键集合一致。

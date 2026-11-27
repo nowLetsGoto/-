@@ -1891,6 +1891,9 @@ ul {
 }
 
 .package-card {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
   min-width: 0;
   padding: 20px;
   border: 1px solid var(--color-border);
@@ -2125,8 +2128,11 @@ ul {
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  margin-top: 18px;
-  padding-top: 12px;
+
+  // 卡片是 flex 列，auto 把整段挤到底部；有进度条的卡片也只是压缩上方空白，
+  // 不会让同排卡片的操作区高低不齐。padding-top 保证与上方内容的最小间距。
+  margin-top: auto;
+  padding-top: 18px;
   border-top: 1px solid var(--color-border-soft);
 }
 
@@ -5324,4 +5330,33 @@ code {
    用主色会让人误以为和上面那条同等紧要。 */
 .storage-local-fill {
   background: var(--color-muted);
+}
+
+/* 进度条右侧的重试按钮：只在下载失败时出现。
+   做成紧凑的文字按钮而不是标准 .button：
+   它嵌在 12px 的标签行里，标准按钮会撑高整行、破坏卡片栅格。 */
+.package-sync-retry {
+  flex: none;
+  padding: 2px 10px;
+  border: 1px solid currentColor;
+  border-radius: 999px;
+  background: transparent;
+  color: inherit;
+  font-size: 12px;
+  line-height: 1.4;
+  cursor: pointer;
+  transition:
+    background-color 0.15s ease,
+    opacity 0.15s ease;
+
+  /* 用 currentColor 继承父级的失败红：按钮与提示文字同色，
+     视觉上是一个整体，而不是两个各自表态的元素。 */
+  &:hover:not(:disabled) {
+    background: var(--color-danger-bg);
+  }
+
+  &:disabled {
+    cursor: default;
+    opacity: 0.6;
+  }
 }

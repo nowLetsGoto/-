@@ -25,6 +25,8 @@ import { Empty, ErrorState } from '../../components/States';
 import { Icon } from '../../components/icons';
 import { useDeleteAction } from '../../hooks/useDeleteAction';
 import { useSyncToR2 } from '../../hooks/useSyncToR2';
+import { useLocalProgressPolling } from '../../hooks/useLocalProgressPolling';
+import { useRetryLocalPull } from '../../hooks/useRetryLocalPull';
 import { useEnvironment } from '../../hooks/useEnvironment';
 import { useMe } from '../../hooks/useMe';
 import { usePackageBuilds } from '../../hooks/usePackageBuilds';
@@ -88,11 +90,28 @@ function PackageList({ projectKey }: { projectKey: string }): JSX.Element {
     restore: restoreSync,
   } = useSyncToR2(onSyncResult);
 
+  // 重试下载到本机：结果同样走 notice，成功时刷新列表让进度条重新起步。
+  const { retryingID, retry: retryPull } = useRetryLocalPull(
+    useCallback(
+      (error: string) => {
+        setNotice(error || '已重新开始下载到本机。');
+        if (!error) reloadBuilds();
+      },
+      [reloadBuilds],
+    ),
+  );
+
   // 切菜单回来会重新挂载列表页，内存中的进度状态随之消失。
   // 服务端仍保留 10 分钟进度，按包 id 恢复即可让按钮继续禁用、进度条继续显示。
   useEffect(() => {
     restoreSync(builds.items.map((build) => build.id));
   }, [builds.items, restoreSync]);
+
+  // 有包正在下载到本机时定时刷新：进度存在数据库里，
+  // 前端不自己累加，只按服务端的数字重画。
+  // 用静默刷新：普通 reload 会清空列表并闪骨架屏，
+  // 5 秒一次的话页面等于一直在闪烁。
+  useLocalProgressPolling(builds.items, builds.reloadSilently);
 
   const setFilter = (name: string, value: string): void => {
     const next = new URLSearchParams(params);
@@ -263,6 +282,8 @@ function PackageList({ projectKey }: { projectKey: string }): JSX.Element {
                 }
                 onSync={writable ? () => startSync(build.id) : undefined}
                 progress={syncProgress[build.id]}
+                onRetryPull={writable ? () => retryPull(build.id) : undefined}
+                retryingPull={retryingID === build.id}
               />
             ))}
           </div>
@@ -328,6 +349,50 @@ function PackageList({ projectKey }: { projectKey: string }): JSX.Element {
   );
 }
 
+/**
+ * 把「下载到本机」的服务端状态翻译成进度条数据；不该显示时返回 undefined。
+ *
+ * 为什么要翻译而不是直接用：服务端的 localState 是业务语义
+ * （absent / pulling / present / failed），进度条只认
+ * running / succeeded / failed 三态。这层映射让两边各说各的话，
+ * 将来服务端加状态也不会把前端组件改乱。
+ *
+ * 三种不显示的情况，各有原因：
+ *   - absent：还没开始下载，显示一条空进度条只会让人以为卡住了；
+ *   - 没有 r2 对象（pending）：本机拉不到，进度条没有意义；
+ *   - present 但没有下载记录（本地原本就有文件）：没发生过下载，
+ *     不该凭空冒出一条「下载完成」。
+ */
+function localProgressOf(build: Build): SyncProgress | undefined {
+  // 没有 R2 对象就没有「下载」这回事——字节都不在桶里。
+  if (build.r2State === 'pending') {
+    return undefined;
+  }
+  switch (build.localState) {
+    case 'pulling':
+      return {
+        state: 'running',
+        bytes: build.localPulledBytes,
+        total: build.fileSize,
+        error: '',
+      };
+    case 'present':
+      // 只有真的下载过（字节数 > 0）才显示完成条，避免给存量包凭空加一条绿条。
+      return build.localPulledBytes > 0
+        ? { state: 'succeeded', bytes: build.fileSize, total: build.fileSize, error: '' }
+        : undefined;
+    case 'failed':
+      return {
+        state: 'failed',
+        bytes: build.localPulledBytes,
+        total: build.fileSize,
+        error: build.localError,
+      };
+    default:
+      return undefined;
+  }
+}
+
 function AppMark({ build }: { build: Build }): JSX.Element {
   return build.projectIconUrl ? (
     <img className="package-mark" src={build.projectIconUrl} alt="" />
@@ -338,8 +403,27 @@ function AppMark({ build }: { build: Build }): JSX.Element {
   );
 }
 
-/** 包卡片标题下的同步进度条：进行中按字节推进，成功绿色、失败红色。 */
-function SyncProgressBar({ progress }: { progress: SyncProgress }): JSX.Element {
+/**
+ * 卡片上的进度条：进行中按字节推进，成功绿色、失败红色。
+ *
+ * 同时服务「上传到 R2」与「下载到本机」两个方向——它们交互完全同构，
+ * 只是文案与数据来源不同。用一个组件 + 不同 label，比复制一份再各自演化更好维护。
+ * label 从外部传入而非放进 SyncProgress：那是接口契约，
+ * 不该为了展示而多一个只有前端才知道的字段。
+ */
+function SyncProgressBar({
+  progress,
+  label: verb,
+  onRetry,
+  retrying,
+}: {
+  progress: SyncProgress;
+  label: string;
+  /** 仅失败时使用：给出则可重试，不传则只显示失败原因。 */
+  onRetry?: () => void;
+  /** 重试请求进行中，用于禁用按钮避免连点。 */
+  retrying?: boolean;
+}): JSX.Element {
   const running = progress.state === 'running';
   const percent = running
     ? progress.total > 0
@@ -348,12 +432,12 @@ function SyncProgressBar({ progress }: { progress: SyncProgress }): JSX.Element 
     : 100;
   const label =
     progress.state === 'succeeded'
-      ? '已同步到 R2'
+      ? `${verb}完成`
       : progress.state === 'failed'
-        ? `同步失败：${progress.error || '请稍后重试'}`
+        ? `${verb}失败：${progress.error || '请稍后重试'}`
         : progress.total > 0
-          ? `同步到 R2 ${formatBytes(progress.bytes)} / ${formatBytes(progress.total)}`
-          : '同步到 R2，准备中…';
+          ? `${verb} ${formatBytes(progress.bytes)} / ${formatBytes(progress.total)}`
+          : `${verb}，准备中…`;
 
   return (
     <div
@@ -366,7 +450,21 @@ function SyncProgressBar({ progress }: { progress: SyncProgress }): JSX.Element 
     >
       <div className="package-sync-label">
         <span>{label}</span>
+        {/* 右侧固定占位：运行中显示百分比，失败时换成重试按钮。
+            两者不共存——失败后进度已停，再显示一个静止的百分比没有意义，
+            而这个位置正是用户视线落点，放重试最容易被找到。 */}
         {running ? <span>{percent}%</span> : null}
+        {progress.state === 'failed' && onRetry ? (
+          <button
+            className="package-sync-retry"
+            type="button"
+            onClick={onRetry}
+            disabled={retrying}
+            aria-label={`重试${verb}`}
+          >
+            {retrying ? '重试中…' : '重试'}
+          </button>
+        ) : null}
       </div>
       <div className="package-sync-track">
         <div className="package-sync-fill" style={{ width: `${percent}%` }} />
@@ -382,6 +480,8 @@ function PackageCard({
   onDelete,
   onSync,
   progress,
+  onRetryPull,
+  retryingPull,
 }: {
   build: Build;
   latest: boolean;
@@ -389,7 +489,13 @@ function PackageCard({
   onDelete?: () => void;
   onSync?: () => void;
   progress?: SyncProgress;
+  /** 下载失败时提供重试入口；无写权限时不传，卡片只显示失败原因。 */
+  onRetryPull?: () => void;
+  retryingPull?: boolean;
 }): JSX.Element {
+  // 下载到本机的进度全部由服务端字段派生，前端不维护副本：
+  // 这样切菜单、换标签页、刷新页面看到的都是同一份事实。
+  const localProgress = localProgressOf(build);
   const syncing = progress?.state === 'running';
   const justSynced = progress?.state === 'succeeded';
   return (
@@ -411,7 +517,19 @@ function PackageCard({
           {platformLabel(build.platform)}
         </span>
       </div>
-      {progress && progress.state !== 'idle' ? <SyncProgressBar progress={progress} /> : null}
+      {/* 上传到 R2 的进度：用户点「同步到 R2」后出现，终态保留约 10 分钟。 */}
+      {progress && progress.state !== 'idle' ? (
+        <SyncProgressBar progress={progress} label="同步到 R2" />
+      ) : null}
+      {/* 下载到本机的进度：数据来自数据库，切菜单回来仍在，终态永久保留。 */}
+      {localProgress ? (
+        <SyncProgressBar
+          progress={localProgress}
+          label="下载到本机"
+          onRetry={onRetryPull}
+          retrying={retryingPull}
+        />
+      ) : null}
       <div className="package-version-row">
         <div className="package-version">
           <strong title={build.version}>{build.version}</strong>
