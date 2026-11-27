@@ -6,9 +6,9 @@
 #   2. com.dandelion.vite       本地开发前端（5173），崩溃自动重启
 #   3. com.dandelion.tunnel     cloudflared 隧道，断线自动重连
 #   4. com.dandelion.keepawake  防休眠断言，阻止系统空闲休眠
-# 输入：~/Library/LaunchAgents/ 下已存在的四个 plist。
+# 输入：可缺省——plist 不存在时由 scripts/bootstrap-plists.py 按本机环境生成。
 # 输出：四个服务长期运行，登录时自启、崩溃自恢复。
-# 边界：只做 launchctl 注册与清理旧进程，不改 plist、不碰项目代码。
+# 边界：只做「生成 → 注册 → 校验」，不启停业务进程、不改项目代码。
 #
 # 用法：  bash scripts/install-autostart.sh
 # 卸载：  bash scripts/uninstall-autostart.sh
@@ -62,18 +62,38 @@ print(f"  已直接托管 {cfg['Label']}（PID {p.pid}）")
 PY
 }
 
+# 第零步之一：确保 plist 存在且指向本机路径。
+#
+# 原先这里是「缺一个就 exit 1」，但 plist 从来不在仓库里——它只存在于
+# 原作者那台机器的 ~/Library/LaunchAgents。换台电脑 clone 下来跑本脚本，
+# 第一句就退出，脚本等于不可用。
+#
+# 现在交给 bootstrap-plists.py：已存在且路径正确的保持不动（不冲掉手工调整），
+# 缺失或路径过期的按本机环境重新生成。
+echo "检查 LaunchAgent 配置..."
+if [ ! -f "${ROOT}/scripts/bootstrap-plists.py" ]; then
+  echo "缺少 ${ROOT}/scripts/bootstrap-plists.py，无法生成 plist" >&2
+  exit 1
+fi
+python3 "${ROOT}/scripts/bootstrap-plists.py" "${ROOT}"
+
+# 生成后仍要回查：脚本可能因权限问题没写成功。
 for label in $LABELS; do
   if [ ! -f "${AGENTS}/${label}.plist" ]; then
-    echo "缺少 ${AGENTS}/${label}.plist，请先生成" >&2
+    echo "生成失败：${AGENTS}/${label}.plist 仍不存在" >&2
     exit 1
   fi
 done
 
-# 第零步：把可执行文件同步到 ~/dandelion-runtime。
+# 第零步之二：把可执行文件同步到 ~/dandelion-runtime。
 # 原因：macOS 的 TCC 保护 Desktop/Documents/Downloads，launchd 启动的程序
 # 执行这些目录下的二进制会被内核拒绝（posix_spawn: Operation not permitted，
 # 表现为 launchd 报 EX_CONFIG 78）。把程序放到家目录根部即可绕开。
-# 数据（storage）仍留在仓库目录，通过绝对路径 STORAGE_DIR 引用。
+#
+# 数据与日志同理，都不放仓库：仓库通常在桌面，任何持续读写都会反复触发
+# 授权弹窗，且授权范围是整个桌面。两者统一收到家目录：
+#   数据 → ~/dandelion-data/storage
+#   日志 → ~/dandelion-runtime/logs
 RUNTIME="$HOME/dandelion-runtime"
 echo "同步运行时到 ${RUNTIME} ..."
 mkdir -p "${RUNTIME}/logs"
@@ -157,7 +177,9 @@ echo ""
 echo "--- 错误日志 ---"
 for label in $LABELS; do
   short="${label#com.dandelion.}"
-  err="${ROOT}/logs/${short}.err.log"
+  # 日志统一在 runtime 下（见第零步之二），不在仓库里：
+  # 仓库常在桌面，往那里持续写日志会触发 TCC 授权弹窗。
+  err="${RUNTIME}/logs/${short}.err.log"
   if [ -s "$err" ]; then
     echo "[$label]"; tail -10 "$err"
   fi

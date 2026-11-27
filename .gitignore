@@ -1,4 +1,8 @@
 node_modules/
+
+# Python 编译缓存（scripts/*.py 运行后生成）。
+__pycache__/
+*.pyc
 dist/
 bin/
 .env
@@ -10,6 +14,12 @@ server/public/*
 
 # 运行时数据目录（含 tmp 暂存与 uploads 正式包），不入库。
 /storage/
+
+# 日志目录。*.log 只挡住文件本身，目录里若出现非 .log 的产物
+# （崩溃转储、临时文件）仍会被 git 看到，这里整体忽略。
+# 服务现在把日志写在 ~/dandelion-runtime/logs（桌面受 TCC 保护），
+# 但仓库内可能留有旧日志，统一挡掉。
+/logs/
 
 # 迁移前的数据库快照：含真实用户数据，只留本地，绝不入库。
 .backup/
