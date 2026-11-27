@@ -66,12 +66,23 @@ func (s *BuildService) PullLocal(ctx context.Context, mode contract.SessionMode,
 
 	if err := s.pullLocalToDisk(ctx, repo, id); err != nil {
 		log.Printf("本机留底失败 id=%s err=%v（下一轮巡检会重试）", id, err)
+		// 先记原因再改状态：卡片要同时看到「失败」和「为什么失败」，
+		// 顺序反了会让前端在两次查询之间读到「失败但没有原因」。
+		s.setLocalError(repo, id, err.Error())
 		s.setLocalState(repo, id, contract.LocalFailed)
 		return
 	}
 
+	s.setLocalError(repo, id, "") // 成功时清掉上一次的失败原因
 	s.setLocalState(repo, id, contract.LocalPresent)
 	log.Printf("本机留底完成 id=%s", id)
+}
+
+// setLocalError 记录失败原因，失败只记日志。
+func (s *BuildService) setLocalError(repo *repository.BuildRepository, id, reason string) {
+	if err := repo.SetLocalError(context.Background(), id, reason); err != nil {
+		log.Printf("记录失败原因失败 id=%s err=%v", id, err)
+	}
 }
 
 // setLocalState 回写状态，失败只记日志。
@@ -125,7 +136,8 @@ func (s *BuildService) pullLocalToDisk(ctx context.Context, repo *repository.Bui
 
 	// 临时文件与目标同目录：跨文件系统 rename 会退化成复制，那样就没有原子性。
 	tmp := dst + ".pulling"
-	written, err := s.downloadToFile(ctx, target.R2Key, tmp)
+	onProgress := func(pulled int64) { s.reportProgress(repo, target.ID, pulled) }
+	written, err := s.downloadToFile(ctx, target.R2Key, tmp, target.FileSize, onProgress)
 	if err != nil {
 		_ = os.Remove(tmp)
 		return err
@@ -134,6 +146,9 @@ func (s *BuildService) pullLocalToDisk(ctx context.Context, repo *repository.Bui
 		_ = os.Remove(tmp)
 		return fmt.Errorf("拉回大小不一致：期望 %d 实际 %d", target.FileSize, written)
 	}
+	// 落盘后再补一次满进度：progressWriter 按台阶上报，最后一段可能没跨过台阶，
+	// 前端就会停在 98% 而不是 100%。
+	s.reportProgress(repo, target.ID, written)
 	if err := os.Rename(tmp, dst); err != nil {
 		_ = os.Remove(tmp)
 		return fmt.Errorf("落盘失败: %w", err)
@@ -141,16 +156,28 @@ func (s *BuildService) pullLocalToDisk(ctx context.Context, repo *repository.Bui
 	return nil
 }
 
-// downloadToFile 把 R2 对象写进指定路径，返回写入字节数。
+// reportProgress 上报进度，失败只记日志。
+//
+// 用独立 context 而非下载的 ctx：下载结束时 ctx 可能已被取消，
+// 用它写库会让最后一笔进度（恰恰是 100%）永远写不进去。
+func (s *BuildService) reportProgress(repo *repository.BuildRepository, id string, pulled int64) {
+	if err := repo.SetLocalProgress(context.Background(), id, pulled); err != nil {
+		log.Printf("更新下载进度失败 id=%s pulled=%d err=%v", id, pulled, err)
+	}
+}
+
+// downloadToFile 把 R2 对象写进指定路径，按进度回调上报已下载字节。
 //
 // 失败时不在内部删半截文件：清理属于收尾，与下载不是同一件事，
 // 混在一起会让错误路径难以追踪。由调用方统一处理。
-func (s *BuildService) downloadToFile(ctx context.Context, key, path string) (int64, error) {
+func (s *BuildService) downloadToFile(
+	ctx context.Context, key, path string, total int64, onProgress func(int64),
+) (int64, error) {
 	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
 	if err != nil {
 		return 0, fmt.Errorf("创建临时文件失败: %w", err)
 	}
-	written, copyErr := s.r2.DownloadTo(ctx, key, f)
+	written, copyErr := s.r2.DownloadTo(ctx, key, newProgressWriter(f, total, onProgress))
 	closeErr := f.Close()
 	if copyErr != nil {
 		return 0, fmt.Errorf("从对象存储下载失败: %w", copyErr)

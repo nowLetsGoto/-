@@ -34,6 +34,8 @@ export interface UploadTicket {
 /** 契约路径的前端唯一镜像；页面不得自行拼 /api/v1 路径。 */
 const ROUTES = {
   sharedBuild: (id: string): string => `/api/v1/public/builds/${encodeURIComponent(id)}`,
+  sharedDownloadCount: (id: string): string =>
+    `/api/v1/public/builds/${encodeURIComponent(id)}/download-count`,
   sharedVersions: (id: string): string =>
     `/api/v1/public/builds/${encodeURIComponent(id)}/versions`,
   stage: '/api/v1/builds/stage',
@@ -189,6 +191,12 @@ export function getSyncProgress(id: string): Promise<SyncProgress> {
 /** 独立分享读取当前授权版本，不依赖登录态。 */
 export function getSharedBuild(id: string, token: string): Promise<DownloadBuild> {
   return getShared<DownloadBuild>(ROUTES.sharedBuild(id), token);
+}
+
+/** 给直接走 CDN 的分享下载补计数；凭证放 query，与文件接口保持一致。 */
+export function recordSharedDownload(id: string, token: string): Promise<void> {
+  const query = new URLSearchParams({ shareToken: token });
+  return postJSON<void>(`${ROUTES.sharedDownloadCount(id)}?${query.toString()}`, {});
 }
 
 /** 先验证来源分享，再返回同应用的其它有效分享版本及各自的目标地址。 */

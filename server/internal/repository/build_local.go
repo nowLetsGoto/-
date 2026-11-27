@@ -142,3 +142,27 @@ func (r *BuildRepository) SetLocalState(ctx context.Context, id, state string) e
 	}
 	return nil
 }
+
+// SetLocalProgress 记录已下载字节数，供前端渲染进度条。
+//
+// 只写这一个字段：进度是纯展示信息，不该顺带改状态——
+// 什么时候算「拉完了」由 PullLocal 统一判断，两个地方都能改状态就会打架。
+func (r *BuildRepository) SetLocalProgress(ctx context.Context, id string, pulled int64) error {
+	if _, err := r.db.ExecContext(ctx,
+		`UPDATE `+r.table+` SET local_pulled_bytes = $2 WHERE id = $1`, id, pulled); err != nil {
+		return fmt.Errorf("更新下载进度失败: %w", err)
+	}
+	return nil
+}
+
+// SetLocalError 记录拉回失败的原因，供卡片显示红字提示。
+//
+// 单独一个方法而不塞进 SetLocalState：状态与原因是两件事，
+// 成功时没有原因（传空串即可），失败时两者才一起写。
+func (r *BuildRepository) SetLocalError(ctx context.Context, id, reason string) error {
+	if _, err := r.db.ExecContext(ctx,
+		`UPDATE `+r.table+` SET local_error = $2 WHERE id = $1`, id, reason); err != nil {
+		return fmt.Errorf("更新失败原因失败: %w", err)
+	}
+	return nil
+}

@@ -391,6 +391,7 @@ function PackageCard({
   progress?: SyncProgress;
 }): JSX.Element {
   const syncing = progress?.state === 'running';
+  const justSynced = progress?.state === 'succeeded';
   return (
     <article
       className="package-card"
@@ -446,9 +447,10 @@ function PackageCard({
           <Icon name="external" size={14} />
         </Link>
         <div className="package-actions">
-          {/* 只在「已被容量淘汰」时出现：此时对象已离开 R2，下载回落到本机流式（较慢）。
-              其他状态下重推没有意义——synced 对象还在桶里，pending 属于上传中间态。 */}
-          {onSync && build.r2State === 'evicted' ? (
+          {/* 只在「对象确实不在 R2」时出现：巡检淘汰为 evicted 才需要人工重推。
+              列表可能有延迟：刚同步成功时后端状态已是 synced，但列表还没刷新，
+              因此同时用进度终态挡住按钮，避免用户重复上传。 */}
+          {onSync && build.r2State === 'evicted' && !justSynced ? (
             <Button
               className="button button-quiet"
               type="button"

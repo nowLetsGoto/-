@@ -190,6 +190,15 @@ func (h *BuildHandler) SharedDownloadFile(w http.ResponseWriter, r *http.Request
 	return h.streamFile(w, r, id, mode, ref)
 }
 
+// SharedDownloadCount 给绕过本站中转的 CDN 直链补记一次下载。
+func (h *BuildHandler) SharedDownloadCount(w http.ResponseWriter, r *http.Request) error {
+	shareHeaders(w)
+	if err := h.svc.RecordSharedDownload(r.Context(), chi.URLParam(r, "id"), shareToken(r)); err != nil {
+		return err
+	}
+	return OK(w, nil)
+}
+
 // 详情使用请求头，原生文件下载使用 query；同时出现不一致凭证时失败关闭。
 func shareToken(r *http.Request) string {
 	header := r.Header.Get("X-Share-Token")

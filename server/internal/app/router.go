@@ -91,6 +91,7 @@ var allowedMethods = map[string]string{
 	contract.RouteSharedBuild:         "GET",
 	contract.RouteSharedBuildVersions: "GET",
 	contract.RouteSharedBuildFile:     "GET",
+	contract.RouteSharedDownloadCount: "POST",
 }
 
 // allowedMethodsFor 返回该请求应回填的 Allow 值。
@@ -136,6 +137,8 @@ func allowedMethodsFor(req *http.Request) string {
 		return "POST"
 	case strings.HasSuffix(path, "/sync-progress"):
 		return "GET"
+	case strings.HasSuffix(path, "/download-count"):
+		return "POST"
 	case strings.HasPrefix(path, contract.RouteBuilds+"/"):
 		if strings.Count(strings.TrimPrefix(path, contract.RouteBuilds+"/"), "/") == 0 {
 			return "GET, PUT, DELETE"
@@ -157,6 +160,7 @@ func NewRouter(d Deps) http.Handler {
 		api.Get("/public/builds/{id}", middleware.Wrap(d.Builds.SharedGet))
 		api.Get("/public/builds/{id}/versions", middleware.Wrap(d.Builds.SharedVersions))
 		api.Get("/public/builds/{id}/file", middleware.Wrap(d.Builds.SharedDownloadFile))
+		api.Post("/public/builds/{id}/download-count", middleware.Wrap(d.Builds.SharedDownloadCount))
 
 		// 外部系统上传：X-API-Key 鉴权，与管理端登录态互不影响。
 		api.With(apikey.Require(d.APIKey)).Post("/open/builds", middleware.Wrap(d.Open.Upload))

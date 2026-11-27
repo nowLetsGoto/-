@@ -169,6 +169,13 @@ BEGIN
     -- pulling 是中间态，进程若在下载中途被杀（部署重启、崩溃），状态会永远停在 pulling，
     -- 而巡检原先只捞 absent/failed，这些包再也不会被重试（实测卡过 18 小时）。
     EXECUTE format('ALTER TABLE %I.builds ADD COLUMN IF NOT EXISTS local_pulling_at TIMESTAMPTZ', s);
+    -- 已下载字节数：让前端能显示「下载到本机」的实时进度。
+    -- 存数据库而不是只放内存：管理员切换菜单再切回来、或换一个标签页，
+    -- 进度都该继续显示，内存态在页面卸载后就没了。
+    EXECUTE format('ALTER TABLE %I.builds ADD COLUMN IF NOT EXISTS local_pulled_bytes BIGINT NOT NULL DEFAULT 0', s);
+    -- 拉回失败原因：失败时卡片要显示可读的红字提示，
+    -- 而不只是一个红色图标——"为什么没下载成功"是管理员唯一能据此行动的信息。
+    EXECUTE format($q$ALTER TABLE %I.builds ADD COLUMN IF NOT EXISTS local_error TEXT NOT NULL DEFAULT ''$q$, s);
     -- 存量回填：已有 r2_key 的包，其对象就在桶里，用 file_size 作为占用估值为起点。
     -- 只填 r2_bytes=0 的行，重复执行不会覆盖 Worker 后续测得的精确值。
     EXECUTE format($q$

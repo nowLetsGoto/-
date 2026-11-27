@@ -136,6 +136,7 @@ func (s *BuildService) GetShared(ctx context.Context, id, token string) (contrac
 		BuildNumber: b.BuildNumber, Changelog: b.Changelog, FileSize: b.FileSize,
 		FileExt: b.FileExt, DownloadCount: b.DownloadCount, CreatedAt: b.CreatedAt,
 		DownloadPagePath: b.DownloadPagePath, DownloadPageURL: b.DownloadPageURL, DownloadFileURL: b.DownloadFileURL,
+		DownloadDirectURL: s.SharedDirectURL(b),
 	}, nil
 }
 
@@ -150,6 +151,20 @@ func (s *BuildService) ResolveSharedFile(ctx context.Context, id, token string) 
 		s.syncToR2Async(build, mode)
 	}
 	return ref, mode, err
+}
+
+// RecordSharedDownload 给走 CDN 直链的下载补一次计数。
+//
+// 分享页用了直链就不再请求本站文件接口，原本在那里的计数会丢失。
+// 这里只做两件事：校验分享凭证、记录下载；校验复用 sharedBuild，
+// 避免另写一套凭证判断而出现两条规则。
+func (s *BuildService) RecordSharedDownload(ctx context.Context, id, token string) error {
+	_, mode, err := s.sharedBuild(ctx, id, token)
+	if err != nil {
+		return err
+	}
+	s.RecordDownload(id, mode)
+	return nil
 }
 
 // fillShareURLs 批量签发已有有效授权，避免列表逐包查询；撤销后不会自动创建新授权。

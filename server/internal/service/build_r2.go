@@ -59,6 +59,23 @@ func (s *BuildService) R2SignedURL(ctx context.Context, ref contract.FileRef) st
 	return url
 }
 
+// SharedDirectURL 为分享页返回可直接使用的 CDN 直链。
+//
+// 只在对象确实已同步且配置了公开域名时返回：公开直链不会过期，适合放进详情 DTO。
+// 私有桶的签名链接有 TTL，塞进页面会在用户停留久后失效，那种情况仍走
+// /public/builds/{id}/file 在点击瞬间签发。
+func (s *BuildService) SharedDirectURL(b contract.Build) string {
+	if s.r2 == nil || !s.r2.IsPublicCDN() || b.R2State != contract.R2StateSynced || b.R2Key == "" {
+		return ""
+	}
+	url, err := s.r2.PublicURL(b.R2Key)
+	if err != nil {
+		log.Printf("R2 生成分享直链失败 key=%s err=%v", b.R2Key, err)
+		return ""
+	}
+	return url
+}
+
 // syncToR2 把单个包镜像到 R2 并回写 r2_key。同步执行，由调用方决定是否异步。
 //
 // 幂等判据是 r2_state 而非 r2_key：淘汰只把状态改成 evicted 并保留 key

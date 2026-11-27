@@ -17,31 +17,33 @@ import { formatBytes } from '../utils/format';
 
 /** 用量超过这个比例就转成警示色，让管理员在触顶前有反应时间。 */
 const WARN_RATIO = 0.8;
+/** 轮询间隔：同步完成是后台任务，页面停留期间也要及时反映新的 R2 占用。 */
+const REFRESH_INTERVAL_MS = 15 * 1000;
 
 export function StorageUsageBar(): JSX.Element | null {
   const [usage, setUsage] = useState<StorageUsage | null>(null);
-  const [failed, setFailed] = useState(false);
 
   useEffect(() => {
     let alive = true;
-    fetchStorageUsage()
-      .then((value) => {
-        if (alive) {
-          setUsage(value);
-        }
-      })
-      .catch(() => {
-        // 容量条是辅助信息：取不到就不显示，不能让它拖垮整个应用页。
-        if (alive) {
-          setFailed(true);
-        }
-      });
+    const load = (): void => {
+      fetchStorageUsage()
+        .then((value) => {
+          if (alive) setUsage(value);
+        })
+        .catch(() => {
+          // 容量条是辅助信息：保留上一次成功数据，首次失败则整条不显示。
+          // 不能因为一次瞬时抖动就让管理员看不到用量。
+        });
+    };
+    load();
+    const timer = window.setInterval(load, REFRESH_INTERVAL_MS);
     return () => {
       alive = false;
+      window.clearInterval(timer);
     };
   }, []);
 
-  if (failed || !usage || usage.quotaBytes <= 0) {
+  if (!usage || usage.quotaBytes <= 0) {
     return null;
   }
 

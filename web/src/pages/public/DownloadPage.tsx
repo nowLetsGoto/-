@@ -9,7 +9,7 @@ import type { MouseEvent } from 'react';
 import { useParams, useSearchParams } from 'react-router-dom';
 import { Collapse, QRCode } from '@seakoi/console-kit';
 import type { DownloadBuild, Environment, Platform, PublicBuildVersion } from '../../api/builds';
-import { isShareableUrl } from '../../api/builds';
+import { isShareableUrl, recordSharedDownload } from '../../api/builds';
 import { Button, Radio, Segmented } from '../../components/Controls';
 import { DetailDrawer } from '../../components/DetailDrawer';
 import {
@@ -216,19 +216,21 @@ function DownloadLink({
   disabled: boolean;
   onClick: (event: MouseEvent<HTMLAnchorElement>) => void;
 }): JSX.Element {
+  // 同步到 R2 且配了公开域名时直接下载 CDN；否则回落本站文件接口（会即时签名）。
+  const href = build.downloadDirectUrl || build.downloadFileUrl;
   return (
     <a
       className={`download-install${disabled ? ' is-disabled' : ''}`}
-      href={build.downloadFileUrl || undefined}
+      href={href || undefined}
       onClick={(event) => {
-        if (!build.downloadFileUrl) event.preventDefault();
+        if (!href) event.preventDefault();
         else onClick(event);
       }}
-      aria-disabled={disabled || !build.downloadFileUrl}
+      aria-disabled={disabled || !href}
     >
       <img src={downloadIcon} alt="" />
       <span>
-        {!build.downloadFileUrl
+        {!href
           ? '分享暂不可用'
           : disabled
             ? '正在准备下载…'
@@ -441,6 +443,11 @@ export function DownloadPage(): JSX.Element {
     if (downloadDisabled) {
       event.preventDefault();
       return;
+    }
+    // 直链绕过本站文件接口，原来的计数点不会触发；这里补一次。
+    // 计数是旁路，失败也不能拦住用户下载。
+    if (selectedBuild?.downloadDirectUrl && shareToken) {
+      void recordSharedDownload(selectedBuild.id, shareToken).catch(() => {});
     }
     setDownloadDisabled(true);
     clearTimeout(downloadTimer.current);

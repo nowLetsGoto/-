@@ -296,6 +296,8 @@ const (
 	RouteSharedBuild         = APIPrefix + "/public/builds/{id}"
 	RouteSharedBuildVersions = APIPrefix + "/public/builds/{id}/versions"
 	RouteSharedBuildFile     = APIPrefix + "/public/builds/{id}/file"
+	// RouteSharedDownloadCount 记录一次分享页直链下载，用于浏览器绕过本站中转时补计数。
+	RouteSharedDownloadCount = APIPrefix + "/public/builds/{id}/download-count"
 	RouteHealth              = "/healthz"
 	RouteDownloadPage        = "/d/{id}"
 )
@@ -346,7 +348,7 @@ var APIRoutes = []string{
 	RoutePeople, RoutePersonByID, RouteTeams, RouteTeamByID,
 	RoutePermissions, RouteMenus, RouteRoles, RouteRoleByID,
 	RouteSettings, RouteWebhookTest, RouteAPIKeyRotate, RouteOpenBuilds, RouteStorageUsage,
-	RouteStage, RouteUploadTicket, RouteStageFromR2, RouteUploadAbort, RouteBuilds, RouteBuildByID, RouteBuildVersions, RouteBuildFile, RouteBuildSyncToR2, RouteBuildSyncProgress, RouteSharedBuild, RouteSharedBuildVersions, RouteSharedBuildFile, RouteHealth,
+	RouteStage, RouteUploadTicket, RouteStageFromR2, RouteUploadAbort, RouteBuilds, RouteBuildByID, RouteBuildVersions, RouteBuildFile, RouteBuildSyncToR2, RouteBuildSyncProgress, RouteSharedBuild, RouteSharedBuildVersions, RouteSharedBuildFile, RouteSharedDownloadCount, RouteHealth,
 }
 
 // Webhook 可推送字段的键：与 api/openapi.yaml 的 x-webhook-fields 键集合一致。
@@ -1251,7 +1253,10 @@ type SharedBuild struct {
 	DownloadPagePath string `json:"downloadPagePath"`
 	DownloadPageURL  string `json:"downloadPageUrl"`
 	DownloadFileURL  string `json:"downloadFileUrl"`
-	CreatedAt        string `json:"createdAt"`
+	// DownloadDirectURL 是对象已同步到 R2 且配置了公开域名时的 CDN 直链。
+	// 分享页优先用它下载，跳过本站 302 中转；为空则回落到 DownloadFileURL。
+	DownloadDirectURL string `json:"downloadDirectUrl"`
+	CreatedAt         string `json:"createdAt"`
 }
 
 // PublicBuildVersion 是下载页环境、平台与版本选择的白名单投影：

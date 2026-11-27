@@ -74,17 +74,23 @@ export function usePublicDownload(id: string, shareToken: string | null) {
     Promise.all([shared ? getSharedBuild(id, shareToken) : getBuild(id), versionsRequest])
       .then(([build, result]) => {
         if (cancelled) return;
+        // 登录预览拿到的 Build 没有分享直链字段；统一补空串，让下游只认 DownloadBuild。
+        // 直链只在免登录分享里提供，内部预览仍走本站文件接口。
+        const view: DownloadBuild = {
+          ...build,
+          downloadDirectUrl: 'downloadDirectUrl' in build ? build.downloadDirectUrl : '',
+        };
         const current: PublicBuildVersion = {
-          id: build.id,
-          version: build.version,
-          buildNumber: build.buildNumber,
-          fileSize: build.fileSize,
-          changelog: build.changelog,
-          environment: build.environment,
-          platform: build.platform,
-          createdAt: build.createdAt,
-          downloadPagePath: build.downloadPagePath,
-          downloadPageUrl: build.downloadPageUrl,
+          id: view.id,
+          version: view.version,
+          buildNumber: view.buildNumber,
+          fileSize: view.fileSize,
+          changelog: view.changelog,
+          environment: view.environment,
+          platform: view.platform,
+          createdAt: view.createdAt,
+          downloadPagePath: view.downloadPagePath,
+          downloadPageUrl: view.downloadPageUrl,
           projectKey: '',
         };
         const unique = new Map([current, ...result.versions].map((item) => [item.id, item]));
@@ -94,7 +100,7 @@ export function usePublicDownload(id: string, shareToken: string | null) {
         commit({
           key,
           revision,
-          build,
+          build: view,
           versions,
           versionsError: result.versionsError,
           error: '',

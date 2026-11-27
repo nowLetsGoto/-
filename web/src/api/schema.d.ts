@@ -786,6 +786,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/public/builds/{id}/download-count": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 给走 CDN 直链的分享下载补记一次计数
+         * @description 当分享页链接直接指向 R2 CDN 时，浏览器不再请求本站文件接口， 原本在那里的下载计数会丢失。前端点击直链时调用本接口补记。 仍须验证分享签名；计数失败不影响用户已经开始的下载。
+         */
+        post: operations["recordSharedDownload"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/healthz": {
         parameters: {
             query?: never;
@@ -1362,9 +1382,14 @@ export interface components {
             downloadPageUrl: string;
             /**
              * Format: uri
-             * @description 绝对地址，下载按钮的唯一来源
+             * @description 本站文件接口地址；没有 CDN 直链时下载按钮回落到它
              */
             downloadFileUrl: string;
+            /**
+             * Format: uri
+             * @description 对象已同步到 R2 且配置了公开域名时的 CDN 直链；为空表示走 downloadFileUrl
+             */
+            downloadDirectUrl: string;
             /**
              * Format: date-time
              * @description ISO 8601 UTC
@@ -3427,6 +3452,28 @@ export interface operations {
                 content: {
                     "application/octet-stream": string;
                 };
+            };
+            404: components["responses"]["NotFound"];
+        };
+    };
+    recordSharedDownload: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description 包稳定唯一标识 */
+                id: components["parameters"]["BuildId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 已记录 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             404: components["responses"]["NotFound"];
         };
