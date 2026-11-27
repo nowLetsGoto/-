@@ -29,10 +29,19 @@ const buildColumns = `id, environment, platform, app_name, package_id, version, 
 	download_count, created_at, owner_user_id, r2_key, pin_kind, r2_state, local_state,
 	local_pulled_bytes, local_error`
 
-// columns 在固定列后追加项目图标：公开下载页需要它，但 Build 表本身不冗余存，
-// 统一从同分区的 projects 表按 project_id 子查询，避免图标更新后包记录还是旧值。
+// columns 在固定列后追加两个派生列，都从同分区的 projects 表按 project_id 子查询：
+//   - icon_url：公开下载页要显示，Build 表不冗余存，避免图标更新后还是旧值；
+//   - tenant_id：R2 按公司隔离后，每条对象存储调用都要凭它选中该公司的客户端。
+//
+// tenant_id 不做冗余列而是每次 join：它是「项目归哪家公司」的函数，
+// 项目若被调整归属（管理员操作），包记录不该停留在一个过期的副本上。
+//
+// 两个分区（team / solo）的 projects 表同构，可用同一份 SQL，
+// 因此这里不需要按分区分支——见 schema.sql 中「保留同构列」的说明。
 func (r *BuildRepository) columns() string {
-	return buildColumns + `, (SELECT p.icon_url FROM ` + r.project + ` p WHERE p.id = project_id)`
+	return buildColumns + `,
+		(SELECT p.icon_url FROM ` + r.project + ` p WHERE p.id = project_id),
+		coalesce((SELECT p.tenant_id::text FROM ` + r.project + ` p WHERE p.id = project_id), '')`
 }
 
 // BuildRepository 是一个分区内的 builds 表访问器；分区在构造时固定，实例本身无状态。
@@ -271,7 +280,7 @@ func rowToBuild(row rowScanner) (contract.Build, error) {
 		&b.Version, &b.BuildNumber, &b.Changelog, &b.OriginalFileName,
 		&b.FileSize, &b.FileExt, &b.RelativePath, &b.MetaSource,
 		&b.DownloadCount, &createdAt, &b.OwnerUserID, &b.R2Key, &b.PinKind, &b.R2State, &b.LocalState,
-		&b.LocalPulledBytes, &b.LocalError, &b.ProjectIconURL,
+		&b.LocalPulledBytes, &b.LocalError, &b.ProjectIconURL, &b.TenantID,
 	)
 	if err != nil {
 		return contract.Build{}, err

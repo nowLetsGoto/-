@@ -37,6 +37,10 @@ type UploadSession struct {
 	State        string
 	CreatedAt    time.Time
 	ExpiresAt    time.Time
+	// TenantID 是会话所属公司，空串表示未绑定（存量会话或平台级调用）。
+	// R2 按公司隔离后，commit / abort / 过期清理都需要凭它选中对应公司的客户端——
+	// 从 R2Key 解析前缀是不可靠的，命名习惯会变。
+	TenantID string
 }
 
 // UploadSessionRepository 是 upload_sessions 的唯一访问入口。
@@ -52,9 +56,9 @@ func NewUploadSessionRepository(db *sql.DB) *UploadSessionRepository {
 func (r *UploadSessionRepository) Create(ctx context.Context, s UploadSession) error {
 	_, err := r.db.ExecContext(ctx, `
 		INSERT INTO upload_sessions
-			(token, r2_key, declared_size, content_type, file_ext, original_name, state, expires_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-		s.Token, s.R2Key, s.DeclaredSize, s.ContentType, s.FileExt, s.OriginalName, s.State, s.ExpiresAt)
+			(token, r2_key, declared_size, content_type, file_ext, original_name, state, expires_at, tenant_id)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NULLIF($9, '')::uuid)`,
+		s.Token, s.R2Key, s.DeclaredSize, s.ContentType, s.FileExt, s.OriginalName, s.State, s.ExpiresAt, s.TenantID)
 	if err != nil {
 		return fmt.Errorf("创建上传会话失败: %w", err)
 	}
@@ -65,10 +69,11 @@ func (r *UploadSessionRepository) Create(ctx context.Context, s UploadSession) e
 func (r *UploadSessionRepository) Find(ctx context.Context, token string) (*UploadSession, error) {
 	var s UploadSession
 	err := r.db.QueryRowContext(ctx, `
-		SELECT token, r2_key, declared_size, content_type, file_ext, original_name, state, created_at, expires_at
+		SELECT token, r2_key, declared_size, content_type, file_ext, original_name, state,
+		       created_at, expires_at, coalesce(tenant_id::text, '')
 		FROM upload_sessions WHERE token = $1`, token).
 		Scan(&s.Token, &s.R2Key, &s.DeclaredSize, &s.ContentType, &s.FileExt,
-			&s.OriginalName, &s.State, &s.CreatedAt, &s.ExpiresAt)
+			&s.OriginalName, &s.State, &s.CreatedAt, &s.ExpiresAt, &s.TenantID)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) || errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil
@@ -103,23 +108,32 @@ func (r *UploadSessionRepository) Delete(ctx context.Context, token string) erro
 
 // PurgeExpired 清理过期会话并返回其 R2 key，供上层删除 R2 上的孤立对象。
 // 只清理 pending / uploaded —— completed 的会话已被正常消费。
-func (r *UploadSessionRepository) PurgeExpired(ctx context.Context, now time.Time) ([]string, error) {
+func (r *UploadSessionRepository) PurgeExpired(ctx context.Context, now time.Time) ([]PurgedObject, error) {
 	rows, err := r.db.QueryContext(ctx, `
 		DELETE FROM upload_sessions
 		WHERE expires_at < $1 AND state IN ($2, $3)
-		RETURNING r2_key`,
+		RETURNING r2_key, coalesce(tenant_id::text, '')`,
 		now, UploadStatePending, UploadStateUploaded)
 	if err != nil {
 		return nil, fmt.Errorf("清理过期上传会话失败: %w", err)
 	}
 	defer rows.Close()
-	var keys []string
+	var objects []PurgedObject
 	for rows.Next() {
-		var key string
-		if err := rows.Scan(&key); err != nil {
-			return keys, fmt.Errorf("读取待清理对象名失败: %w", err)
+		var obj PurgedObject
+		if err := rows.Scan(&obj.Key, &obj.TenantID); err != nil {
+			return objects, fmt.Errorf("读取待清理对象名失败: %w", err)
 		}
-		keys = append(keys, key)
+		objects = append(objects, obj)
 	}
-	return keys, rows.Err()
+	return objects, rows.Err()
+}
+
+// PurgedObject 是一条待清理的孤立对象及其所属公司。
+//
+// 必须带上 TenantID：R2 按公司隔离后，删除对象要先知道去哪个桶删。
+// 只返回 key 会让清理逻辑无从下手（或被迫从 key 前缀猜测归属）。
+type PurgedObject struct {
+	Key      string
+	TenantID string
 }

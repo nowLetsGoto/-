@@ -30,7 +30,7 @@ import (
 //
 // 单条删除失败只跳过该条：一个对象删不掉不该让其余包继续占着空间。
 func (s *BuildService) EvictTenant(ctx context.Context, mode contract.SessionMode, tenantID string) (int, error) {
-	r2 := s.r2.Get()
+	r2 := s.r2.Get(tenantID)
 	if r2 == nil || tenantID == "" {
 		return 0, nil
 	}

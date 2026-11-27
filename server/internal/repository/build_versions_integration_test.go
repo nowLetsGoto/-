@@ -33,7 +33,9 @@ func TestPublicVersionsAcrossEnvironments(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	for _, query := range []string{
-		`CREATE TEMP TABLE download_version_projects (id TEXT PRIMARY KEY, key TEXT, icon_url TEXT)`,
+		// tenant_id 是 columns() 里第二个派生列，临时表必须同构提供——
+		// 少了它会让 rowToBuild 的 Scan 报 "column p.tenant_id does not exist"。
+		`CREATE TEMP TABLE download_version_projects (id TEXT PRIMARY KEY, key TEXT, icon_url TEXT, tenant_id UUID)`,
 		// 列必须与 buildColumns 完全对齐：rowToBuild 按固定顺序 Scan，
 		// 少一列就会在读取时报 "column does not exist"，而不是静默缺字段。
 		`CREATE TEMP TABLE download_version_builds (
@@ -46,7 +48,9 @@ func TestPublicVersionsAcrossEnvironments(t *testing.T) {
 			r2_state TEXT NOT NULL DEFAULT 'pending', local_state TEXT NOT NULL DEFAULT 'absent',
 			local_pulled_bytes BIGINT NOT NULL DEFAULT 0, local_error TEXT NOT NULL DEFAULT ''
 		)`,
-		`INSERT INTO download_version_projects VALUES ('project-a', 'app', ''), ('project-b', 'other', '')`,
+		`INSERT INTO download_version_projects VALUES
+			('project-a', 'app', '', '11111111-1111-4111-8111-111111111111'),
+			('project-b', 'other', '', '11111111-1111-4111-8111-111111111111')`,
 		`INSERT INTO download_version_builds
 			SELECT 'test-' || n, 'project-a', 'test', 'android', '应用', 'com.example.app',
 				'1.' || n, n::text, '测试更新 ' || n, 'app.apk', 1024, 'apk',

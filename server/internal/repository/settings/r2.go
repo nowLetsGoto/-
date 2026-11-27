@@ -77,3 +77,30 @@ WHERE ` + rebasePlaceholders(where, 5)
 	}
 	return nil
 }
+
+// ListConfiguredTenants 返回所有已填写 R2 配置的公司 id。
+//
+// 用途是启动时只给这些公司建客户端：未配置的公司按严格隔离视为未启用 R2，
+// 不需要（也不应该）占用一个客户端实例。
+//
+// 判据用 r2_account_id 非空即可：剩下的必填项由 storage.R2Config.Enabled 判定，
+// 两处判据各管一段，避免这里再重复一遍四项齐全的规则。
+func (r *Repository) ListConfiguredTenants(ctx context.Context) ([]string, error) {
+	rows, err := r.db.QueryContext(ctx,
+		`SELECT tenant_id::text FROM system_settings
+		 WHERE tenant_id IS NOT NULL AND r2_account_id <> ''`)
+	if err != nil {
+		return nil, fmt.Errorf("列出已配置 R2 的公司失败: %w", err)
+	}
+	defer rows.Close()
+
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("读取已配置 R2 的公司失败: %w", err)
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}

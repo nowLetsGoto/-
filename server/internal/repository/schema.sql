@@ -658,8 +658,15 @@ CREATE TABLE IF NOT EXISTS public.upload_sessions (
     original_name    TEXT NOT NULL DEFAULT '',
     state            TEXT NOT NULL DEFAULT 'pending',
     created_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
-    expires_at       TIMESTAMPTZ NOT NULL
+    expires_at       TIMESTAMPTZ NOT NULL,
+    -- 会话所属公司：R2 按公司隔离后，commit / abort 时需要凭它选中该公司的桶。
+    -- 不从 r2_key 解析（key 里虽有租户前缀，但那是偶然的命名习惯，
+    -- 一旦 key 结构变化就会静默取到空值），而是显式记录归属。
+    tenant_id        UUID REFERENCES tenants(id)
 );
+
+-- 存量会话没有归属：留 NULL，取值时按空串处理（视为未绑定公司）。
+ALTER TABLE public.upload_sessions ADD COLUMN IF NOT EXISTS tenant_id UUID REFERENCES tenants(id);
 
 -- 过期清理按 expires_at 扫描；只关心未完成的会话。
 CREATE INDEX IF NOT EXISTS idx_upload_sessions_pending

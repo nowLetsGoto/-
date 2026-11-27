@@ -286,6 +286,20 @@ func (s *BuildService) validateStageToken(token string) (stagedLookup, error) {
 	return stagedLookup{absPath: abs, namePath: namePath, ext: ext, originalFileName: original, r2Key: r2Key}, nil
 }
 
+// tenantFor 确定一次操作该用哪家公司的 R2 通道。
+//
+// 优先取项目归属：包最终落在该公司名下，存储通道必须与之一致。
+// 单人分区的历史项目可能没有 tenant_id（该列是后加的），此时回落到登录会话的公司。
+//
+// 集中成一个函数而不是各处写 if：三处以上的相同判断迟早会有一处写错，
+// 而那类错误表现为「包进了别人的桶」，排查时极难发现。
+func tenantFor(ctx context.Context, project contract.Project) string {
+	if project.TenantID != "" {
+		return project.TenantID
+	}
+	return authctx.ScopeFrom(ctx).TenantID
+}
+
 // Create 是提交的唯一编排：表单即最终真值，提交时不再解析、不再覆盖用户值。
 // Create 发布一个包；identity 决定写入哪个分区（单人写 solo，团队与外部 API 写 team），
 // 它的 UserID 同时作为包的 owner，供单人分区按账号隔离。
@@ -315,7 +329,7 @@ func (s *BuildService) Create(ctx context.Context, in contract.CommitInput, iden
 	// 文件大小从 R2 元数据读取（一次轻量 HEAD，非整包传输）。
 	var fileSize int64
 	if staged.r2Key != "" {
-		r2 := s.r2.Get()
+		r2 := s.r2.Get(tenantFor(ctx, project))
 		if r2 == nil {
 			return contract.Build{}, storage.ErrR2Disabled
 		}
@@ -418,7 +432,7 @@ func (s *BuildService) Create(ctx context.Context, in contract.CommitInput, iden
 		s.notifier.NotifyBuild(ctx, project.TenantID, build)
 	}
 	// 直传来源的对象已在桶里：记下对象名与占用，省掉一次整包上传。
-	if staged.r2Key != "" && s.r2.Enabled() {
+	if staged.r2Key != "" && s.r2.Enabled(tenantFor(ctx, project)) {
 		if err := repo.MarkR2Synced(ctx, build.ID, staged.r2Key, fileSize); err != nil {
 			log.Printf("直传包回写 R2 状态失败 id=%s key=%s err=%v", build.ID, staged.r2Key, err)
 			// 回写失败不阻断：交给后台镜像兜底。
@@ -428,7 +442,7 @@ func (s *BuildService) Create(ctx context.Context, in contract.CommitInput, iden
 			build.R2State = contract.R2StateSynced
 			// 预热 CDN：让首个下载者命中边缘缓存，而不是等待回源。
 			// 下载名元数据已在直传时写入，此处无需再补。
-			s.prewarmCDNAsync(staged.r2Key)
+			s.prewarmCDNAsync(tenantFor(ctx, project), staged.r2Key)
 		}
 		// 直传包的字节只在 R2，本机还没有副本：立即排队拉回。
 		// 异步执行，不阻塞发布——用户此刻已经能通过 CDN 下载，
@@ -546,6 +560,10 @@ func (s *BuildService) resolveBuildFile(build contract.Build) (contract.FileRef,
 		FileName:    fileName,
 		Size:        size,
 		R2Key:       r2Key,
+		// 带上归属公司：R2SignedURL 要用它选中该公司的客户端来签地址。
+		// 漏填的表现是所有下载静默降级为本机流式——能下但极慢，且日志无异常，
+		// 属于「功能还在但性能没了」的隐性故障。
+		TenantID: build.TenantID,
 	}, nil
 }
 

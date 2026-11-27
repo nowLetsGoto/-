@@ -1264,6 +1264,11 @@ type Build struct {
 	RelativePath     string `json:"relativePath"`
 	// R2Key 是文件在对象存储中的对象名；空串表示尚未镜像，下载走本机磁盘。
 	// 不对外暴露（json:"-"）：它是存储实现细节，前端只需要下载地址。
+	// TenantID 是所属公司，由项目反查得到（团队分区取 projects.tenant_id，
+	// 单人分区取项目创建者的 users.tenant_id）。json:"-" 因为它是内部路由依据：
+	// R2 按公司隔离后，每条对象存储调用都要凭它选中该公司的客户端，
+	// 但前端不该看到也不该能指定这个值。
+	TenantID         string `json:"-"`
 	R2Key            string `json:"-"`
 	MetaSource       string `json:"metaSource"`
 	DownloadCount    int64  `json:"downloadCount"`
@@ -1506,6 +1511,10 @@ type FileRef struct {
 	// R2Key 非空表示该文件已镜像到 R2，可直接用签名直链下载；
 	// 为空则 handler 走本机磁盘流式，并在后台补传 R2。
 	R2Key string
+
+	// TenantID 是文件所属公司，用于选中该公司的 R2 客户端。
+	// 按公司隔离后每个桶不同，没有它就不知道该往哪个桶签地址。
+	TenantID string
 }
 
 // IsValidEnvironment / IsValidPlatform 是唯一的枚举校验入口。

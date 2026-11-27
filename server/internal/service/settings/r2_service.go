@@ -41,10 +41,13 @@ type R2Service struct {
 	// 只作为初始值：一旦库里存了任何一项，就以库为准（见 Get 的判定），
 	// 否则用户在页面上把 R2 关掉后，刷新又会看到环境变量里的旧值。
 	fallback storage.R2Config
+	// ref 是运行时客户端持有者。保存配置后由 Apply 重建该公司的客户端，
+	// 使新凭据立即生效，无需重启进程。
+	ref *storage.R2Ref
 }
 
-func NewR2Service(repo *settingsrepo.Repository, cipher *secret.Cipher, fallback storage.R2Config) *R2Service {
-	return &R2Service{repo: repo, cipher: cipher, fallback: fallback}
+func NewR2Service(repo *settingsrepo.Repository, cipher *secret.Cipher, fallback storage.R2Config, ref *storage.R2Ref) *R2Service {
+	return &R2Service{repo: repo, cipher: cipher, fallback: fallback, ref: ref}
 }
 
 // stored 判断库里的配置是否已经有过任何写入。
@@ -132,7 +135,44 @@ func (s *R2Service) Update(
 	if err := s.repo.SaveR2(ctx, tenantID, cfg); err != nil {
 		return contract.R2Config{}, err
 	}
+	// 保存即生效。失败只记日志而不返回错误：配置已经写入数据库，
+	// 此时报错会让页面显示「保存失败」而实际已保存，反而误导。
+	// 真正的失败会在下次启动 bootstrap 时被发现，且日志里看得见。
+	if err := s.Apply(ctx, tenantID); err != nil {
+		log.Printf("R2 配置已保存但重建客户端失败 tenant=%s err=%v（重启后可恢复）", tenantID, err)
+	}
 	return s.Get(ctx, scope)
+}
+
+// Apply 按库里的配置重建某公司的 R2 客户端并装入持有者。
+//
+// 参数：tenantID 是公司 id；空串代表平台兜底行（当前无客户端，按未启用处理）。
+// 返回：构造客户端失败时返回错误（配置不完整不算错误，那表示「关闭 R2」）。
+//
+// 这是热生效的唯一入口：保存配置、以及启动时批量装载都走它，
+// 保证两处对「什么算启用」的判断完全一致。
+func (s *R2Service) Apply(ctx context.Context, tenantID string) error {
+	// 空公司不建客户端：严格隔离下没有「平台统一存储」这回事。
+	if tenantID == "" {
+		return nil
+	}
+
+	cfg, err := s.Runtime(ctx, tenantID)
+	if err != nil {
+		return err
+	}
+	if !cfg.Enabled() {
+		// 配置不全或已清空 = 关闭该公司的 R2，移除既有客户端。
+		s.ref.Set(tenantID, nil)
+		return nil
+	}
+
+	client, err := storage.NewR2(ctx, cfg)
+	if err != nil {
+		return fmt.Errorf("构造 R2 客户端失败: %w", err)
+	}
+	s.ref.Set(tenantID, client)
+	return nil
 }
 
 // Runtime 返回可直接用于构造 R2 客户端的配置（密钥已解密）。

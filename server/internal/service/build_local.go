@@ -180,7 +180,7 @@ func (s *BuildService) pullLocalToDisk(
 		pulled.Store(n)
 		s.reportProgress(repo, target.ID, n)
 	}
-	written, err := s.downloadToFile(ctx, target.R2Key, tmp, target.FileSize, onProgress)
+	written, err := s.downloadToFile(ctx, target.TenantID, target.R2Key, tmp, target.FileSize, onProgress)
 	if err != nil {
 		_ = os.Remove(tmp)
 		return err
@@ -263,14 +263,14 @@ func (s *BuildService) reportProgress(repo *repository.BuildRepository, id strin
 // 失败时不在内部删半截文件：清理属于收尾，与下载不是同一件事，
 // 混在一起会让错误路径难以追踪。由调用方统一处理。
 func (s *BuildService) downloadToFile(
-	ctx context.Context, key, path string, total int64, onProgress func(int64),
+	ctx context.Context, tenantID, key, path string, total int64, onProgress func(int64),
 ) (int64, error) {
 	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
 	if err != nil {
 		return 0, fmt.Errorf("创建临时文件失败: %w", err)
 	}
 	// 入口取快照：这是一次可能持续数分钟的下载，中途重取会换凭据。
-	r2 := s.r2.Get()
+	r2 := s.r2.Get(tenantID)
 	if r2 == nil {
 		return 0, fmt.Errorf("对象存储未启用，无法拉回")
 	}
@@ -323,7 +323,8 @@ func localStateFor(r2Key string) string {
 // 返回值是「尝试搬运的个数」而非「成功个数」：单个包的成功与否已经写进
 // local_state，日志里再区分一次只会让两个地方的统计口径逐渐分叉。
 func (s *BuildService) pullPendingLocal(ctx context.Context, mode contract.SessionMode, tenantID string) (int, error) {
-	if !s.r2.Enabled() {
+	// 按公司判断：严格隔离下，未配置 R2 的公司没有可拉回的源。
+	if !s.r2.Enabled(tenantID) {
 		return 0, nil
 	}
 	rows, err := s.repos.For(mode).ListLocalPending(ctx, tenantID)

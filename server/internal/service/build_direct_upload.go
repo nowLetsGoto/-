@@ -56,10 +56,9 @@ func directKey(tenantID, projectKey, token, ext string) string {
 // 入参带 project：key 需要它来确定归属，同时也借此提前拒绝无效项目，
 // 免得用户传完 300MB 才在 commit 阶段发现项目不存在。
 func (s *BuildService) IssueUploadTicket(ctx context.Context, in contract.UploadTicketInput, identity contract.Identity) (contract.UploadTicket, error) {
-	// 直传需要两个前提：对象存储可用（票据是给 R2 的）与会话仓储可用（要记状态）。
-	// 两者现在互不依赖：sessions 只写数据库，r2 可运行时替换。
-	r2 := s.r2.Get()
-	if r2 == nil || s.sessions == nil {
+	// 会话仓储是直传的前提之一；它与 R2 无关（只写数据库）。
+	// 客户端要等确定公司之后才能取——按公司隔离后，先取客户端就不知道该用哪个桶。
+	if s.sessions == nil {
 		return contract.UploadTicket{}, &contract.ValidationError{Message: errDirectDisabled.Error()}
 	}
 	ext := strings.ToLower(strings.TrimPrefix(path.Ext(in.FileName), "."))
@@ -84,6 +83,12 @@ func (s *BuildService) IssueUploadTicket(ctx context.Context, in contract.Upload
 	tenantID := authctx.ScopeFrom(ctx).TenantID
 	if tenantID == "" {
 		return contract.UploadTicket{}, &contract.ValidationError{Message: "无法确定所属公司，请重新登录"}
+	}
+	// 取该公司自己的客户端：不同的公司可能配不同的桶。
+	// 未配置的公司在严格隔离下视为未启用 R2，直传随之不可用（降级为普通上传）。
+	r2 := s.r2.Get(tenantID)
+	if r2 == nil {
+		return contract.UploadTicket{}, &contract.ValidationError{Message: errDirectDisabled.Error()}
 	}
 
 	contentType, err := storage.ContentType(platform)
@@ -111,6 +116,8 @@ func (s *BuildService) IssueUploadTicket(ctx context.Context, in contract.Upload
 		OriginalName: originalName,
 		State:        repository.UploadStatePending,
 		ExpiresAt:    time.Now().Add(uploadTicketTTL),
+		// 记下归属公司：commit / abort 时要凭它选中同一个桶。
+		TenantID: tenantID,
 	}
 	if err := s.sessions.Create(ctx, session); err != nil {
 		return contract.UploadTicket{}, err
@@ -148,8 +155,7 @@ func uploadTicketHeaders(contentType, originalName string) map[string]string {
 // 校验点：会话存在且未过期、对象确实已上传、大小与声明一致。
 // 大小不一致说明浏览器传了别的文件（或传输被截断），一律拒绝。
 func (s *BuildService) StageFromR2(ctx context.Context, uploadToken string) (contract.StageResult, error) {
-	r2 := s.r2.Get()
-	if r2 == nil || s.sessions == nil {
+	if s.sessions == nil {
 		return contract.StageResult{}, &contract.ValidationError{Message: errDirectDisabled.Error()}
 	}
 	session, err := s.sessions.Find(ctx, uploadToken)
@@ -158,6 +164,11 @@ func (s *BuildService) StageFromR2(ctx context.Context, uploadToken string) (con
 	}
 	if session == nil {
 		return contract.StageResult{}, &contract.ValidationError{Message: "上传会话不存在，请重新选择文件"}
+	}
+	// 凭会话记录的归属公司取客户端：不同公司可能配不同的桶。
+	r2 := s.r2.Get(session.TenantID)
+	if r2 == nil {
+		return contract.StageResult{}, &contract.ValidationError{Message: errDirectDisabled.Error()}
 	}
 	if time.Now().After(session.ExpiresAt) {
 		return contract.StageResult{}, &contract.ValidationError{Message: "上传已过期，请重新选择文件"}
@@ -239,7 +250,7 @@ func (s *BuildService) AbortUpload(ctx context.Context, uploadToken string) erro
 	if err != nil || session == nil {
 		return err
 	}
-	if r2 := s.r2.Get(); r2 != nil && session.State != repository.UploadStateCompleted {
+	if r2 := s.r2.Get(session.TenantID); r2 != nil && session.State != repository.UploadStateCompleted {
 		if err := r2.DeleteObject(ctx, session.R2Key); err != nil {
 			log.Printf("放弃上传时删除 R2 对象失败 key=%s err=%v", session.R2Key, err)
 		}
@@ -264,7 +275,7 @@ func (s *BuildService) pullFromR2ToStage(ctx context.Context, session repository
 	}
 	// 入口取一次快照后全程复用：这是一次可能持续数分钟的下载，
 	// 中途重取会让前后半段使用不同的凭据。
-	r2 := s.r2.Get()
+	r2 := s.r2.Get(session.TenantID)
 	if r2 == nil {
 		_ = dst.Close()
 		_ = os.Remove(tmpPath)
@@ -319,13 +330,15 @@ func (s *BuildService) pruneExpiredSessions(ctx context.Context) {
 		log.Printf("清理过期上传会话失败: %v", err)
 		return
 	}
-	r2 := s.r2.Get()
-	if r2 == nil {
-		return
-	}
-	for _, key := range keys {
-		if err := r2.DeleteObject(ctx, key); err != nil {
-			log.Printf("清理孤立 R2 对象失败 key=%s err=%v", key, err)
+	// 逐条按各自公司取客户端：一次清理可能跨越多个公司的桶，
+	// 用同一个客户端会把 A 公司的对象名拿到 B 公司的桶里删（自然删不到，白跑一趟）。
+	for _, obj := range keys {
+		r2 := s.r2.Get(obj.TenantID)
+		if r2 == nil {
+			continue // 该公司未配置 R2，对象本就不存在，无需清理。
+		}
+		if err := r2.DeleteObject(ctx, obj.Key); err != nil {
+			log.Printf("清理孤立 R2 对象失败 key=%s err=%v", obj.Key, err)
 		}
 	}
 }

@@ -14,6 +14,8 @@ import (
 	"dandelion/server/internal/storage"
 )
 
+const testTenant = "tenant-a"
+
 func TestSharedDirectURL(t *testing.T) {
 	r2, err := storage.NewR2(context.Background(), storage.R2Config{
 		AccountID: "acct", AccessKeyID: "key", SecretKey: "secret",
@@ -22,7 +24,10 @@ func TestSharedDirectURL(t *testing.T) {
 	if err != nil {
 		t.Fatalf("构造 R2 失败: %v", err)
 	}
-	svc := &BuildService{r2: storage.NewR2Ref(r2)}
+	// 按公司装载：测试里的包属于 tenant-a，客户端也只给这家公司。
+	ref := storage.NewR2Ref()
+	ref.Set(testTenant, r2)
+	svc := &BuildService{r2: ref}
 
 	cases := []struct {
 		name  string
@@ -31,17 +36,17 @@ func TestSharedDirectURL(t *testing.T) {
 	}{
 		{
 			name:  "已同步才有直链，对象名中的目录要保留",
-			build: contract.Build{R2State: contract.R2StateSynced, R2Key: "tenant/project/direct/a.apk"},
+			build: contract.Build{TenantID: testTenant, R2State: contract.R2StateSynced, R2Key: "tenant/project/direct/a.apk"},
 			want:  "https://cdn.example.com/download/tenant/project/direct/a.apk",
 		},
 		{
 			name:  "已淘汰的对象不在桶里，不能给直链",
-			build: contract.Build{R2State: contract.R2StateEvicted, R2Key: "tenant/project/direct/a.apk"},
+			build: contract.Build{TenantID: testTenant, R2State: contract.R2StateEvicted, R2Key: "tenant/project/direct/a.apk"},
 			want:  "",
 		},
 		{
 			name:  "缺少对象名时不能拼 URL",
-			build: contract.Build{R2State: contract.R2StateSynced},
+			build: contract.Build{TenantID: testTenant, R2State: contract.R2StateSynced},
 			want:  "",
 		},
 	}

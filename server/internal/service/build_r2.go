@@ -9,7 +9,7 @@
 // 边界：磁盘始终是权威副本——R2 任何失败都只记日志，绝不影响上传成功或下载可用性。
 //
 //	不阻塞请求链路：同步在独立 goroutine 中完成，失败留给下次下载重试。
-//	未配置 R2（s.r2.Get() == nil）时全部方法直接返回，行为与改造前完全一致。
+//	该公司未配置 R2（s.r2.Get(tenantID) == nil）时全部方法直接返回，下载走本机磁盘。
 //
 // 每个方法都在入口取一次客户端快照（r2 := s.r2.Get()）后全程复用：
 // 配置可在运行时替换，重复 Get 会让一次操作在切换瞬间换到另一套凭据。
@@ -44,13 +44,10 @@ const r2PrewarmTimeout = 30 * time.Second
 // 足够触发 Cloudflare 完整回源并建立缓存，又不为预热传输整个包。
 const r2PrewarmBytes = 256 * 1024
 
-// R2Enabled 报告是否启用了对象存储镜像。
-func (s *BuildService) R2Enabled() bool { return s.r2.Enabled() }
-
 // R2SignedURL 为已镜像的文件签发下载直链；未启用或未镜像时返回空串。
 // 调用方据此决定 302 跳转还是本地流式。
 func (s *BuildService) R2SignedURL(ctx context.Context, ref contract.FileRef) string {
-	r2 := s.r2.Get()
+	r2 := s.r2.Get(ref.TenantID)
 	if r2 == nil || ref.R2Key == "" {
 		return ""
 	}
@@ -69,7 +66,7 @@ func (s *BuildService) R2SignedURL(ctx context.Context, ref contract.FileRef) st
 // 私有桶的签名链接有 TTL，塞进页面会在用户停留久后失效，那种情况仍走
 // /public/builds/{id}/file 在点击瞬间签发。
 func (s *BuildService) SharedDirectURL(b contract.Build) string {
-	r2 := s.r2.Get()
+	r2 := s.r2.Get(b.TenantID)
 	if r2 == nil || !r2.IsPublicCDN() || b.R2State != contract.R2StateSynced || b.R2Key == "" {
 		return ""
 	}
@@ -87,7 +84,7 @@ func (s *BuildService) SharedDirectURL(b contract.Build) string {
 // （供重推复用），若仍以 key 是否存在来判断「已同步」，
 // 被淘汰的包会永久跳过同步——点「同步到 R2」也推不上去。
 func (s *BuildService) syncToR2(build contract.Build, mode contract.SessionMode) {
-	r2 := s.r2.Get()
+	r2 := s.r2.Get(build.TenantID)
 	if r2 == nil || build.R2State == contract.R2StateSynced {
 		return
 	}
@@ -125,7 +122,7 @@ func (s *BuildService) syncToR2(build contract.Build, mode contract.SessionMode)
 	}
 	log.Printf("R2 同步完成 id=%s key=%s", build.ID, key)
 	// 镜像完成即预热 CDN：把首个下载者的回源等待转移到此处。
-	s.prewarmCDNAsync(key)
+	s.prewarmCDNAsync(build.TenantID, key)
 }
 
 // syncToR2Async 在后台镜像，不阻塞当前请求。
@@ -133,7 +130,7 @@ func (s *BuildService) syncToR2(build contract.Build, mode contract.SessionMode)
 // 这里不重复判断「是否已同步」：该判据只应存在一处（syncToR2 内部），
 // 两处各写一遍必然有一天只改一边。多起一个立即返回的 goroutine 代价可忽略。
 func (s *BuildService) syncToR2Async(build contract.Build, mode contract.SessionMode) {
-	if !s.r2.Enabled() {
+	if !s.r2.Enabled(build.TenantID) {
 		return
 	}
 	go s.syncToR2(build, mode)
@@ -157,8 +154,8 @@ func (s *BuildService) contentTypeOf(platform string) (string, error) {
 //
 // 注意：不使用调用方的 ctx。Create 的请求上下文在响应返回后即被取消，
 // 而预热要在那之后继续跑，故用独立的后台上下文与超时。
-func (s *BuildService) prewarmCDNAsync(key string) {
-	r2 := s.r2.Get()
+func (s *BuildService) prewarmCDNAsync(tenantID, key string) {
+	r2 := s.r2.Get(tenantID)
 	if r2 == nil || key == "" {
 		return
 	}

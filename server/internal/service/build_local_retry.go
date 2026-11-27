@@ -24,13 +24,14 @@ import (
 // 让 HTTP 请求等到完成会被 Cloudflare 的 100 秒代理超时切断。
 // 前端改为轮询 local_pulled_bytes 看进度，与自动巡检走同一条路径。
 func (s *BuildService) RetryLocalPull(ctx context.Context, id string, identity contract.Identity) (contract.Build, error) {
-	if !s.r2.Enabled() {
-		return contract.Build{}, &contract.ValidationError{Message: "对象存储未配置，无法下载"}
-	}
-
 	build, err := s.authorizedBuild(ctx, id, identity)
 	if err != nil {
 		return contract.Build{}, err
+	}
+	// 先取包再判断 R2：包带着归属公司，才知道该查哪家公司的通道。
+	// 顺序颠倒会变成「用全局是否启用」判断，那在按公司隔离下已经是错误的问题。
+	if !s.r2.Enabled(build.TenantID) {
+		return contract.Build{}, &contract.ValidationError{Message: "对象存储未配置，无法下载"}
 	}
 	if err := checkPullable(build); err != nil {
 		return contract.Build{}, err

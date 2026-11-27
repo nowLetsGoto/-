@@ -311,5 +311,9 @@ func (r *R2) DownloadURL(ctx context.Context, key string, ttl time.Duration) (st
 // IsPublicCDN 报告是否启用了自定义域名直链，供日志与统计使用。
 func (r *R2) IsPublicCDN() bool { return r.cfg.PublicBaseURL != "" }
 
+// Bucket 返回当前客户端使用的桶名，供日志与诊断使用。
+// 按公司隔离后每个客户端可能指向不同的桶，日志里打配置值会误导排查。
+func (r *R2) Bucket() string { return r.cfg.Bucket }
+
 // ErrR2Disabled 便于调用方区分"未配置"与"配置了但出错"。
 var ErrR2Disabled = errors.New("R2 未启用")

@@ -92,31 +92,10 @@ func run() error {
 		}
 	}
 
-	// 对象存储镜像：未配置时返回 nil，下载完全走本机磁盘（与改造前一致）。
-	// 配置错误也不阻断启动——R2 只是加速通道，不该让它成为服务的硬依赖。
-	r2, err := storage.NewR2(context.Background(), storage.R2Config{
-		AccountID:     cfg.R2AccountID,
-		AccessKeyID:   cfg.R2AccessKeyID,
-		SecretKey:     cfg.R2SecretKey,
-		Bucket:        cfg.R2Bucket,
-		PublicBaseURL: cfg.R2PublicBaseURL,
-	})
-	if err != nil {
-		return fmt.Errorf("初始化对象存储失败: %w", err)
-	}
-	// 用可替换持有者包装：R2 凭据可在设置页修改并立即生效，
-	// service 层通过 Get() 取快照而不是直接持有指针。
-	// 这里先用启动配置构造初始客户端；设置页保存后由 applyR2Config 整体替换。
-	r2Ref := storage.NewR2Ref(r2)
-	if r2 != nil {
-		if r2.IsPublicCDN() {
-			// 公开 CDN 直链：国内走 Cloudflare 节点，比 S3 签名端点快 10-30 倍。
-			log.Printf("对象存储镜像已启用 bucket=%s 下载通道=公开CDN(%s)", cfg.R2Bucket, cfg.R2PublicBaseURL)
-		} else {
-			// 私有桶签名 URL：桶保持私有，但走 S3 端点，国内较慢。
-			log.Printf("对象存储镜像已启用 bucket=%s 下载通道=私有签名(S3端点，较慢；配 R2_PUBLIC_BASE_URL 可提速)", cfg.R2Bucket)
-		}
-	}
+	// 对象存储按公司隔离：客户端不再于此处构造，而是等数据库就绪后
+	// 按每家公司的配置逐个装载（见下方 bootstrapR2）。
+	// 严格隔离下没有「平台统一存储」——未配置的公司直接视为未启用 R2。
+	r2Ref := storage.NewR2Ref()
 
 	// 数据库：pgx 的 database/sql 适配层没有默认注册，必须靠副作用导入把 "pgx" 驱动挂上去，
 	// 否则 sql.Open("pgx") 会在运行时才报 unknown driver。全仓只有这一处打开连接，放这里最省心。
@@ -141,12 +120,9 @@ func run() error {
 		return err
 	}
 
-	// 直传会话仓储只在启用 R2 时有意义：它为预签名上传记录对象名与声明大小。
-	// 未启用时保持 nil，服务层的直传接口会给出「未启用对象存储」的明确拒绝。
-	var uploadSessions *repository.UploadSessionRepository
-	if r2 != nil {
-		uploadSessions = repository.NewUploadSessionRepository(db)
-	}
+	// 直传会话仓储无条件创建：它只写数据库，与 R2 是否启用无关。
+	// 能否直传由服务层按「该公司是否配了 R2」判断（s.r2.Get(tenantID) 是否为 nil）。
+	uploadSessions := repository.NewUploadSessionRepository(db)
 
 	// 业务数据分两个分区：单人写 solo、团队写 team，各有一套 projects / builds / audit_logs。
 	// 装配层为每个分区各建一份同构仓储，上层只按会话模式取用，不出现 if team / else solo。
@@ -194,7 +170,25 @@ func run() error {
 		SecretKey:     cfg.R2SecretKey,
 		Bucket:        cfg.R2Bucket,
 		PublicBaseURL: cfg.R2PublicBaseURL,
-	})
+	}, r2Ref)
+
+	// 启动时按库里的配置装载各公司的客户端。
+	// 只装载已配置的公司：未配置的公司不建实例，服务层取到 nil 即按未启用处理。
+	// 单个公司配置有误只记日志、不阻断启动——R2 是加速通道，
+	// 让它挡住整个服务启动是本末倒置（其余公司仍可正常工作）。
+	for _, tenantID := range configuredTenants(startupCtx, settingsRepo) {
+		if err := r2SettingsService.Apply(startupCtx, tenantID); err != nil {
+			log.Printf("装载公司 R2 客户端失败 tenant=%s err=%v（该公司的下载将走本机）", tenantID, err)
+			continue
+		}
+		if client := r2Ref.Get(tenantID); client != nil {
+			log.Printf("对象存储已装载 tenant=%s bucket=%s 通道=%s",
+				tenantID, client.Bucket(), channelOf(client))
+		}
+	}
+	if r2Ref.TenantCount() == 0 {
+		log.Printf("对象存储未启用：没有任何公司配置 R2，全部下载走本机磁盘")
+	}
 
 	svc := service.NewBuildService(cfg, paths, r2Ref, uploadSessions, buildRepos, projectRepos, webhookService, repository.NewBuildSharePartitioned(db), authzService)
 	if err := svc.PurgeTmp(); err != nil {
@@ -295,4 +289,28 @@ func run() error {
 	}
 	log.Printf("Dandelion 已停止，数据库连接已关闭")
 	return nil
+}
+
+// configuredTenants 列出需要在启动时装载客户端的公司 id。
+//
+// 查询失败只记日志并返回空列表：R2 是可选加速通道，
+// 一次数据库抖动不该让服务起不来；代价是本次启动所有下载走本机。
+func configuredTenants(ctx context.Context, repo *settingsrepo.Repository) []string {
+	ids, err := repo.ListConfiguredTenants(ctx)
+	if err != nil {
+		log.Printf("读取已配置 R2 的公司失败，本次启动不装载任何客户端: %v", err)
+		return nil
+	}
+	return ids
+}
+
+// channelOf 描述客户端的下载通道，仅用于启动日志。
+//
+// 公开 CDN 与私有签名端点的速度差 10-30 倍，管理员看日志就能判断
+// 是否漏配了自定义域名——这比事后排查「下载为什么慢」便宜得多。
+func channelOf(client *storage.R2) string {
+	if client.IsPublicCDN() {
+		return "公开CDN"
+	}
+	return "私有签名(S3端点，较慢；配自定义域名可提速)"
 }

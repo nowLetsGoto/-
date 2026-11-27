@@ -81,7 +81,7 @@ func (s *BuildService) Delete(ctx context.Context, id string, identity contract.
 		return contract.Build{}, err
 	}
 	// 关联分享授权已随 DELETE 级联移除，这里只清理字节。
-	s.removeBuildBytes(ctx, id, relativePath, build.R2Key)
+	s.removeBuildBytes(ctx, build.TenantID, id, relativePath, build.R2Key)
 	return build, nil
 }
 
@@ -89,13 +89,13 @@ func (s *BuildService) Delete(ctx context.Context, id string, identity contract.
 //
 // 独立成方法是为了让 Delete 与后续的淘汰执行器共用同一套清理语义，
 // 避免两处各写一遍"删文件 + 删对象"而逐渐漂移。
-func (s *BuildService) removeBuildBytes(ctx context.Context, id, relativePath, r2Key string) {
+func (s *BuildService) removeBuildBytes(ctx context.Context, tenantID, id, relativePath, r2Key string) {
 	if abs, err := s.paths.SafeResolve(relativePath); err != nil {
 		log.Printf("清理包字节：路径校验失败 id=%s err=%v", id, err)
 	} else if err := os.Remove(abs); err != nil && !errors.Is(err, os.ErrNotExist) {
 		log.Printf("清理包字节：删除本地文件失败 id=%s err=%v", id, err)
 	}
-	r2 := s.r2.Get()
+	r2 := s.r2.Get(tenantID)
 	if r2Key == "" || r2 == nil {
 		return
 	}

@@ -57,10 +57,11 @@ type retentionTenantLister interface {
 // 而它恰恰是用户唯一能看见的那部分（卡片上的进度条）。
 // 拆开后各自按需要的节奏运行，代价只是多一个 goroutine。
 func (s *BuildService) RunRetentionWorker(ctx context.Context, tenants retentionTenantLister) {
-	if !s.r2.Enabled() {
-		log.Printf("淘汰巡检未启动：未配置对象存储")
-		return
-	}
+	// 不再因为「启动时没有任何公司配置 R2」就整体跳过巡检。
+	//
+	// R2 可以在运行期按公司启用（设置页保存后立即生效）。若启动时判定无配置
+	// 就直接返回，之后管理员配好了也不会有人来搬——巡检 goroutine 已经退出了。
+	// 现在两个循环总是运行，每个租户各自判断自己有没有 R2（无配置即跳过该租户）。
 	if tenants == nil {
 		log.Printf("淘汰巡检未启动：缺少租户来源")
 		return

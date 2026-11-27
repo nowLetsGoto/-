@@ -132,13 +132,13 @@ func (r *countingReader) Read(p []byte) (int, error) {
 // 前置校验（状态、本机副本、对象名）留在请求内：这些是用户能立刻修正的错误，
 // 不能等到后台日志里才被发现。校验通过就返回 202，前端轮询进度看结果。
 func (s *BuildService) SyncToR2(ctx context.Context, id string, identity contract.Identity) (contract.Build, error) {
-	if !s.r2.Enabled() {
-		return contract.Build{}, &contract.ValidationError{Message: "对象存储未配置，无法同步"}
-	}
-
 	build, err := s.authorizedBuild(ctx, id, identity)
 	if err != nil {
 		return contract.Build{}, err
+	}
+	// 先取包再判断：包带着归属公司，才知道该查哪家公司的通道。
+	if !s.r2.Enabled(build.TenantID) {
+		return contract.Build{}, &contract.ValidationError{Message: "对象存储未配置，无法同步"}
 	}
 	if err := checkResyncable(build); err != nil {
 		return contract.Build{}, err
@@ -205,9 +205,9 @@ func (s *BuildService) uploadResync(ctx context.Context, build contract.Build, i
 		return err
 	}
 	body := s.resyncs.progressReader(build.ID, file)
-	r2 := s.r2.Get()
+	r2 := s.r2.Get(build.TenantID)
 	if r2 == nil {
-		return fmt.Errorf("对象存储未启用，无法重推")
+		return fmt.Errorf("该公司未配置对象存储，无法重推")
 	}
 	if err := r2.Put(ctx, build.R2Key, body, size, contentType, build.OriginalFileName); err != nil {
 		return fmt.Errorf("上传到对象存储失败: %w", err)
@@ -218,7 +218,7 @@ func (s *BuildService) uploadResync(ctx context.Context, build contract.Build, i
 	}
 
 	// 预热 CDN：让首个下载者命中边缘缓存，而不是等待回源。
-	s.prewarmCDNAsync(build.R2Key)
+	s.prewarmCDNAsync(build.TenantID, build.R2Key)
 	return nil
 }
 

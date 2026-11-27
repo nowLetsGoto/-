@@ -24,6 +24,9 @@ type LocalPendingRow struct {
 	R2Key        string
 	RelativePath string
 	FileSize     int64
+	// TenantID 是包所属公司，用于选中该公司的 R2 客户端。
+	// 拉回、重推、删除对象都要凭它定位桶——按公司隔离后不再有全局客户端。
+	TenantID string
 }
 
 // LocalTarget 是「拉一个包」所需的最小信息。
@@ -38,9 +41,13 @@ type LocalTarget = LocalPendingRow
 // 而搬运是系统内部动作，调用方只持有包 id，不该为查一条记录去凑齐权限参数。
 func (r *BuildRepository) GetLocalTarget(ctx context.Context, id string) (LocalTarget, error) {
 	var row LocalTarget
+	// tenant_id 从项目反查（builds 表不冗余存）：包归哪家公司由项目决定，
+	// 与 columns() 里 TenanID 的取值方式保持一致。
 	err := r.db.QueryRowContext(ctx,
-		`SELECT id, r2_key, relative_path, file_size FROM `+r.table+` WHERE id = $1`, id).
-		Scan(&row.ID, &row.R2Key, &row.RelativePath, &row.FileSize)
+		`SELECT b.id, b.r2_key, b.relative_path, b.file_size,
+		        coalesce((SELECT p.tenant_id::text FROM `+r.project+` p WHERE p.id = b.project_id), '')
+		 FROM `+r.table+` b WHERE b.id = $1`, id).
+		Scan(&row.ID, &row.R2Key, &row.RelativePath, &row.FileSize, &row.TenantID)
 	if err != nil {
 		return LocalTarget{}, fmt.Errorf("读取待拉回包失败: %w", err)
 	}
@@ -94,6 +101,9 @@ ORDER BY b.created_at`
 		if err := rows.Scan(&row.ID, &row.R2Key, &row.RelativePath, &row.FileSize); err != nil {
 			return nil, fmt.Errorf("读取待拉回包失败: %w", err)
 		}
+		// 查询条件已限定 p.tenant_id = $1，这里直接带上归属，
+		// 省掉在 SELECT 里再取一次（同一个值，取两遍只会慢）。
+		row.TenantID = tenantID
 		out = append(out, row)
 	}
 	return out, rows.Err()
