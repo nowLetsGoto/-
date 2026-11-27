@@ -3,7 +3,7 @@
  * 输入：项目路径、环境/平台/搜索/排序/分页 URL 与当前权限；输出：卡片列表及操作反馈。
  * 边界：请求经 usePackageBuilds；环境经 useEnvironment；不修改安装文件、不拼 API 地址。
  */
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import type { FormEvent } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import type {
@@ -61,6 +61,7 @@ function PackageList({ projectKey }: { projectKey: string }): JSX.Element {
   const ascending = params.get('sort') === 'oldest';
   const { page, pageSize, change } = usePageState();
   const builds = usePackageBuilds({ project: projectKey, environment, platform });
+  const { reload: reloadBuilds } = builds;
   const [editing, setEditing] = useState<Build | null>(null);
   const [notice, setNotice] = useState('');
   const removal = useDeleteAction<Build & { label: string }>(builds.remove, () => {
@@ -69,14 +70,29 @@ function PackageList({ projectKey }: { projectKey: string }): JSX.Element {
   });
   // 同步结果统一走 notice 提示；成功时刷新列表，
   // 状态以服务端返回为准，前端不自己推测 r2State 怎么变。
-  const sync = useSyncToR2((error) => {
-    if (error) {
-      setNotice(error);
-      return;
-    }
-    setNotice('已同步到对象存储，下载将走 CDN 加速。');
-    builds.reload();
-  });
+  // useCallback 保持引用稳定，避免进度恢复 effect 随每次渲染重复触发。
+  const onSyncResult = useCallback(
+    (error: string) => {
+      if (error) {
+        setNotice(error);
+        return;
+      }
+      setNotice('已同步到对象存储，下载将走 CDN 加速。');
+      reloadBuilds();
+    },
+    [reloadBuilds],
+  );
+  const {
+    progress: syncProgress,
+    sync: startSync,
+    restore: restoreSync,
+  } = useSyncToR2(onSyncResult);
+
+  // 切菜单回来会重新挂载列表页，内存中的进度状态随之消失。
+  // 服务端仍保留 10 分钟进度，按包 id 恢复即可让按钮继续禁用、进度条继续显示。
+  useEffect(() => {
+    restoreSync(builds.items.map((build) => build.id));
+  }, [builds.items, restoreSync]);
 
   const setFilter = (name: string, value: string): void => {
     const next = new URLSearchParams(params);
@@ -245,8 +261,8 @@ function PackageList({ projectKey }: { projectKey: string }): JSX.Element {
                 onDelete={
                   deletable ? () => removal.request({ ...build, label: build.appName }) : undefined
                 }
-                onSync={writable ? () => sync.sync(build.id) : undefined}
-                progress={sync.progress[build.id]}
+                onSync={writable ? () => startSync(build.id) : undefined}
+                progress={syncProgress[build.id]}
               />
             ))}
           </div>
