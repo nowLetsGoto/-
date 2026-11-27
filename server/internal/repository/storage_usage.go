@@ -38,7 +38,17 @@ type StorageUsage struct {
 	R2BuildCount int   // 仍占用 R2 的包数，即参与配额竞争的数量
 	PendingCount int   // 尚未同步到 R2
 	FailedCount  int   // 同步失败，需人工关注
-	Groups       []UsageGroup
+
+	// LocalBytes 是本机已归档包的总大小，只统计 local_state='present' 的记录。
+	//
+	// 不能简单累加 file_size：直传包的记录里有大小，但字节只在 R2、
+	// 本机根本没落文件（实测 13 条记录合计 1478MB，磁盘只有约 1024MB）。
+	// 按状态过滤才与磁盘实际占用对得上。
+	LocalBytes   int64
+	LocalBuilds  int // 本机已归档的包数
+	LocalMissing int // 本机还没有副本的包数（等待拉回或拉回失败）
+
+	Groups []UsageGroup
 }
 
 // StorageUsageOf 汇总一个分区内某个租户的存储用量。
@@ -53,16 +63,20 @@ SELECT COALESCE(SUM(b.r2_bytes), 0),
        COUNT(*),
        COUNT(*) FILTER (WHERE b.r2_bytes > 0),
        COUNT(*) FILTER (WHERE b.r2_state = $2),
-       COUNT(*) FILTER (WHERE b.r2_state = $3)
+       COUNT(*) FILTER (WHERE b.r2_state = $3),
+       COALESCE(SUM(b.file_size) FILTER (WHERE b.local_state = $4), 0),
+       COUNT(*) FILTER (WHERE b.local_state = $4),
+       COUNT(*) FILTER (WHERE b.local_state <> $4)
 FROM ` + r.table + ` b
 JOIN ` + r.project + ` p ON p.id = b.project_id
 WHERE p.tenant_id = $1`
 
 	var usage StorageUsage
 	err := r.db.QueryRowContext(ctx, totals, tenantID,
-		contract.R2StatePending, contract.R2StateFailed).Scan(
+		contract.R2StatePending, contract.R2StateFailed, contract.LocalPresent).Scan(
 		&usage.TotalBytes, &usage.BuildCount, &usage.R2BuildCount,
-		&usage.PendingCount, &usage.FailedCount)
+		&usage.PendingCount, &usage.FailedCount,
+		&usage.LocalBytes, &usage.LocalBuilds, &usage.LocalMissing)
 	if err != nil && err != sql.ErrNoRows {
 		return StorageUsage{}, fmt.Errorf("统计存储用量失败: %w", err)
 	}

@@ -663,6 +663,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/builds/{id}/sync-to-r2": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 把已被容量淘汰的包重新推回对象存储
+         * @description 本机是权威副本、R2 是可回收的缓存。包被容量淘汰后对象已离开桶， 下载会回落到本机流式（较慢）。调用本接口可用本机副本重建 R2 对象， 恢复 CDN 直链下载。
+         *     限定行为：仅允许 r2State=evicted 的包重推。synced 说明对象还在桶里， 重推纯属浪费带宽；pending 是上传流程的中间态，不该由这个入口介入。 已同步时幂等返回当前状态，不报错——用户可能连点两次或页面状态过期。
+         *     失败条件：本机副本已丢失（本接口不做拉回，没有别的字节来源）、 记录缺少 r2Key（无法确定推到哪个对象名）。
+         */
+        post: operations["syncBuildToR2"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/builds/{id}/file": {
         parameters: {
             query?: never;
@@ -1396,6 +1418,20 @@ export interface components {
             pendingCount: number;
             /** @description 同步失败的包数，需要人工关注 */
             failedCount: number;
+            /**
+             * Format: int64
+             * @description 本机已归档包的字节总和，只统计 localState=present 的记录。 不能累加 file_size：直传包的记录里有大小，但字节只在 R2、本机没有文件， 按状态过滤才与磁盘实际占用对得上。
+             */
+            localBytes: number;
+            /** @description 本机已归档的包数 */
+            localBuilds: number;
+            /** @description 本机尚无副本的包数（等待拉回或拉回失败） */
+            localMissing: number;
+            /**
+             * Format: int64
+             * @description 存储所在磁盘的可用字节；查询失败时为 0，前端据此隐藏本机那一段， 而不是显示一个会让人以为磁盘满了的 0。
+             */
+            diskFreeBytes: number;
             /** @description 按项目/环境/平台分组，占用从大到小排序 */
             groups: components["schemas"]["StorageUsageGroup"][];
         };
@@ -3161,6 +3197,46 @@ export interface operations {
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
             500: components["responses"]["InternalError"];
+        };
+    };
+    syncBuildToR2: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description 包 id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 同步完成（或本来已同步） */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        code: number;
+                        data: components["schemas"]["Build"];
+                    };
+                };
+            };
+            /** @description 状态不允许重推，或本机副本已丢失 */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description 包不存在或无权访问 */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
         };
     };
     downloadBuildFile: {

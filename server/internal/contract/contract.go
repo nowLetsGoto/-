@@ -1369,6 +1369,18 @@ type StorageUsage struct {
 	PendingCount int `json:"pendingCount"`
 	FailedCount  int `json:"failedCount"`
 
+	// 本机留底视图。与 R2 那组字段并列而不合并，因为两者上限性质不同：
+	// R2 是 9GB 配额（云端免费额度），本机上限取决于磁盘还剩多少。
+	//
+	// LocalBytes 只统计 local_state='present' 的包。不能累加 file_size：
+	// 直传包的记录里有大小，但字节只在 R2、本机没有文件。
+	LocalBytes   int64 `json:"localBytes"`
+	LocalBuilds  int   `json:"localBuilds"`
+	LocalMissing int   `json:"localMissing"`
+	// DiskFreeBytes 是存储所在磁盘的可用空间；查询失败时为 0，
+	// 前端据此隐藏本机那一段，而不是显示一个会误导人的 0。
+	DiskFreeBytes int64 `json:"diskFreeBytes"`
+
 	// Groups 按占用从大到小排序，最该清理的排在最前。
 	Groups []StorageUsageGroup `json:"groups"`
 }

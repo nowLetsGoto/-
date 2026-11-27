@@ -3050,6 +3050,10 @@ components:
         - remainingVersions
         - pendingCount
         - failedCount
+        - localBytes
+        - localBuilds
+        - localMissing
+        - diskFreeBytes
         - groups
       properties:
         usedBytes:
@@ -3085,6 +3089,25 @@ components:
         failedCount:
           type: integer
           description: 同步失败的包数，需要人工关注
+        localBytes:
+          type: integer
+          format: int64
+          description: >
+            本机已归档包的字节总和，只统计 localState=present 的记录。
+            不能累加 file_size：直传包的记录里有大小，但字节只在 R2、本机没有文件，
+            按状态过滤才与磁盘实际占用对得上。
+        localBuilds:
+          type: integer
+          description: 本机已归档的包数
+        localMissing:
+          type: integer
+          description: 本机尚无副本的包数（等待拉回或拉回失败）
+        diskFreeBytes:
+          type: integer
+          format: int64
+          description: >
+            存储所在磁盘的可用字节；查询失败时为 0，前端据此隐藏本机那一段，
+            而不是显示一个会让人以为磁盘满了的 0。
         groups:
           type: array
           description: 按项目/环境/平台分组，占用从大到小排序

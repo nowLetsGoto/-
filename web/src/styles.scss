@@ -5253,3 +5253,18 @@ code {
 .storage-usage-danger .storage-usage-hint {
   color: var(--color-danger);
 }
+
+/* 本机留底：与 R2 那一段同处一个卡片，用细分隔线分开。
+   两者上限性质不同（R2 是配额、本机看磁盘），视觉上不并列成主次。 */
+.storage-local {
+  display: grid;
+  gap: var(--spacing-xs);
+  padding-top: var(--spacing-sm);
+  border-top: 1px dashed var(--color-border);
+}
+
+/* 本机占用用中性色而非主色：它不涉及配额危机，
+   用主色会让人误以为和上面那条同等紧要。 */
+.storage-local-fill {
+  background: var(--color-muted);
+}

@@ -49,30 +49,15 @@ const ROUTES = {
 /**
  * StorageUsage 是当前租户的存储用量视图。
  *
+ * 从 openapi 派生而非手写：手写一份就要跟服务端同步维护，
+ * 而两处描述同一份结构时，漂移只是时间问题（这一批加四个字段时就差点漏改）。
+ *
  * 所有派生量（剩余额度、可上传数量）都由服务端算好：
  * 前端只展示，不重复实现配额口径——两处各算一遍必然漂移。
  */
-export interface StorageUsage {
-  usedBytes: number;
-  quotaBytes: number;
-  freeBytes: number;
-  estimatedUploads: number;
-  buildCount: number;
-  r2BuildCount: number;
-  maxVersions: number;
-  remainingVersions: number;
-  pendingCount: number;
-  failedCount: number;
-  groups: StorageUsageGroup[];
-}
+export type StorageUsage = Schemas['StorageUsage'];
 
-export interface StorageUsageGroup {
-  projectKey: string;
-  environment: string;
-  platform: string;
-  buildCount: number;
-  r2Bytes: number;
-}
+export type StorageUsageGroup = Schemas['StorageUsageGroup'];
 
 /** 读取当前租户的存储用量；租户由登录态决定，前端不传参。 */
 export function fetchStorageUsage(): Promise<StorageUsage> {

@@ -48,6 +48,16 @@ func (s *BuildService) StorageUsage(ctx context.Context, mode contract.SessionMo
 	usage.PendingCount = teamUsage.PendingCount + soloUsage.PendingCount
 	usage.FailedCount = teamUsage.FailedCount + soloUsage.FailedCount
 
+	// 本机留底视图：两个分区相加，同样只算已归档的包。
+	usage.LocalBytes = teamUsage.LocalBytes + soloUsage.LocalBytes
+	usage.LocalBuilds = teamUsage.LocalBuilds + soloUsage.LocalBuilds
+	usage.LocalMissing = teamUsage.LocalMissing + soloUsage.LocalMissing
+	// 磁盘可用空间查不到就留 0，前端据此隐藏本机那一段：
+	// 显示 0 会让人以为磁盘满了，比不显示更糟。
+	if free, err := s.paths.FreeBytes(); err == nil {
+		usage.DiskFreeBytes = free
+	}
+
 	// 两组各自有序，合并后必须重排：否则前端看到的"最占空间"可能落在列表中间。
 	usage.Groups = mergeUsageGroups(teamUsage.Groups, soloUsage.Groups)
 
