@@ -26,7 +26,8 @@ import (
 // 只参与内部决策，由治理专用查询按需读取，不进这条热路径。
 const buildColumns = `id, environment, platform, app_name, package_id, version, build_number,
 	changelog, original_file_name, file_size, file_ext, relative_path, meta_source,
-	download_count, created_at, owner_user_id, r2_key, pin_kind, r2_state, local_state`
+	download_count, created_at, owner_user_id, r2_key, pin_kind, r2_state, local_state,
+	local_pulled_bytes, local_error`
 
 // columns 在固定列后追加项目图标：公开下载页需要它，但 Build 表本身不冗余存，
 // 统一从同分区的 projects 表按 project_id 子查询，避免图标更新后包记录还是旧值。
@@ -269,7 +270,8 @@ func rowToBuild(row rowScanner) (contract.Build, error) {
 		&b.ID, &b.Environment, &b.Platform, &b.AppName, &b.PackageID,
 		&b.Version, &b.BuildNumber, &b.Changelog, &b.OriginalFileName,
 		&b.FileSize, &b.FileExt, &b.RelativePath, &b.MetaSource,
-		&b.DownloadCount, &createdAt, &b.OwnerUserID, &b.R2Key, &b.PinKind, &b.R2State, &b.LocalState, &b.ProjectIconURL,
+		&b.DownloadCount, &createdAt, &b.OwnerUserID, &b.R2Key, &b.PinKind, &b.R2State, &b.LocalState,
+		&b.LocalPulledBytes, &b.LocalError, &b.ProjectIconURL,
 	)
 	if err != nil {
 		return contract.Build{}, err

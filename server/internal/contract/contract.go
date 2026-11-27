@@ -290,7 +290,7 @@ const (
 	RouteBuildFile     = APIPrefix + "/builds/{id}/file"
 	// RouteBuildSyncToR2 把已被容量淘汰的包重新推到对象存储。
 	// 本机是权威副本，淘汰只回收 R2——想恢复 CDN 加速下载就走这个接口。
-	RouteBuildSyncToR2       = APIPrefix + "/builds/{id}/sync-to-r2"
+	RouteBuildSyncToR2 = APIPrefix + "/builds/{id}/sync-to-r2"
 	// RouteBuildSyncProgress 查询一次后台重推的上传进度，供包卡片显示进度条。
 	RouteBuildSyncProgress   = APIPrefix + "/builds/{id}/sync-progress"
 	RouteSharedBuild         = APIPrefix + "/public/builds/{id}"
@@ -1231,6 +1231,12 @@ type Build struct {
 	// 这两个状态字段都进列表：它们直接决定行内要显示什么操作，
 	// 而其余治理字段（r2_bytes、last_accessed_at 等）只用于内部决策，不进 DTO。
 	LocalState string `json:"localState"`
+	// LocalPulledBytes 是已下载到本机的字节数，配合 FileSize 可算出进度百分比。
+	// 存在数据库而不是只放内存：切换菜单或换标签页后仍需继续显示进度。
+	LocalPulledBytes int64 `json:"localPulledBytes"`
+	// LocalError 是拉回失败的原因，失败时前端显示红字提示。
+	// 只给可读文案，不含堆栈或内部路径——它是给管理员看的操作依据。
+	LocalError string `json:"localError"`
 	CreatedAt  string `json:"createdAt"`
 	// OwnerUserID 是上传者账号 id；system 表示由外部 API 或历史数据产生。
 	OwnerUserID string `json:"ownerUserId"`

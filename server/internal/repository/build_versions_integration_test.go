@@ -43,7 +43,8 @@ func TestPublicVersionsAcrossEnvironments(t *testing.T) {
 			relative_path TEXT, meta_source TEXT, download_count BIGINT,
 			created_at TIMESTAMPTZ, owner_user_id TEXT,
 			r2_key TEXT NOT NULL DEFAULT '', pin_kind TEXT NOT NULL DEFAULT '',
-			r2_state TEXT NOT NULL DEFAULT 'pending', local_state TEXT NOT NULL DEFAULT 'absent'
+			r2_state TEXT NOT NULL DEFAULT 'pending', local_state TEXT NOT NULL DEFAULT 'absent',
+			local_pulled_bytes BIGINT NOT NULL DEFAULT 0, local_error TEXT NOT NULL DEFAULT ''
 		)`,
 		`INSERT INTO download_version_projects VALUES ('project-a', 'app', ''), ('project-b', 'other', '')`,
 		`INSERT INTO download_version_builds
