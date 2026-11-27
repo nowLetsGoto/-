@@ -38,9 +38,9 @@ func newTestService(teams teamLookup) *Service {
 // TestPersonInTeams 覆盖「目标人员是否落在调用者团队内」的所有分支。
 func TestPersonInTeams(t *testing.T) {
 	svc := newTestService(fakeTeams{memberTeams: map[string][]string{
-		"person-in":     {"team-a"},
-		"person-multi":  {"team-x", "team-b"},
-		"person-other":  {"team-z"},
+		"person-in":    {"team-a"},
+		"person-multi": {"team-x", "team-b"},
+		"person-other": {"team-z"},
 	}})
 
 	tests := []struct {

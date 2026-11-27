@@ -3,12 +3,14 @@
 // 输入：repository/role、contract.Permissions 目录。
 // 输出：contract.Role / RoleList，失败给 ValidationError（400）。
 // 边界：不碰 HTTP、不判断"谁能改角色"（路由层保证写操作仅 platform_admin 及以上）；
-//       不校验"权限点是否该给某人"——那是授权分配（下一期）的事。
+//
+//	不校验"权限点是否该给某人"——那是授权分配（下一期）的事。
 //
 // 重要：**角色里没有「超级管理员」和「平台管理员」**。
 // 这两个是账号的身份（users.is_super_admin / users.account_level），不是角色：
 //   - 超级管理员全平台固定一个，靠 is_super_admin 标记，权限判定第一步就短路，从不查角色；
 //   - 平台管理员由超管在「公司管理」建公司时连带创建，同样靠 account_level。
+//
 // 早先存在一个 key=super-admin 的内置角色，它从未被权限判定读取过（判定只看身份），
 // 却会出现在角色列表里让人误以为"挂上它就是超管"。已删除，见 §23 迁移说明。
 package role
@@ -46,7 +48,7 @@ type builtinRole = rolerepo.BuiltinDefinition
 // 而不再是「平台级、所有公司共享」。
 var builtinRoles = []builtinRole{
 	{
-		Key:         "project-owner", Name:        "项目负责人", Description: "负责项目整体推进：可管理项目与应用包，但不参与平台配置",
+		Key: "project-owner", Name: "项目负责人", Description: "负责项目整体推进：可管理项目与应用包，但不参与平台配置",
 		Permissions: []string{
 			"build.read", "build.write", "build.delete",
 			"project.read", "project.write", "project.delete",
@@ -54,18 +56,18 @@ var builtinRoles = []builtinRole{
 		},
 	},
 	{
-		Key:         "developer", Name:        "开发", Description: "可以上传、发布与删除应用包",
+		Key: "developer", Name: "开发", Description: "可以上传、发布与删除应用包",
 		Permissions: []string{
 			"build.read", "build.write", "build.delete",
 			"project.read", "directory.read",
 		},
 	},
 	{
-		Key:         "tester", Name:        "测试", Description: "可以查看与下载应用包",
+		Key: "tester", Name: "测试", Description: "可以查看与下载应用包",
 		Permissions: []string{"build.read", "project.read", "directory.read"},
 	},
 	{
-		Key:         "guest", Name:        "访客", Description: "只读，适合外部协作方",
+		Key: "guest", Name: "访客", Description: "只读，适合外部协作方",
 		Permissions: []string{"build.read", "project.read", "directory.read"},
 	},
 }

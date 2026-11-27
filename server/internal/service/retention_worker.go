@@ -57,7 +57,7 @@ type retentionTenantLister interface {
 // 而它恰恰是用户唯一能看见的那部分（卡片上的进度条）。
 // 拆开后各自按需要的节奏运行，代价只是多一个 goroutine。
 func (s *BuildService) RunRetentionWorker(ctx context.Context, tenants retentionTenantLister) {
-	if s.r2 == nil {
+	if !s.r2.Enabled() {
 		log.Printf("淘汰巡检未启动：未配置对象存储")
 		return
 	}

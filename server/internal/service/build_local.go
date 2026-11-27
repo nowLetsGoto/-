@@ -269,7 +269,12 @@ func (s *BuildService) downloadToFile(
 	if err != nil {
 		return 0, fmt.Errorf("创建临时文件失败: %w", err)
 	}
-	written, copyErr := s.r2.DownloadTo(ctx, key, newProgressWriter(f, total, onProgress))
+	// 入口取快照：这是一次可能持续数分钟的下载，中途重取会换凭据。
+	r2 := s.r2.Get()
+	if r2 == nil {
+		return 0, fmt.Errorf("对象存储未启用，无法拉回")
+	}
+	written, copyErr := r2.DownloadTo(ctx, key, newProgressWriter(f, total, onProgress))
 	closeErr := f.Close()
 	if copyErr != nil {
 		return 0, fmt.Errorf("从对象存储下载失败: %w", copyErr)
@@ -318,7 +323,7 @@ func localStateFor(r2Key string) string {
 // 返回值是「尝试搬运的个数」而非「成功个数」：单个包的成功与否已经写进
 // local_state，日志里再区分一次只会让两个地方的统计口径逐渐分叉。
 func (s *BuildService) pullPendingLocal(ctx context.Context, mode contract.SessionMode, tenantID string) (int, error) {
-	if s.r2 == nil {
+	if !s.r2.Enabled() {
 		return 0, nil
 	}
 	rows, err := s.repos.For(mode).ListLocalPending(ctx, tenantID)

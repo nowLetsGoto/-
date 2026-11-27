@@ -1,6 +1,8 @@
 // scope_test.go · 数据范围推导的四级覆盖。
 // 职责：验证 super_admin / platform_admin / team_admin / member 各自推导出正确的 Scope，
-//       以及过渡期 is_super_admin 布尔与未知层级的边界行为。
+//
+//	以及过渡期 is_super_admin 布尔与未知层级的边界行为。
+//
 // 输入：内存假仓储 + 身份；输出：Scope 断言。
 // 边界：不连数据库、不启动 HTTP；仓储用假实现只为了满足窄接口，不验证 SQL 本身。
 package authz

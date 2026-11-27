@@ -12,8 +12,8 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"dandelion/server/internal/contract"
 	"dandelion/server/internal/authctx"
+	"dandelion/server/internal/contract"
 	"dandelion/server/internal/repository"
 	projectrepo "dandelion/server/internal/repository/project"
 )

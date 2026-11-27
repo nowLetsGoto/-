@@ -104,6 +104,10 @@ func run() error {
 	if err != nil {
 		return fmt.Errorf("初始化对象存储失败: %w", err)
 	}
+	// 用可替换持有者包装：R2 凭据可在设置页修改并立即生效，
+	// service 层通过 Get() 取快照而不是直接持有指针。
+	// 这里先用启动配置构造初始客户端；设置页保存后由 applyR2Config 整体替换。
+	r2Ref := storage.NewR2Ref(r2)
 	if r2 != nil {
 		if r2.IsPublicCDN() {
 			// 公开 CDN 直链：国内走 Cloudflare 节点，比 S3 签名端点快 10-30 倍。
@@ -192,7 +196,7 @@ func run() error {
 		PublicBaseURL: cfg.R2PublicBaseURL,
 	})
 
-	svc := service.NewBuildService(cfg, paths, r2, uploadSessions, buildRepos, projectRepos, webhookService, repository.NewBuildSharePartitioned(db), authzService)
+	svc := service.NewBuildService(cfg, paths, r2Ref, uploadSessions, buildRepos, projectRepos, webhookService, repository.NewBuildSharePartitioned(db), authzService)
 	if err := svc.PurgeTmp(); err != nil {
 		return err
 	}

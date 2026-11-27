@@ -12,8 +12,8 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"dandelion/server/internal/contract"
 	"dandelion/server/internal/authctx"
+	"dandelion/server/internal/contract"
 	"dandelion/server/internal/repository"
 	peoplerepo "dandelion/server/internal/repository/people"
 	tenantrepo "dandelion/server/internal/repository/tenant"
@@ -211,7 +211,6 @@ func (s *Service) Me(ctx context.Context, identity contract.Identity, personID s
 	}
 	return me, nil
 }
-
 
 // constraintConflictToMessage 把人员的数据库约束冲突翻译成可上屏的 400 提示。
 //

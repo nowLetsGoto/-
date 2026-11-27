@@ -65,9 +65,15 @@ type BuildNotifier interface {
 type BuildService struct {
 	cfg   config.Config
 	paths *storage.Paths
-	// r2 为 nil 表示未配置对象存储，所有下载走本机磁盘（与改造前一致）。
-	r2 *storage.R2
-	// sessions 是浏览器直传 R2 的会话仓储；r2 为 nil 时它也为 nil。
+	// r2 是可原子替换的客户端持有者，Get() 返回 nil 表示未配置对象存储，
+	// 所有下载走本机磁盘（与改造前一致）。
+	//
+	// 用持有者而非裸指针：R2 凭据可在设置页修改并立即生效。
+	// 调用方必须在函数入口取一次快照（r2 := s.r2.Get()）后全程使用该局部变量，
+	// 否则一次上传会在切换瞬间前半段用旧凭据、后半段用新凭据。
+	r2 *storage.R2Ref
+	// sessions 是浏览器直传的会话仓储。它只依赖数据库，与 r2 生命周期无关：
+	// 直传能力由「r2 是否启用」决定，会话记录本身始终可写。
 	sessions *repository.UploadSessionRepository
 	repos    repository.Partitioned[*repository.BuildRepository]
 	projects repository.Partitioned[*projectrepo.Repository]
@@ -82,7 +88,7 @@ type BuildService struct {
 func NewBuildService(
 	cfg config.Config,
 	paths *storage.Paths,
-	r2 *storage.R2,
+	r2 *storage.R2Ref,
 	sessions *repository.UploadSessionRepository,
 	repos repository.Partitioned[*repository.BuildRepository],
 	projects repository.Partitioned[*projectrepo.Repository],
@@ -309,7 +315,11 @@ func (s *BuildService) Create(ctx context.Context, in contract.CommitInput, iden
 	// 文件大小从 R2 元数据读取（一次轻量 HEAD，非整包传输）。
 	var fileSize int64
 	if staged.r2Key != "" {
-		size, exists, err := s.r2.StatObject(ctx, staged.r2Key)
+		r2 := s.r2.Get()
+		if r2 == nil {
+			return contract.Build{}, storage.ErrR2Disabled
+		}
+		size, exists, err := r2.StatObject(ctx, staged.r2Key)
 		if err != nil || !exists {
 			return contract.Build{}, fmt.Errorf("对象存储中找不到包文件: %w", err)
 		}
@@ -408,7 +418,7 @@ func (s *BuildService) Create(ctx context.Context, in contract.CommitInput, iden
 		s.notifier.NotifyBuild(ctx, project.TenantID, build)
 	}
 	// 直传来源的对象已在桶里：记下对象名与占用，省掉一次整包上传。
-	if staged.r2Key != "" && s.r2 != nil {
+	if staged.r2Key != "" && s.r2.Enabled() {
 		if err := repo.MarkR2Synced(ctx, build.ID, staged.r2Key, fileSize); err != nil {
 			log.Printf("直传包回写 R2 状态失败 id=%s key=%s err=%v", build.ID, staged.r2Key, err)
 			// 回写失败不阻断：交给后台镜像兜底。

@@ -30,7 +30,8 @@ import (
 //
 // 单条删除失败只跳过该条：一个对象删不掉不该让其余包继续占着空间。
 func (s *BuildService) EvictTenant(ctx context.Context, mode contract.SessionMode, tenantID string) (int, error) {
-	if s.r2 == nil || tenantID == "" {
+	r2 := s.r2.Get()
+	if r2 == nil || tenantID == "" {
 		return 0, nil
 	}
 	repo := s.repos.For(mode)
@@ -74,7 +75,7 @@ func (s *BuildService) EvictTenant(ctx context.Context, mode contract.SessionMod
 			continue
 		}
 
-		if err := s.r2.DeleteObject(ctx, row.R2Key); err != nil {
+		if err := r2.DeleteObject(ctx, row.R2Key); err != nil {
 			log.Printf("淘汰对象失败，跳过 id=%s key=%s err=%v", row.ID, row.R2Key, err)
 			continue
 		}

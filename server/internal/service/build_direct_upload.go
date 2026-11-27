@@ -56,7 +56,10 @@ func directKey(tenantID, projectKey, token, ext string) string {
 // 入参带 project：key 需要它来确定归属，同时也借此提前拒绝无效项目，
 // 免得用户传完 300MB 才在 commit 阶段发现项目不存在。
 func (s *BuildService) IssueUploadTicket(ctx context.Context, in contract.UploadTicketInput, identity contract.Identity) (contract.UploadTicket, error) {
-	if s.r2 == nil || s.sessions == nil {
+	// 直传需要两个前提：对象存储可用（票据是给 R2 的）与会话仓储可用（要记状态）。
+	// 两者现在互不依赖：sessions 只写数据库，r2 可运行时替换。
+	r2 := s.r2.Get()
+	if r2 == nil || s.sessions == nil {
 		return contract.UploadTicket{}, &contract.ValidationError{Message: errDirectDisabled.Error()}
 	}
 	ext := strings.ToLower(strings.TrimPrefix(path.Ext(in.FileName), "."))
@@ -95,7 +98,7 @@ func (s *BuildService) IssueUploadTicket(ctx context.Context, in contract.Upload
 	}
 	key := directKey(tenantID, project.Key, token, ext)
 
-	putURL, err := s.r2.PresignPutURL(ctx, key, in.Size, contentType, originalName, uploadTicketTTL)
+	putURL, err := r2.PresignPutURL(ctx, key, in.Size, contentType, originalName, uploadTicketTTL)
 	if err != nil {
 		return contract.UploadTicket{}, err
 	}
@@ -145,7 +148,8 @@ func uploadTicketHeaders(contentType, originalName string) map[string]string {
 // 校验点：会话存在且未过期、对象确实已上传、大小与声明一致。
 // 大小不一致说明浏览器传了别的文件（或传输被截断），一律拒绝。
 func (s *BuildService) StageFromR2(ctx context.Context, uploadToken string) (contract.StageResult, error) {
-	if s.r2 == nil || s.sessions == nil {
+	r2 := s.r2.Get()
+	if r2 == nil || s.sessions == nil {
 		return contract.StageResult{}, &contract.ValidationError{Message: errDirectDisabled.Error()}
 	}
 	session, err := s.sessions.Find(ctx, uploadToken)
@@ -160,7 +164,7 @@ func (s *BuildService) StageFromR2(ctx context.Context, uploadToken string) (con
 	}
 
 	// 确认对象存在且大小一致：浏览器可能中途失败，或传了与声明不符的文件。
-	size, exists, err := s.r2.StatObject(ctx, session.R2Key)
+	size, exists, err := r2.StatObject(ctx, session.R2Key)
 	if err != nil {
 		return contract.StageResult{}, err
 	}
@@ -187,7 +191,7 @@ func (s *BuildService) StageFromR2(ctx context.Context, uploadToken string) (con
 
 	// 解析：优先用 Range 只读 manifest 所需字节（秒级）；
 	// 未配公开域名时无法 Range，回落到整包回拉再解析（慢但功能完整）。
-	if publicURL, err := s.r2.PublicURL(session.R2Key); err == nil {
+	if publicURL, err := r2.PublicURL(session.R2Key); err == nil {
 		reader := storage.NewHTTPRangeReader(publicURL, storage.HTTPClientForRange())
 		return s.ParseFrom(uploadToken, reader, size, session.FileExt), nil
 	}
@@ -235,8 +239,8 @@ func (s *BuildService) AbortUpload(ctx context.Context, uploadToken string) erro
 	if err != nil || session == nil {
 		return err
 	}
-	if s.r2 != nil && session.State != repository.UploadStateCompleted {
-		if err := s.r2.DeleteObject(ctx, session.R2Key); err != nil {
+	if r2 := s.r2.Get(); r2 != nil && session.State != repository.UploadStateCompleted {
+		if err := r2.DeleteObject(ctx, session.R2Key); err != nil {
 			log.Printf("放弃上传时删除 R2 对象失败 key=%s err=%v", session.R2Key, err)
 		}
 	}
@@ -258,7 +262,15 @@ func (s *BuildService) pullFromR2ToStage(ctx context.Context, session repository
 	if err != nil {
 		return StagedFile{}, fmt.Errorf("创建暂存文件失败: %w", err)
 	}
-	written, copyErr := s.r2.DownloadTo(ctx, session.R2Key, dst)
+	// 入口取一次快照后全程复用：这是一次可能持续数分钟的下载，
+	// 中途重取会让前后半段使用不同的凭据。
+	r2 := s.r2.Get()
+	if r2 == nil {
+		_ = dst.Close()
+		_ = os.Remove(tmpPath)
+		return StagedFile{}, errDirectDisabled
+	}
+	written, copyErr := r2.DownloadTo(ctx, session.R2Key, dst)
 	closeErr := dst.Close()
 	if copyErr != nil || closeErr != nil {
 		// 失败必须清掉半截文件，否则会被当成有效暂存。
@@ -307,11 +319,12 @@ func (s *BuildService) pruneExpiredSessions(ctx context.Context) {
 		log.Printf("清理过期上传会话失败: %v", err)
 		return
 	}
-	if s.r2 == nil {
+	r2 := s.r2.Get()
+	if r2 == nil {
 		return
 	}
 	for _, key := range keys {
-		if err := s.r2.DeleteObject(ctx, key); err != nil {
+		if err := r2.DeleteObject(ctx, key); err != nil {
 			log.Printf("清理孤立 R2 对象失败 key=%s err=%v", key, err)
 		}
 	}

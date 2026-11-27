@@ -24,7 +24,7 @@ import (
 // 让 HTTP 请求等到完成会被 Cloudflare 的 100 秒代理超时切断。
 // 前端改为轮询 local_pulled_bytes 看进度，与自动巡检走同一条路径。
 func (s *BuildService) RetryLocalPull(ctx context.Context, id string, identity contract.Identity) (contract.Build, error) {
-	if s.r2 == nil {
+	if !s.r2.Enabled() {
 		return contract.Build{}, &contract.ValidationError{Message: "对象存储未配置，无法下载"}
 	}
 

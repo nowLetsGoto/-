@@ -9,7 +9,10 @@
 // 边界：磁盘始终是权威副本——R2 任何失败都只记日志，绝不影响上传成功或下载可用性。
 //
 //	不阻塞请求链路：同步在独立 goroutine 中完成，失败留给下次下载重试。
-//	未配置 R2（s.r2 == nil）时全部方法直接返回，行为与改造前完全一致。
+//	未配置 R2（s.r2.Get() == nil）时全部方法直接返回，行为与改造前完全一致。
+//
+// 每个方法都在入口取一次客户端快照（r2 := s.r2.Get()）后全程复用：
+// 配置可在运行时替换，重复 Get 会让一次操作在切换瞬间换到另一套凭据。
 package service
 
 import (
@@ -42,15 +45,16 @@ const r2PrewarmTimeout = 30 * time.Second
 const r2PrewarmBytes = 256 * 1024
 
 // R2Enabled 报告是否启用了对象存储镜像。
-func (s *BuildService) R2Enabled() bool { return s.r2 != nil }
+func (s *BuildService) R2Enabled() bool { return s.r2.Enabled() }
 
 // R2SignedURL 为已镜像的文件签发下载直链；未启用或未镜像时返回空串。
 // 调用方据此决定 302 跳转还是本地流式。
 func (s *BuildService) R2SignedURL(ctx context.Context, ref contract.FileRef) string {
-	if s.r2 == nil || ref.R2Key == "" {
+	r2 := s.r2.Get()
+	if r2 == nil || ref.R2Key == "" {
 		return ""
 	}
-	url, err := s.r2.DownloadURL(ctx, ref.R2Key, r2SignedURLTTL)
+	url, err := r2.DownloadURL(ctx, ref.R2Key, r2SignedURLTTL)
 	if err != nil {
 		// 生成下载地址失败不该让下载失败：记日志并回落到本机流式。
 		log.Printf("R2 生成下载地址失败 key=%s err=%v", ref.R2Key, err)
@@ -65,10 +69,11 @@ func (s *BuildService) R2SignedURL(ctx context.Context, ref contract.FileRef) st
 // 私有桶的签名链接有 TTL，塞进页面会在用户停留久后失效，那种情况仍走
 // /public/builds/{id}/file 在点击瞬间签发。
 func (s *BuildService) SharedDirectURL(b contract.Build) string {
-	if s.r2 == nil || !s.r2.IsPublicCDN() || b.R2State != contract.R2StateSynced || b.R2Key == "" {
+	r2 := s.r2.Get()
+	if r2 == nil || !r2.IsPublicCDN() || b.R2State != contract.R2StateSynced || b.R2Key == "" {
 		return ""
 	}
-	url, err := s.r2.PublicURL(b.R2Key)
+	url, err := r2.PublicURL(b.R2Key)
 	if err != nil {
 		log.Printf("R2 生成分享直链失败 key=%s err=%v", b.R2Key, err)
 		return ""
@@ -82,7 +87,8 @@ func (s *BuildService) SharedDirectURL(b contract.Build) string {
 // （供重推复用），若仍以 key 是否存在来判断「已同步」，
 // 被淘汰的包会永久跳过同步——点「同步到 R2」也推不上去。
 func (s *BuildService) syncToR2(build contract.Build, mode contract.SessionMode) {
-	if s.r2 == nil || build.R2State == contract.R2StateSynced {
+	r2 := s.r2.Get()
+	if r2 == nil || build.R2State == contract.R2StateSynced {
 		return
 	}
 	abs, err := s.paths.SafeResolve(build.RelativePath)
@@ -102,13 +108,13 @@ func (s *BuildService) syncToR2(build contract.Build, mode contract.SessionMode)
 		log.Printf("R2 同步跳过：读取文件信息失败 id=%s err=%v", build.ID, err)
 		return
 	}
-	key := s.r2.Key(path.Base(build.RelativePath))
+	key := r2.Key(path.Base(build.RelativePath))
 	contentType, _ := s.contentTypeOf(build.Platform)
 
 	ctx, cancel := context.WithTimeout(context.Background(), r2SyncTimeout)
 	defer cancel()
 
-	if err := s.r2.Put(ctx, key, file, info.Size(), contentType, build.OriginalFileName); err != nil {
+	if err := r2.Put(ctx, key, file, info.Size(), contentType, build.OriginalFileName); err != nil {
 		log.Printf("R2 同步失败 id=%s key=%s err=%v", build.ID, key, err)
 		return
 	}
@@ -127,7 +133,7 @@ func (s *BuildService) syncToR2(build contract.Build, mode contract.SessionMode)
 // 这里不重复判断「是否已同步」：该判据只应存在一处（syncToR2 内部），
 // 两处各写一遍必然有一天只改一边。多起一个立即返回的 goroutine 代价可忽略。
 func (s *BuildService) syncToR2Async(build contract.Build, mode contract.SessionMode) {
-	if s.r2 == nil {
+	if !s.r2.Enabled() {
 		return
 	}
 	go s.syncToR2(build, mode)
@@ -152,10 +158,11 @@ func (s *BuildService) contentTypeOf(platform string) (string, error) {
 // 注意：不使用调用方的 ctx。Create 的请求上下文在响应返回后即被取消，
 // 而预热要在那之后继续跑，故用独立的后台上下文与超时。
 func (s *BuildService) prewarmCDNAsync(key string) {
-	if s.r2 == nil || key == "" {
+	r2 := s.r2.Get()
+	if r2 == nil || key == "" {
 		return
 	}
-	url, err := s.r2.PublicURL(key)
+	url, err := r2.PublicURL(key)
 	if err != nil {
 		// 未配公开域名时没有 CDN 可预热（下载走 S3 或本机），直接跳过。
 		return

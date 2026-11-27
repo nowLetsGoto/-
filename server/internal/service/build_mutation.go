@@ -95,10 +95,11 @@ func (s *BuildService) removeBuildBytes(ctx context.Context, id, relativePath, r
 	} else if err := os.Remove(abs); err != nil && !errors.Is(err, os.ErrNotExist) {
 		log.Printf("清理包字节：删除本地文件失败 id=%s err=%v", id, err)
 	}
-	if r2Key == "" || s.r2 == nil {
+	r2 := s.r2.Get()
+	if r2Key == "" || r2 == nil {
 		return
 	}
-	if err := s.r2.DeleteObject(ctx, r2Key); err != nil {
+	if err := r2.DeleteObject(ctx, r2Key); err != nil {
 		log.Printf("清理包字节：删除 R2 对象失败 id=%s key=%s err=%v", id, r2Key, err)
 	}
 }

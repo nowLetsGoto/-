@@ -22,7 +22,7 @@ func TestSharedDirectURL(t *testing.T) {
 	if err != nil {
 		t.Fatalf("构造 R2 失败: %v", err)
 	}
-	svc := &BuildService{r2: r2}
+	svc := &BuildService{r2: storage.NewR2Ref(r2)}
 
 	cases := []struct {
 		name  string
