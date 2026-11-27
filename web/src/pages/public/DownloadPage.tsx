@@ -300,7 +300,26 @@ export function DownloadPage(): JSX.Element {
     error,
     versionsError,
     reload,
+    refreshBuild,
   } = usePublicDownload(id, shareToken);
+
+  // 分享页打开后包才同步到 R2 时，自动把下载链接切成 CDN 直链。
+  // 只在缺直链时轮询；拿到直链或 10 分钟后停止，避免长期无效请求。
+  const pollingBuildID = build?.id;
+  const hasDirectURL = !!build?.downloadDirectUrl;
+  useEffect(() => {
+    if (!shared || !pollingBuildID || hasDirectURL) return;
+    const deadline = Date.now() + 10 * 60 * 1000;
+    const timer = window.setInterval(() => {
+      if (Date.now() >= deadline) {
+        window.clearInterval(timer);
+        return;
+      }
+      refreshBuild();
+    }, 5000);
+    return () => window.clearInterval(timer);
+  }, [shared, pollingBuildID, hasDirectURL, refreshBuild]);
+
   const [environment, setEnvironment] = useEnvironment(build?.environment);
   const [sheet, setSheet] = useState<'versions' | 'help' | 'qr' | null>(null);
   const [pendingVersion, setPendingVersion] = useState('');

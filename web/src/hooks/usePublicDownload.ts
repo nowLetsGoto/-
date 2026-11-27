@@ -1,11 +1,11 @@
 /**
  * 公开下载页的数据加载与版本投影。
  * 职责：按包 id 读取详情和同应用版本，合并当前包并按发布时间排序，独立呈现版本列表错误。
- * 输入：路由包 id 与可选分享凭证；输出：包详情、完整版本列表、加载/错误/缺失状态与重试函数。
+ * 输入：路由包 id 与可选分享凭证；输出：包详情、完整版本列表、加载/错误/缺失状态、重试与单包刷新函数。
  * 边界：只通过 builds API 取数；分享模式仅加载后端授权的同应用版本；按当前平台收敛，跨平台包单独供切换；不生成地址、不选环境。
  */
-import { useEffect, useMemo, useState } from 'react';
-import type { DownloadBuild, PublicBuildVersion } from '../api/builds';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import type { Build, DownloadBuild, PublicBuildVersion } from '../api/builds';
 import {
   getBuild,
   getSharedBuild,
@@ -34,6 +34,15 @@ const INITIAL: DownloadState = {
   error: '',
   missing: false,
 };
+
+// 登录预览拿到的 Build 没有分享直链字段；统一补空串，让下游只认 DownloadBuild。
+// 直链只在免登录分享里提供，内部预览仍走本站文件接口。
+function toDownloadBuild(build: DownloadBuild | Build): DownloadBuild {
+  return {
+    ...build,
+    downloadDirectUrl: 'downloadDirectUrl' in build ? build.downloadDirectUrl : '',
+  };
+}
 
 // RFC3339Nano 会省略末尾的零；补齐精度后才可按字符串比较同一秒内的版本。
 function publishedAt(version: PublicBuildVersion): string {
@@ -74,12 +83,7 @@ export function usePublicDownload(id: string, shareToken: string | null) {
     Promise.all([shared ? getSharedBuild(id, shareToken) : getBuild(id), versionsRequest])
       .then(([build, result]) => {
         if (cancelled) return;
-        // 登录预览拿到的 Build 没有分享直链字段；统一补空串，让下游只认 DownloadBuild。
-        // 直链只在免登录分享里提供，内部预览仍走本站文件接口。
-        const view: DownloadBuild = {
-          ...build,
-          downloadDirectUrl: 'downloadDirectUrl' in build ? build.downloadDirectUrl : '',
-        };
+        const view = toDownloadBuild(build);
         const current: PublicBuildVersion = {
           id: view.id,
           version: view.version,
@@ -130,6 +134,21 @@ export function usePublicDownload(id: string, shareToken: string | null) {
     () => state.versions.filter((item) => item.platform === activePlatform),
     [state.versions, activePlatform],
   );
+
+  // 只刷新包详情，不碰 revision：同步完成时页面不该闪一次骨架屏。
+  const refreshBuild = useCallback((): void => {
+    if (!id) return;
+    const requestKey = key;
+    (shared ? getSharedBuild(id, shareToken) : getBuild(id))
+      .then((build) => {
+        const view = toDownloadBuild(build);
+        setState((prev) => (prev.key === requestKey ? { ...prev, build: view } : prev));
+      })
+      .catch(() => {
+        // 单包刷新是旁路：失败时保留当前详情，用户仍可点下载。
+      });
+  }, [id, key, shared, shareToken]);
+
   return {
     build: current ? state.build : null,
     versions: current ? versions : [],
@@ -140,5 +159,6 @@ export function usePublicDownload(id: string, shareToken: string | null) {
     error: current ? state.error : '',
     versionsError: current ? state.versionsError : '',
     reload: () => setRevision((value) => value + 1),
+    refreshBuild,
   };
 }
