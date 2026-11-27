@@ -75,6 +75,8 @@ type BuildService struct {
 	shares   repository.Partitioned[shareLookup]
 	signer   shareSigner
 	authz    buildPermissionChecker
+	// resyncs 记录正在后台重推的包，防止同一对象被并发上传两遍。
+	resyncs resyncTracker
 }
 
 func NewBuildService(

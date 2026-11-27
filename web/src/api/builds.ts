@@ -11,6 +11,7 @@ import { ApiError, del, get, getShared, postForm, postJSON, putJSON } from './cl
 type Schemas = components['schemas'];
 
 export type Build = Schemas['Build'];
+export type SyncProgress = Schemas['SyncProgress'];
 export type DownloadBuild = Schemas['SharedBuild'];
 export type StageResult = Schemas['StageResult'];
 export type CommitBuildRequest = Schemas['CommitBuildRequest'];
@@ -43,6 +44,8 @@ const ROUTES = {
   buildById: (id: string): string => `/api/v1/builds/${encodeURIComponent(id)}`,
   buildVersions: (id: string): string => `/api/v1/builds/${encodeURIComponent(id)}/versions`,
   buildSyncToR2: (id: string): string => `/api/v1/builds/${encodeURIComponent(id)}/sync-to-r2`,
+  buildSyncProgress: (id: string): string =>
+    `/api/v1/builds/${encodeURIComponent(id)}/sync-progress`,
   storageUsage: '/api/v1/storage/usage',
 } as const;
 
@@ -176,6 +179,11 @@ export function deleteBuild(id: string): Promise<void> {
  */
 export function syncBuildToR2(id: string): Promise<Build> {
   return postJSON<Build>(ROUTES.buildSyncToR2(id), {});
+}
+
+/** 查询后台重推的实时进度，供包卡片画进度条。 */
+export function getSyncProgress(id: string): Promise<SyncProgress> {
+  return get<SyncProgress>(ROUTES.buildSyncProgress(id));
 }
 
 /** 独立分享读取当前授权版本，不依赖登录态。 */

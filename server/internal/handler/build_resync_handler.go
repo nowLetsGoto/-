@@ -1,8 +1,8 @@
 // build_resync_handler.go · 「同步到 R2」的 HTTP 语义层。
 //
-// 职责：取路径参数与登录态，调用 service 完成重推，返回更新后的包。
+// 职责：取路径参数与登录态，受理重推并查询其进度。
 // 输入：HTTP 请求（路径含包 id，租户与分区来自登录态）。
-// 输出：统一 JSON 包裹的 Build。
+// 输出：202 与当前包状态；进度查询返回统一 JSON 包裹的 SyncProgress。
 // 边界：不拼 storage key、不判断状态——「什么情况能重推」只由 service 决定。
 //
 // 独立成文件而非塞进 build_handler.go：那个文件已经承载上传、发布、下载、
@@ -17,10 +17,12 @@ import (
 	"dandelion/server/internal/authctx"
 )
 
-// SyncToR2 把已被容量淘汰的包重新推回对象存储。
+// SyncToR2 受理「把已被容量淘汰的包重新推回对象存储」。
 //
 // 方法必须是 POST：这个动作会真实上传对象、改变服务端状态，
 // 用 GET 会让浏览器预取、代理缓存、甚至一个 <img> 标签都能触发它。
+//
+// 返回 202 而非等上传完成：整包上传可能超过 Cloudflare 的 100 秒代理超时。
 func (h *BuildHandler) SyncToR2(w http.ResponseWriter, r *http.Request) error {
 	id := chi.URLParam(r, "id")
 	AttachLogFields(r, "id="+id)
@@ -29,5 +31,17 @@ func (h *BuildHandler) SyncToR2(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
-	return OK(w, build)
+	return OKWithStatus(w, http.StatusAccepted, build)
+}
+
+// SyncProgress 返回一次后台重推的实时进度。
+func (h *BuildHandler) SyncProgress(w http.ResponseWriter, r *http.Request) error {
+	id := chi.URLParam(r, "id")
+	AttachLogFields(r, "id="+id)
+
+	progress, err := h.svc.SyncProgress(r.Context(), id, authctx.From(r.Context()))
+	if err != nil {
+		return err
+	}
+	return OK(w, progress)
 }

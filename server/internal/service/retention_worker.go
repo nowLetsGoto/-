@@ -108,25 +108,29 @@ func (s *BuildService) sweepOnce(ctx context.Context, tenants retentionTenantLis
 	pulled, evicted, failed := 0, 0, 0
 	for _, tenantID := range ids {
 		for _, mode := range []contract.SessionMode{contract.ModeTeam, contract.ModeSolo} {
-			// 每个租户单独限时：一个租户的慢查询不该拖住其余租户，
-			// 也不该让整轮巡检越过下一次触发点。
-			tenantCtx, cancel := context.WithTimeout(ctx, retentionTenantTimeout)
-
-			n, err := s.pullPendingLocal(tenantCtx, mode, tenantID)
+			// 两件事用各自的超时，不能共用一个：
+			// 淘汰只删对象（秒级），拉回要下载上百 MB 的包（可能十几分钟）。
+			// 共用一个 5 分钟曾导致实测失败——第 1 个包刚下完，第 2 个就超时，
+			// 第 3、4 个连抢占都被取消，一轮白跑。
+			pullCtx, pullCancel := context.WithTimeout(ctx, localPullBatchTimeout)
+			n, err := s.pullPendingLocal(pullCtx, mode, tenantID)
+			pullCancel()
 			if err != nil {
 				log.Printf("补拉本机：租户 %s 分区 %s 失败 err=%v", tenantID, mode, err)
 				failed++
 			}
 			pulled += n
 
-			n, err = s.EvictTenant(tenantCtx, mode, tenantID)
+			// 淘汰保持短超时：它只是删对象，超过 5 分钟通常意味着对象存储异常，
+			// 早退出比拖住整轮更有价值。
+			evictCtx, evictCancel := context.WithTimeout(ctx, retentionTenantTimeout)
+			n, err = s.EvictTenant(evictCtx, mode, tenantID)
+			evictCancel()
 			if err != nil {
 				log.Printf("淘汰巡检：租户 %s 分区 %s 失败 err=%v", tenantID, mode, err)
 				failed++
 			}
 			evicted += n
-
-			cancel()
 		}
 	}
 
@@ -134,7 +138,13 @@ func (s *BuildService) sweepOnce(ctx context.Context, tenants retentionTenantLis
 		len(ids), pulled, evicted, failed, time.Since(start).Round(time.Millisecond))
 }
 
-// retentionTenantTimeout 限制单个租户的巡检时长。
-// 给 5 分钟：即使一次要删几十个对象，也远用不到；超过这个时间通常意味着
-// 对象存储异常，早退出比拖住整轮更有价值。
+// localPullBatchTimeout 限制单个租户一轮补拉的总时长。
+//
+// 给 30 分钟：一个租户可能有多个 119MB 包要串行下载，慢链路上十几分钟很正常。
+// 曾与淘汰共用 5 分钟超时，实测第 1 个包刚下完第 2 个就被取消，后续包连抢都抢不到。
+const localPullBatchTimeout = 30 * time.Minute
+
+// retentionTenantTimeout 限制单个租户的淘汰时长。
+// 给 5 分钟：淘汰只是删对象，超过这个时间通常意味着对象存储异常，
+// 早退出比拖住整轮更有价值。
 const retentionTenantTimeout = 5 * time.Minute

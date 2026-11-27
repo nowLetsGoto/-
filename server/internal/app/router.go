@@ -87,6 +87,7 @@ var allowedMethods = map[string]string{
 	contract.RouteBuildVersions:       "GET",
 	contract.RouteBuildFile:           "GET",
 	contract.RouteBuildSyncToR2:       "POST",
+	contract.RouteBuildSyncProgress:   "GET",
 	contract.RouteSharedBuild:         "GET",
 	contract.RouteSharedBuildVersions: "GET",
 	contract.RouteSharedBuildFile:     "GET",
@@ -133,6 +134,8 @@ func allowedMethodsFor(req *http.Request) string {
 		// 必须排在下面的通用前缀判断之前：重推是写操作，
 		// 落到默认的 GET 会让 405 响应给出错误的 Allow 头。
 		return "POST"
+	case strings.HasSuffix(path, "/sync-progress"):
+		return "GET"
 	case strings.HasPrefix(path, contract.RouteBuilds+"/"):
 		if strings.Count(strings.TrimPrefix(path, contract.RouteBuilds+"/"), "/") == 0 {
 			return "GET, PUT, DELETE"
@@ -172,6 +175,8 @@ func NewRouter(d Deps) http.Handler {
 			private.Get("/builds/{id}/file", middleware.Wrap(d.Builds.DownloadFile))
 			// 重推已淘汰的包：POST 因为会真实上传对象并改状态，不可被缓存或预取。
 			private.Post("/builds/{id}/sync-to-r2", middleware.Wrap(d.Builds.SyncToR2))
+			// 查询重推进度：GET 只读，供包卡片画进度条与成功/失败状态。
+			private.Get("/builds/{id}/sync-progress", middleware.Wrap(d.Builds.SyncProgress))
 			// 发布/暂存：提交时项目在请求体里，由 handler 内部判定 build.write
 			private.Post("/builds/stage", middleware.Wrap(d.Builds.Stage))
 			// 大包直传：先取票据让浏览器直接 PUT 到 R2，避开 Tunnel 的 100MB 请求体上限。

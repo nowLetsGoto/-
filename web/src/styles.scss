@@ -1949,6 +1949,63 @@ ul {
   white-space: nowrap;
 }
 
+/* 同步进度条：紧跟卡片标题，进行中蓝色、成功绿色、失败红色。 */
+.package-sync {
+  margin: 10px 0 2px;
+}
+
+.package-sync-label {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 6px;
+  color: var(--color-muted);
+  font-size: 12px;
+  line-height: 1.4;
+
+  span:first-child {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+}
+
+.package-sync-track {
+  height: 6px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--color-border);
+}
+
+.package-sync-fill {
+  height: 100%;
+  border-radius: inherit;
+  background: var(--color-primary);
+  transition:
+    width 0.3s ease,
+    background-color 0.2s ease;
+}
+
+.package-sync-succeeded {
+  .package-sync-label {
+    color: var(--color-success);
+  }
+
+  .package-sync-fill {
+    background: var(--color-success);
+  }
+}
+
+.package-sync-failed {
+  .package-sync-label {
+    color: var(--color-danger);
+  }
+
+  .package-sync-fill {
+    background: var(--color-danger);
+  }
+}
+
 .package-identity p {
   overflow: hidden;
   margin: 2px 0 0;

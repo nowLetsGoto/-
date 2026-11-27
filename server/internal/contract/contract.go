@@ -162,6 +162,25 @@ const (
 	R2StateFailed = "failed"
 )
 
+// 一次「同步到 R2」的进度状态。
+//
+// 后台上传仍在进行时前端用它画进度条；完成后保留一段时间，
+// 让卡片能显示绿色成功或红色失败，而不是瞬间消失。
+const (
+	SyncStateIdle      = "idle"
+	SyncStateRunning   = "running"
+	SyncStateSucceeded = "succeeded"
+	SyncStateFailed    = "failed"
+)
+
+// SyncProgress 是一次后台重推的实时进度。
+type SyncProgress struct {
+	State string `json:"state"`
+	Bytes int64  `json:"bytes"`
+	Total int64  `json:"total"`
+	Error string `json:"error"`
+}
+
 // AccountLevel 是管理身份层级：决定「能管谁、管多大范围」，与业务角色完全正交。
 // 取值与 api/openapi.yaml 的 AccountLevel.enum、users.account_level 的 CHECK 约束一一对应。
 // 顺序从高到低；新增层级必须同时改三处并在此注释里说明，避免各层各自解释大小关系。
@@ -272,6 +291,8 @@ const (
 	// RouteBuildSyncToR2 把已被容量淘汰的包重新推到对象存储。
 	// 本机是权威副本，淘汰只回收 R2——想恢复 CDN 加速下载就走这个接口。
 	RouteBuildSyncToR2       = APIPrefix + "/builds/{id}/sync-to-r2"
+	// RouteBuildSyncProgress 查询一次后台重推的上传进度，供包卡片显示进度条。
+	RouteBuildSyncProgress   = APIPrefix + "/builds/{id}/sync-progress"
 	RouteSharedBuild         = APIPrefix + "/public/builds/{id}"
 	RouteSharedBuildVersions = APIPrefix + "/public/builds/{id}/versions"
 	RouteSharedBuildFile     = APIPrefix + "/public/builds/{id}/file"
@@ -325,7 +346,7 @@ var APIRoutes = []string{
 	RoutePeople, RoutePersonByID, RouteTeams, RouteTeamByID,
 	RoutePermissions, RouteMenus, RouteRoles, RouteRoleByID,
 	RouteSettings, RouteWebhookTest, RouteAPIKeyRotate, RouteOpenBuilds, RouteStorageUsage,
-	RouteStage, RouteUploadTicket, RouteStageFromR2, RouteUploadAbort, RouteBuilds, RouteBuildByID, RouteBuildVersions, RouteBuildFile, RouteBuildSyncToR2, RouteSharedBuild, RouteSharedBuildVersions, RouteSharedBuildFile, RouteHealth,
+	RouteStage, RouteUploadTicket, RouteStageFromR2, RouteUploadAbort, RouteBuilds, RouteBuildByID, RouteBuildVersions, RouteBuildFile, RouteBuildSyncToR2, RouteBuildSyncProgress, RouteSharedBuild, RouteSharedBuildVersions, RouteSharedBuildFile, RouteHealth,
 }
 
 // Webhook 可推送字段的键：与 api/openapi.yaml 的 x-webhook-fields 键集合一致。

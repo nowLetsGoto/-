@@ -6,7 +6,13 @@
 import { useEffect, useState } from 'react';
 import type { FormEvent } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
-import type { Build, Environment, Platform, UpdateBuildRequest } from '../../api/builds';
+import type {
+  Build,
+  Environment,
+  Platform,
+  SyncProgress,
+  UpdateBuildRequest,
+} from '../../api/builds';
 import { errorMessage } from '../../api/client';
 import { Button, Input, Segmented, TextArea } from '../../components/Controls';
 import { ConfirmDialog } from '../../components/ConfirmDialog';
@@ -63,7 +69,7 @@ function PackageList({ projectKey }: { projectKey: string }): JSX.Element {
   });
   // 同步结果统一走 notice 提示；成功时刷新列表，
   // 状态以服务端返回为准，前端不自己推测 r2State 怎么变。
-  const syncing = useSyncToR2((error) => {
+  const sync = useSyncToR2((error) => {
     if (error) {
       setNotice(error);
       return;
@@ -239,8 +245,8 @@ function PackageList({ projectKey }: { projectKey: string }): JSX.Element {
                 onDelete={
                   deletable ? () => removal.request({ ...build, label: build.appName }) : undefined
                 }
-                onSync={writable ? () => syncing.sync(build.id) : undefined}
-                syncing={syncing.syncingID === build.id}
+                onSync={writable ? () => sync.sync(build.id) : undefined}
+                progress={sync.progress[build.id]}
               />
             ))}
           </div>
@@ -316,21 +322,59 @@ function AppMark({ build }: { build: Build }): JSX.Element {
   );
 }
 
+/** 包卡片标题下的同步进度条：进行中按字节推进，成功绿色、失败红色。 */
+function SyncProgressBar({ progress }: { progress: SyncProgress }): JSX.Element {
+  const running = progress.state === 'running';
+  const percent = running
+    ? progress.total > 0
+      ? Math.min(100, Math.round((progress.bytes / progress.total) * 100))
+      : 0
+    : 100;
+  const label =
+    progress.state === 'succeeded'
+      ? '已同步到 R2'
+      : progress.state === 'failed'
+        ? `同步失败：${progress.error || '请稍后重试'}`
+        : progress.total > 0
+          ? `同步到 R2 ${formatBytes(progress.bytes)} / ${formatBytes(progress.total)}`
+          : '同步到 R2，准备中…';
+
+  return (
+    <div
+      className={`package-sync package-sync-${progress.state}`}
+      role="progressbar"
+      aria-label={label}
+      aria-valuemin={0}
+      aria-valuemax={100}
+      aria-valuenow={percent}
+    >
+      <div className="package-sync-label">
+        <span>{label}</span>
+        {running ? <span>{percent}%</span> : null}
+      </div>
+      <div className="package-sync-track">
+        <div className="package-sync-fill" style={{ width: `${percent}%` }} />
+      </div>
+    </div>
+  );
+}
+
 function PackageCard({
   build,
   latest,
   onEdit,
   onDelete,
   onSync,
-  syncing,
+  progress,
 }: {
   build: Build;
   latest: boolean;
   onEdit?: () => void;
   onDelete?: () => void;
   onSync?: () => void;
-  syncing?: boolean;
+  progress?: SyncProgress;
 }): JSX.Element {
+  const syncing = progress?.state === 'running';
   return (
     <article
       className="package-card"
@@ -350,6 +394,7 @@ function PackageCard({
           {platformLabel(build.platform)}
         </span>
       </div>
+      {progress && progress.state !== 'idle' ? <SyncProgressBar progress={progress} /> : null}
       <div className="package-version-row">
         <div className="package-version">
           <strong title={build.version}>{build.version}</strong>

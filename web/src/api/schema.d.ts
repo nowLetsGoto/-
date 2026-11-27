@@ -675,10 +675,31 @@ export interface paths {
         /**
          * 把已被容量淘汰的包重新推回对象存储
          * @description 本机是权威副本、R2 是可回收的缓存。包被容量淘汰后对象已离开桶， 下载会回落到本机流式（较慢）。调用本接口可用本机副本重建 R2 对象， 恢复 CDN 直链下载。
-         *     限定行为：仅允许 r2State=evicted 的包重推。synced 说明对象还在桶里， 重推纯属浪费带宽；pending 是上传流程的中间态，不该由这个入口介入。 已同步时幂等返回当前状态，不报错——用户可能连点两次或页面状态过期。
-         *     失败条件：本机副本已丢失（本接口不做拉回，没有别的字节来源）、 记录缺少 r2Key（无法确定推到哪个对象名）。
+         *     限定行为：仅允许 r2State=evicted 的包重推。synced 说明对象还在桶里， 重推纯属浪费带宽；pending 是上传流程的中间态，不该由这个入口介入。 已同步或已在后台同步时幂等受理，不报错——用户可能连点两次或页面状态过期。
+         *     返回 202 表示已受理，上传在后台进行；前端轮询 /builds/{id}/sync-progress 直到 state 变为 succeeded / failed。这样整包上传不会撞上 Cloudflare 的 100 秒代理超时。
+         *     同步失败条件（当场返回 400）：本机副本已丢失（本接口不做拉回， 没有别的字节来源）、记录缺少 r2Key（无法确定推到哪个对象名）。 后台上传失败只记日志，r2State 保持 evicted，可再次调用重试。
          */
         post: operations["syncBuildToR2"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/builds/{id}/sync-progress": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 查询一次「同步到 R2」的实时进度
+         * @description 重推是后台任务，本接口返回当前进度快照。state 为 running 时 bytes 持续增长； 终态保留 10 分钟后回落到 idle。前端据此在包卡片标题下画进度条： 失败红色、成功绿色。
+         */
+        get: operations["getSyncProgress"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -1386,6 +1407,26 @@ export interface components {
             environment: components["schemas"]["Environment"];
             /** @description 实际生效的平台筛选，未筛选时为 all */
             platform: string;
+        };
+        /** @description 一次后台「同步到 R2」的进度快照 */
+        SyncProgress: {
+            /**
+             * @description idle 表示没有进行中的同步，终态保留 10 分钟后回落到 idle
+             * @enum {string}
+             */
+            state: "idle" | "running" | "succeeded" | "failed";
+            /**
+             * Format: int64
+             * @description 已上传字节数
+             */
+            bytes: number;
+            /**
+             * Format: int64
+             * @description 总字节数；idle 时为 0
+             */
+            total: number;
+            /** @description 失败原因；其它状态为空串 */
+            error: string;
         };
         /** @description 当前租户的对象存储用量视图；派生量全部由服务端算好 */
         StorageUsage: {
@@ -3211,8 +3252,8 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description 同步完成（或本来已同步） */
-            200: {
+            /** @description 已受理，后台上传中（或本来已同步） */
+            202: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -3229,6 +3270,39 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description 包不存在或无权访问 */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    getSyncProgress: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description 包 id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 进度快照 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        code: number;
+                        data: components["schemas"]["SyncProgress"];
+                    };
+                };
             };
             /** @description 包不存在或无权访问 */
             404: {
