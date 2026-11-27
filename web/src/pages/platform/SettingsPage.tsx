@@ -445,7 +445,7 @@ function ApiPanel({
           </div>
           <div>
             <dt>格式</dt>
-            <dd>multipart/form-data，单包上限 200 MB</dd>
+            <dd>multipart/form-data，单包上限 300 MB</dd>
           </div>
           <div>
             <dt>返回</dt>

@@ -55,7 +55,7 @@ export function FileDropzone({
         aria-label="选择安装包"
       >
         <p className="dropzone-title">拖拽 .apk / .ipa / .hap 到此处，或点击选择文件</p>
-        <p className="dropzone-hint">单个包上限 200 MB，选文件后会自动识别包名与版本号</p>
+        <p className="dropzone-hint">单个包上限 300 MB，选文件后会自动识别包名与版本号</p>
       </Upload.Dragger>
 
       {file ? (
