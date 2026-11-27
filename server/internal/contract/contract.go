@@ -276,6 +276,10 @@ const (
 	// RouteSettingsR2 读写 R2 对象存储配置；测试接口单独一条，因为它会发起网络请求。
 	RouteSettingsR2     = APIPrefix + "/settings/r2"
 	RouteSettingsR2Test = APIPrefix + "/settings/r2/test"
+	// 隧道只做只读展示、显式检查与重启，不提供配置编辑（理由见 service/tunnel）。
+	RouteSettingsTunnel        = APIPrefix + "/settings/tunnel"
+	RouteSettingsTunnelCheck   = APIPrefix + "/settings/tunnel/check"
+	RouteSettingsTunnelRestart = APIPrefix + "/settings/tunnel/restart"
 	// RouteStorageUsage 返回当前租户的存储用量，供「应用」页头部容量条使用。
 	RouteStorageUsage = APIPrefix + "/storage/usage"
 	RouteWebhookTest  = APIPrefix + "/settings/webhook/test"
@@ -357,7 +361,7 @@ var APIRoutes = []string{
 	RouteProjects, RouteProjectByKey,
 	RoutePeople, RoutePersonByID, RouteTeams, RouteTeamByID,
 	RoutePermissions, RouteMenus, RouteRoles, RouteRoleByID,
-	RouteSettings, RouteSettingsR2, RouteSettingsR2Test, RouteWebhookTest, RouteAPIKeyRotate, RouteOpenBuilds, RouteOpenUploadTicket, RouteOpenStageFromR2, RouteStorageUsage,
+	RouteSettings, RouteSettingsR2, RouteSettingsR2Test, RouteSettingsTunnel, RouteSettingsTunnelCheck, RouteSettingsTunnelRestart, RouteWebhookTest, RouteAPIKeyRotate, RouteOpenBuilds, RouteOpenUploadTicket, RouteOpenStageFromR2, RouteStorageUsage,
 	RouteStage, RouteUploadTicket, RouteStageFromR2, RouteUploadAbort, RouteBuilds, RouteBuildByID, RouteBuildVersions, RouteBuildFile, RouteBuildSyncToR2, RouteBuildLocalPull, RouteBuildSyncProgress, RouteSharedBuild, RouteSharedBuildVersions, RouteSharedBuildFile, RouteSharedDownloadCount, RouteHealth,
 }
 
@@ -556,6 +560,30 @@ type R2UpdateRequest struct {
 	PublicBaseURL string `json:"publicBaseUrl"`
 	Secret        string `json:"secret"`
 	ChangeSecret  bool   `json:"changeSecret"`
+}
+
+// TunnelStatus 是公网隧道的只读状态，供平台集成页展示。
+//
+// 刻意不提供编辑字段：隧道配置在本机 ~/.cloudflared/ 下，
+// 且登录必须浏览器人工授权、DNS 必须去 Cloudflare 控制台改。
+// 页面真要做成表单，只会出现「页面改了但文件没改」的不一致。
+type TunnelStatus struct {
+	// Configured 表示本机存在隧道配置。
+	Configured bool `json:"configured"`
+	// Running 表示隧道进程正在运行（用 launchctl print 判定，非探活）。
+	Running bool `json:"running"`
+	// Reachable 表示 PUBLIC_BASE_URL 从当前机器能访问——这是用户真正关心的结果。
+	Reachable bool `json:"reachable"`
+	// TunnelID 是隧道 id；没有配置时为空。
+	TunnelID string `json:"tunnelId"`
+	// Hostname 是对外域名（来自 PUBLIC_BASE_URL）。
+	Hostname string `json:"hostname"`
+	// Upstream 是隧道的本地上游地址。
+	Upstream string `json:"upstream"`
+	// Connectors 是活跃连接器数，-1 表示未检查。
+	Connectors int `json:"connectors"`
+	// Message 是面向管理员的简短说明。
+	Message string `json:"message"`
 }
 
 // R2TestResult 是连接测试结果。

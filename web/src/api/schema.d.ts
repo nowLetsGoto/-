@@ -492,6 +492,66 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/settings/tunnel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 读取公网隧道状态（只读）
+         * @description 只展示状态，不提供配置编辑——隧道凭据在本机 ~/.cloudflared/ 下， 登录需浏览器人工授权，DNS 需去 Cloudflare 控制台改。 页面改配置但文件没改会造成不一致，因此这里只给查看与重启。
+         */
+        get: operations["getTunnelStatus"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/settings/tunnel/check": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 深度检查隧道（读取真实连接器数）
+         * @description 执行 cloudflared tunnel info，约 1-2 秒。只读查询，挂读权限即可。
+         */
+        post: operations["checkTunnel"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/settings/tunnel/restart": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 重启隧道服务
+         * @description 只调用 launchctl kickstart -k，不改配置。 重启期间公网会短暂中断，操作记入审计。
+         */
+        post: operations["restartTunnel"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/settings/webhook/test": {
         parameters: {
             query?: never;
@@ -959,6 +1019,25 @@ export interface components {
          * @enum {string}
          */
         WebhookProvider: "generic" | "feishu";
+        /** @description 公网隧道的只读状态。 */
+        TunnelStatus: {
+            /** @description 本机是否找到隧道配置文件。 */
+            configured: boolean;
+            /** @description launchd 是否注册了隧道服务。 */
+            running: boolean;
+            /** @description 公网基址是否可达——用户真正关心的结果。 */
+            reachable: boolean;
+            /** @description 隧道 ID；未配置时为空。 */
+            tunnelId: string;
+            /** @description 对外访问基址（PUBLIC_BASE_URL）。 */
+            hostname: string;
+            /** @description 隧道的本地上游地址，如 http://localhost:10088。 */
+            upstream: string;
+            /** @description 活跃连接器数；-1 表示未执行深度检查。 */
+            connectors: number;
+            /** @description 面向管理员的简短说明。 */
+            message: string;
+        };
         /** @description R2 通道的可见形态。**不含密钥明文，也不含密文**—— 页面只需要知道「配没配过」，因此用 secretConfigured 表达。 */
         R2Config: {
             /** @description Cloudflare 账号 ID（32 位十六进制）。非敏感。 */
@@ -3111,6 +3190,77 @@ export interface operations {
                 };
             };
             401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    getTunnelStatus: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 隧道状态 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        code: number;
+                        data: components["schemas"]["TunnelStatus"];
+                    };
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+        };
+    };
+    checkTunnel: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 含连接器数的隧道状态 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        code: number;
+                        data: components["schemas"]["TunnelStatus"];
+                    };
+                };
+            };
+        };
+    };
+    restartTunnel: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 重启后的隧道状态 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        code: number;
+                        data: components["schemas"]["TunnelStatus"];
+                    };
+                };
+            };
             403: components["responses"]["Forbidden"];
         };
     };

@@ -57,6 +57,7 @@ import (
 	settingssvc "dandelion/server/internal/service/settings"
 	teamssvc "dandelion/server/internal/service/teams"
 	tenantsvc "dandelion/server/internal/service/tenant"
+	tunnelsvc "dandelion/server/internal/service/tunnel"
 	usersvc "dandelion/server/internal/service/user"
 	webhooksvc "dandelion/server/internal/service/webhook"
 	"dandelion/server/internal/storage"
@@ -234,7 +235,7 @@ func run() error {
 	userHandler := userhandler.NewHandler(userService, auditService)
 	auditHandler := audithandler.NewHandler(auditService)
 	roleHandler := rolehandler.NewHandler(roleService, auditService)
-	settingsHandler := settingshandler.NewHandler(settingsService, r2SettingsService, webhookService, auditService)
+	settingsHandler := settingshandler.NewHandler(settingsService, r2SettingsService, tunnelsvc.NewService(cfg), webhookService, auditService)
 	health := handler.NewHealthHandler(buildRepos.For(contract.ModeTeam), paths)
 	public, err := fs.Sub(staticfs.PublicFiles, "public")
 	if err != nil {

@@ -138,7 +138,9 @@ func allowedMethodsFor(req *http.Request) string {
 		path == contract.RouteStageFromR2, path == contract.RouteUploadAbort:
 		return "POST"
 	case strings.HasSuffix(path, "/sync-to-r2"), strings.HasSuffix(path, "/local-pull"),
-		strings.HasSuffix(path, "/settings/r2"), strings.HasSuffix(path, "/settings/r2/test"):
+		strings.HasSuffix(path, "/settings/r2"), strings.HasSuffix(path, "/settings/r2/test"),
+		strings.HasSuffix(path, "/settings/tunnel"), strings.HasSuffix(path, "/settings/tunnel/check"),
+		strings.HasSuffix(path, "/settings/tunnel/restart"):
 		// 必须排在下面的通用前缀判断之前：重推是写操作，
 		// 落到默认的 GET 会让 405 响应给出错误的 Allow 头。
 		return "POST"
@@ -318,6 +320,14 @@ func NewRouter(d Deps) http.Handler {
 				Put("/settings/r2", middleware.Wrap(d.Settings.UpdateR2))
 			settings.With(authzmw.RequirePermission(d.Authz, contract.PermissionSettingsWrite)).
 				Post("/settings/r2/test", middleware.Wrap(d.Settings.TestR2))
+
+			// 公网隧道：只读展示 + 显式检查 + 重启，不提供配置编辑（见 service/tunnel 注释）。
+			settings.With(authzmw.RequirePermission(d.Authz, contract.PermissionSettingsRead)).
+				Get("/settings/tunnel", middleware.Wrap(d.Settings.GetTunnel))
+			settings.With(authzmw.RequirePermission(d.Authz, contract.PermissionSettingsRead)).
+				Post("/settings/tunnel/check", middleware.Wrap(d.Settings.CheckTunnel))
+			settings.With(authzmw.RequirePermission(d.Authz, contract.PermissionSettingsWrite)).
+				Post("/settings/tunnel/restart", middleware.Wrap(d.Settings.RestartTunnel))
 		})
 
 		// 角色管理：三个权限点分别守读、写、删。

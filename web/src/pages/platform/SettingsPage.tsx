@@ -1,7 +1,8 @@
 /**
  * 平台集成页：按公司范围与 settings.read/write 权限读取、维护通知和上传凭证。
  * 职责：配置 Webhook（开关 / 地址 / 签名密钥 / 推送字段）并测试投递；
- *       配置 R2 对象存储并测试连通性；展示外部上传接口、轮换 API Key。
+ *       配置 R2 对象存储并测试连通性；只读展示公网隧道状态；
+ *       展示外部上传接口、轮换 API Key。
  * 输入：GET /api/v1/settings、GET /api/v1/settings/r2、当前项目 key（仅用于外部接口示例的占位值）；
  *       输出：PUT 保存、POST 测试、POST 轮换 Key、复制 API Key 与调用示例。
  * 边界：不做字段合法性判断（服务端校验）、不缓存设置副本；
@@ -14,6 +15,7 @@ import type {
   R2TestResult,
   R2UpdateRequest,
   Settings,
+  TunnelStatus,
   WebhookConfig,
   WebhookField,
   WebhookTestResult,
@@ -22,6 +24,7 @@ import type { WebhookProvider } from '../../api/settings';
 import {
   getR2,
   getSettings,
+  getTunnelStatus,
   rotateApiKey,
   testR2,
   testWebhook,
@@ -38,8 +41,9 @@ import { Button, Checkbox, Input, Segmented } from '../../components/Controls';
 import { ConfirmDialog } from '../../components/ConfirmDialog';
 import { ErrorState, Loading } from '../../components/States';
 import { R2Panel } from './R2Panel';
+import { TunnelPanel } from './TunnelPanel';
 
-type Tab = 'webhook' | 'r2' | 'api';
+type Tab = 'webhook' | 'r2' | 'tunnel' | 'api';
 
 export function SettingsPage(): JSX.Element {
   const copyText = useCopyText();
@@ -68,6 +72,8 @@ export function SettingsPage(): JSX.Element {
   // 重挂载会把「是否正在替换密钥」这类本地状态复位，
   // 否则保存完仍停在输入框里，看起来像没生效。
   const [r2Revision, setR2Revision] = useState(0);
+  // 隧道状态单独持有：它的来源是本机文件与 launchd，与另外两套配置无关。
+  const [tunnel, setTunnel] = useState<TunnelStatus | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -112,6 +118,37 @@ export function SettingsPage(): JSX.Element {
       cancelled = true;
     };
   }, [tab, r2]);
+
+  /**
+   * 首次切到「公网隧道」才取状态：它要读本机文件并探活公网，
+   * 多数访问平台集成的人不需要关心隧道，没必要每次进页面都付出这个开销。
+   */
+  useEffect(() => {
+    if (tab !== 'tunnel' || tunnel) {
+      return;
+    }
+    let cancelled = false;
+    getTunnelStatus()
+      .then((status) => {
+        if (!cancelled) setTunnel(status);
+      })
+      .catch((err: unknown) => {
+        if (!cancelled)
+          setTunnel({
+            configured: false,
+            running: false,
+            reachable: false,
+            tunnelId: '',
+            hostname: '',
+            upstream: '',
+            connectors: -1,
+            message: errorMessage(err),
+          });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [tab, tunnel]);
 
   const saveR2 = async (input: R2UpdateRequest): Promise<void> => {
     if (r2Saving || !canWrite) {
@@ -260,6 +297,7 @@ export function SettingsPage(): JSX.Element {
           options={[
             { value: 'webhook', label: 'Webhook' },
             { value: 'r2', label: '对象存储' },
+            { value: 'tunnel', label: '公网隧道' },
             { value: 'api', label: '外部 API' },
           ]}
           onChange={setTab}
@@ -295,6 +333,12 @@ export function SettingsPage(): JSX.Element {
           />
         ) : (
           <Loading text="正在读取存储配置…" />
+        )
+      ) : tab === 'tunnel' ? (
+        tunnel ? (
+          <TunnelPanel data={tunnel} canWrite={canWrite} onUpdate={setTunnel} />
+        ) : (
+          <Loading text="正在读取隧道状态…" />
         )
       ) : (
         <ApiPanel

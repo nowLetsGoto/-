@@ -1169,6 +1169,77 @@ paths:
         '403':
           $ref: '#/components/responses/Forbidden'
 
+  /settings/tunnel:
+    get:
+      operationId: getTunnelStatus
+      summary: 读取公网隧道状态（只读）
+      description: >
+        只展示状态，不提供配置编辑——隧道凭据在本机 ~/.cloudflared/ 下，
+        登录需浏览器人工授权，DNS 需去 Cloudflare 控制台改。
+        页面改配置但文件没改会造成不一致，因此这里只给查看与重启。
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: 隧道状态
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [code, data]
+                properties:
+                  code:
+                    type: integer
+                  data:
+                    $ref: '#/components/schemas/TunnelStatus'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /settings/tunnel/check:
+    post:
+      operationId: checkTunnel
+      summary: 深度检查隧道（读取真实连接器数）
+      description: >
+        执行 cloudflared tunnel info，约 1-2 秒。只读查询，挂读权限即可。
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: 含连接器数的隧道状态
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [code, data]
+                properties:
+                  code:
+                    type: integer
+                  data:
+                    $ref: '#/components/schemas/TunnelStatus'
+  /settings/tunnel/restart:
+    post:
+      operationId: restartTunnel
+      summary: 重启隧道服务
+      description: >
+        只调用 launchctl kickstart -k，不改配置。
+        重启期间公网会短暂中断，操作记入审计。
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: 重启后的隧道状态
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [code, data]
+                properties:
+                  code:
+                    type: integer
+                  data:
+                    $ref: '#/components/schemas/TunnelStatus'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
   /settings/webhook/test:
     post:
       operationId: testWebhook
@@ -2102,6 +2173,36 @@ components:
       description: 通用 JSON Webhook 或飞书自定义机器人；存量配置默认 generic。
       enum: [generic, feishu]
       default: generic
+
+    TunnelStatus:
+      type: object
+      description: 公网隧道的只读状态。
+      required: [configured, running, reachable, tunnelId, hostname, upstream, connectors, message]
+      properties:
+        configured:
+          type: boolean
+          description: 本机是否找到隧道配置文件。
+        running:
+          type: boolean
+          description: launchd 是否注册了隧道服务。
+        reachable:
+          type: boolean
+          description: 公网基址是否可达——用户真正关心的结果。
+        tunnelId:
+          type: string
+          description: 隧道 ID；未配置时为空。
+        hostname:
+          type: string
+          description: 对外访问基址（PUBLIC_BASE_URL）。
+        upstream:
+          type: string
+          description: 隧道的本地上游地址，如 http://localhost:10088。
+        connectors:
+          type: integer
+          description: 活跃连接器数；-1 表示未执行深度检查。
+        message:
+          type: string
+          description: 面向管理员的简短说明。
 
     R2Config:
       type: object

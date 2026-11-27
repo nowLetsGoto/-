@@ -17,6 +17,7 @@ export type WebhookTestResult = Schemas['WebhookTestResult'];
 export type R2Config = Schemas['R2Config'];
 export type R2UpdateRequest = Schemas['R2UpdateRequest'];
 export type R2TestResult = Schemas['R2TestResult'];
+export type TunnelStatus = Schemas['TunnelStatus'];
 
 /** 契约路径的前端唯一镜像。 */
 const ROUTES = {
@@ -25,6 +26,9 @@ const ROUTES = {
   rotateApiKey: '/api/v1/settings/api-key/rotate',
   r2: '/api/v1/settings/r2',
   testR2: '/api/v1/settings/r2/test',
+  tunnel: '/api/v1/settings/tunnel',
+  tunnelCheck: '/api/v1/settings/tunnel/check',
+  tunnelRestart: '/api/v1/settings/tunnel/restart',
 } as const;
 
 export function getSettings(): Promise<Settings> {
@@ -63,4 +67,19 @@ export function updateR2(input: R2UpdateRequest): Promise<R2Config> {
  */
 export function testR2(): Promise<R2TestResult> {
   return postJSON<R2TestResult>(ROUTES.testR2, {});
+}
+
+/** 隧道状态：只读快路径，不跑 cloudflared 命令。 */
+export function getTunnelStatus(): Promise<TunnelStatus> {
+  return get<TunnelStatus>(ROUTES.tunnel);
+}
+
+/** 深度检查：读取真实连接器数，约 1-2 秒。 */
+export function checkTunnel(): Promise<TunnelStatus> {
+  return postJSON<TunnelStatus>(ROUTES.tunnelCheck, {});
+}
+
+/** 重启隧道服务：期间公网会短暂中断。 */
+export function restartTunnel(): Promise<TunnelStatus> {
+  return postJSON<TunnelStatus>(ROUTES.tunnelRestart, {});
 }

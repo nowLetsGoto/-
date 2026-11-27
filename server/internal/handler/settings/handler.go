@@ -14,6 +14,7 @@ import (
 	"dandelion/server/internal/handler"
 	auditsvc "dandelion/server/internal/service/audit"
 	settingssvc "dandelion/server/internal/service/settings"
+	tunnelsvc "dandelion/server/internal/service/tunnel"
 	webhooksvc "dandelion/server/internal/service/webhook"
 )
 
@@ -24,12 +25,19 @@ type Handler struct {
 	// r2 是对象存储配置的独立业务入口，与 settings 无耦合：
 	// 前者管「文件存哪」，后者管「发布后通知谁」，两个变化原因互不相干。
 	r2      *settingssvc.R2Service
+	tunnel  *tunnelsvc.Service
 	webhook *webhooksvc.Service
 	audit   *auditsvc.Service
 }
 
-func NewHandler(settings *settingssvc.Service, r2 *settingssvc.R2Service, webhook *webhooksvc.Service, audit *auditsvc.Service) *Handler {
-	return &Handler{settings: settings, r2: r2, webhook: webhook, audit: audit}
+func NewHandler(
+	settings *settingssvc.Service,
+	r2 *settingssvc.R2Service,
+	tunnel *tunnelsvc.Service,
+	webhook *webhooksvc.Service,
+	audit *auditsvc.Service,
+) *Handler {
+	return &Handler{settings: settings, r2: r2, tunnel: tunnel, webhook: webhook, audit: audit}
 }
 
 // Get 返回 Webhook 配置、API Key 与可选字段目录。
