@@ -237,7 +237,10 @@ fi
 
 echo ""
 echo "完成。四个服务已后台常驻：登录自启、崩溃自恢复、系统不空闲休眠。"
-echo "日志目录：${ROOT}/logs/"
+# 日志实际写在运行时目录（plist 里的 StandardOutPath / StandardErrorPath 指向这里），
+# 不是仓库里的 ${ROOT}/logs/ —— 那个目录是早期直接托管进程时的遗留，
+# 提示错了会让人 tail -f 一个不再写入的旧文件。
+echo "日志目录：${HOME}/dandelion-runtime/logs/"
 echo ""
 echo "合盖场景仍需一条 sudo 命令（只需执行一次）："
 echo "  sudo pmset -c sleep 0 disksleep 0"
