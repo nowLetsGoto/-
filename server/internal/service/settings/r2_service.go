@@ -14,6 +14,7 @@ package settings
 import (
 	"context"
 	"fmt"
+	"log"
 	"net/url"
 	"strings"
 
@@ -117,13 +118,15 @@ func (s *R2Service) Update(
 		}
 		cfg.SecretKey = encrypted
 	} else {
-		// 沿用旧密文。读失败不该静默当成"没有旧值"，
-		// 那会把一次数据库抖动变成"密钥被清空"。
-		old, err := s.repo.LoadR2(ctx, tenantID)
+		storedCfg, err := s.repo.LoadR2(ctx, tenantID)
 		if err != nil {
 			return contract.R2Config{}, err
 		}
-		cfg.SecretKey = old.SecretKey
+		encrypted, err := s.keepSecret(storedCfg.SecretKey)
+		if err != nil {
+			return contract.R2Config{}, err
+		}
+		cfg.SecretKey = encrypted
 	}
 
 	if err := s.repo.SaveR2(ctx, tenantID, cfg); err != nil {
@@ -135,9 +138,14 @@ func (s *R2Service) Update(
 // Runtime 返回可直接用于构造 R2 客户端的配置（密钥已解密）。
 //
 // 这是唯一出口把明文密钥交出去，且只交给 storage 层构造客户端。
-// 解密失败（AUTH_SECRET 变更）返回空配置而非错误：
-// 此时应表现为「R2 未启用，下载走本机」，而不是让整个服务不可用。
-// 同时记录一条日志，否则管理员只会看到下载变慢，不知道凭据已失效。
+//
+// 解密失败（AUTH_SECRET 变更）返回空配置并记日志，而不是返回错误：
+// 此时应表现为「R2 未启用，下载走本机」，服务继续可用。
+// 若把错误抛给调用方，一次密钥变更会让所有下载路径都失败——
+// 而降级为本地下载是可接受的，只是慢。
+//
+// 但必须留下日志：否则管理员只会发现「下载变慢了」，
+// 完全想不到是凭据解不开，页面上也只会看到 secretConfigured=true 却总是失败。
 func (s *R2Service) Runtime(ctx context.Context, tenantID string) (storage.R2Config, error) {
 	cfg, err := s.repo.LoadR2(ctx, tenantID)
 	if err != nil {
@@ -156,7 +164,8 @@ func (s *R2Service) Runtime(ctx context.Context, tenantID string) (storage.R2Con
 
 	plain, err := s.cipher.Decrypt(cfg.SecretKey)
 	if err != nil {
-		return storage.R2Config{}, fmt.Errorf("R2 凭据解密失败（AUTH_SECRET 可能已变更，请在平台集成重新填写）: %w", err)
+		log.Printf("R2 凭据解密失败，已降级为本地下载（AUTH_SECRET 可能已变更，请在平台集成重新填写）: %v", err)
+		return storage.R2Config{}, nil
 	}
 	return storage.R2Config{
 		AccountID:     cfg.AccountID,
@@ -165,6 +174,35 @@ func (s *R2Service) Runtime(ctx context.Context, tenantID string) (storage.R2Con
 		Bucket:        cfg.Bucket,
 		PublicBaseURL: cfg.PublicBaseURL,
 	}, nil
+}
+
+// keepSecret 在「用户没有主动改密钥」时，决定该往库里写什么密文。
+//
+// 参数：storedCipher 是库里当前那一列的原值（可能是空串）。
+// 返回：应写入的密文；空串表示保持未配置。
+//
+// 三档优先级，缺一不可：
+//
+//  1. 库里有密文 → 原样沿用。不解密重加密：密文无端变化会让排查时分不清
+//     「用户真的换了密钥」还是「保存时被重算了一遍」。
+//  2. 库里没有、环境变量有 → 把预填的明文加密后固化。
+//     这一档是修复数据丢失缺陷的关键：全新安装时页面显示的是环境变量预填值，
+//     用户只改桶名点保存时若直接从库里读，会拿到空串并把密钥清空，
+//     导致 R2 立刻不可用（实测复现过）。固化同时也让配置不再依赖环境变量，
+//     下次换机器部署时页面不会是空白。
+//  3. 两处都没有 → 保持空。
+func (s *R2Service) keepSecret(storedCipher string) (string, error) {
+	if storedCipher != "" {
+		return storedCipher, nil
+	}
+	if s.fallback.SecretKey == "" {
+		return "", nil
+	}
+	encrypted, err := s.cipher.Encrypt(s.fallback.SecretKey)
+	if err != nil {
+		return "", fmt.Errorf("加密 R2 密钥失败: %w", err)
+	}
+	return encrypted, nil
 }
 
 // normalizeR2 收敛请求值并校验；返回仓储结构（SecretKey 由调用方填）。
@@ -221,14 +259,4 @@ func normalizeR2(in contract.R2Config) (settingsrepo.R2, error) {
 		}
 	}
 	return cfg, nil
-}
-
-// Complete 判断一套配置是否足以启用 R2。
-//
-// 与 storage.R2Config.Enabled 保持同一判据：四项必填齐全才启用。
-// 之所以在这里重复一份，是因为 service 判断的是「用户填的够不够」，
-// 而 Enabled 判断的是「客户端能不能构造」——前者要能在密钥尚未解密时用。
-func Complete(cfg settingsrepo.R2) bool {
-	return cfg.AccountID != "" && cfg.AccessKeyID != "" &&
-		cfg.SecretKey != "" && cfg.Bucket != ""
 }

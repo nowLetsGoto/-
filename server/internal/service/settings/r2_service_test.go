@@ -17,7 +17,12 @@ import (
 
 	"dandelion/server/internal/contract"
 	settingsrepo "dandelion/server/internal/repository/settings"
+	"dandelion/server/internal/secret"
+	"dandelion/server/internal/storage"
 )
+
+// testMasterKey 是测试用主密钥，与 secret 包的测试各自独立。
+const testMasterKey = "test-master-for-settings-service"
 
 func TestNormalizeR2AcceptsValidInput(t *testing.T) {
 	in := contract.R2Config{
@@ -91,9 +96,11 @@ func TestNormalizeR2RejectsOversizedField(t *testing.T) {
 	}
 }
 
-func TestCompleteRequiresAllFourFields(t *testing.T) {
+func TestEnabledRequiresAllFourFields(t *testing.T) {
+	// 判据的唯一来源是 storage.R2Config.Enabled：
+	// service 层不再维护第二份，避免出现「页面说配好了、客户端却不启用」的割裂。
 	full := r2Fixture()
-	if !Complete(full) {
+	if !toStorage(full).Enabled() {
 		t.Fatal("四项齐全应判定为可用")
 	}
 
@@ -114,7 +121,7 @@ func TestCompleteRequiresAllFourFields(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			cfg := r2Fixture()
 			tc.clear(&cfg)
-			if Complete(cfg) {
+			if toStorage(cfg).Enabled() {
 				t.Fatalf("%s 时应判定不可用", tc.name)
 			}
 		})
@@ -131,6 +138,17 @@ func r2Fixture() r2RepoFixture {
 		AccessKeyID: "3eeb40a699a24fd7a6f6cd412983f896",
 		SecretKey:   "v1:encrypted-placeholder",
 		Bucket:      "api-4",
+	}
+}
+
+// toStorage 把仓储结构转成存储层配置，便于复用 Enabled 的判据。
+func toStorage(cfg r2RepoFixture) storage.R2Config {
+	return storage.R2Config{
+		AccountID:     cfg.AccountID,
+		AccessKeyID:   cfg.AccessKeyID,
+		SecretKey:     cfg.SecretKey,
+		Bucket:        cfg.Bucket,
+		PublicBaseURL: cfg.PublicBaseURL,
 	}
 }
 
@@ -166,4 +184,61 @@ func TestStoredDeterminesFallback(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestKeepSecret 验证「用户没改密钥时该写入什么」的三档优先级。
+//
+// 直接调用真实的 keepSecret，而不是复刻判断逻辑：
+// 复刻式测试在实现被改坏时仍会通过，等于没测。
+//
+// 第一档对应一个真实修复的数据丢失缺陷——全新安装时库里全空、
+// 页面显示环境变量预填值，用户只改桶名保存会把密钥清空、R2 立刻不可用。
+func TestKeepSecret(t *testing.T) {
+	c, err := secret.New(testMasterKey)
+	if err != nil {
+		t.Fatalf("构造 Cipher 失败: %v", err)
+	}
+
+	const fallbackPlain = "05ea820f5e58c8afb30e335d6046cea1d776c91da93e09b13bd8b3f83910d354"
+
+	t.Run("库里有密文时原样沿用", func(t *testing.T) {
+		svc := &R2Service{cipher: c, fallback: storage.R2Config{SecretKey: fallbackPlain}}
+		got, err := svc.keepSecret("v1:existing-ciphertext")
+		if err != nil {
+			t.Fatalf("不应报错: %v", err)
+		}
+		if got != "v1:existing-ciphertext" {
+			t.Fatalf("应原样沿用库里密文，got %q", got)
+		}
+	})
+
+	t.Run("库里空、环境变量有则加密固化", func(t *testing.T) {
+		svc := &R2Service{cipher: c, fallback: storage.R2Config{SecretKey: fallbackPlain}}
+		got, err := svc.keepSecret("")
+		if err != nil {
+			t.Fatalf("不应报错: %v", err)
+		}
+		if got == "" {
+			t.Fatal("必须把环境变量的密钥固化进库，否则只改桶名就会把密钥清空（真实缺陷）")
+		}
+		// 必须真的加密过：能解回原值，且不含明文。
+		plain, err := c.Decrypt(got)
+		if err != nil {
+			t.Fatalf("固化的密文应可解密: %v", err)
+		}
+		if plain != fallbackPlain {
+			t.Fatalf("解出的明文不一致: got %q", plain)
+		}
+	})
+
+	t.Run("两处都空则保持未配置", func(t *testing.T) {
+		svc := &R2Service{cipher: c}
+		got, err := svc.keepSecret("")
+		if err != nil {
+			t.Fatalf("不应报错: %v", err)
+		}
+		if got != "" {
+			t.Fatalf("应保持空串，got %q", got)
+		}
+	})
 }
