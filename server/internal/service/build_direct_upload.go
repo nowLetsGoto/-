@@ -115,18 +115,25 @@ func (s *BuildService) IssueUploadTicket(ctx context.Context, in contract.Upload
 	s.pruneExpiredSessions(ctx)
 
 	return contract.UploadTicket{
-		UploadToken: token,
-		PutURL:      putURL,
-		// 以下三个头都参与签名，前端 PUT 必须原样带上，缺任一个都会 403。
-		Header: map[string]string{
-			"Content-Type":   contentType,
-			"Content-Length": fmt.Sprint(in.Size),
-			"Cache-Control":  storage.ObjectCacheControl(),
-			// 下载名元数据：上传即写入，CDN 首次缓存就带正确文件名。
-			"Content-Disposition": storage.ContentDisposition(originalName),
-		},
+		UploadToken:      token,
+		PutURL:           putURL,
+		Header:           uploadTicketHeaders(contentType, originalName),
 		ExpiresInSeconds: int(uploadTicketTTL.Seconds()),
 	}, nil
+}
+
+// uploadTicketHeaders 返回浏览器必须显式设置的签名头。
+//
+// 三个头都参与签名，缺任一个 R2 都会返回 403。Content-Length 同样参与签名，
+// 但由浏览器按文件大小自动发送；若列在这里，前端 setRequestHeader 会被
+// 浏览器拒绝并报 "Refused to set unsafe header"。
+func uploadTicketHeaders(contentType, originalName string) map[string]string {
+	return map[string]string{
+		"Content-Type":  contentType,
+		"Cache-Control": storage.ObjectCacheControl(),
+		// 下载名元数据：上传即写入，CDN 首次缓存就带正确文件名。
+		"Content-Disposition": storage.ContentDisposition(originalName),
+	}
 }
 
 // StageFromR2 解析已直传到 R2 的对象，产出与 stage 相同的暂存上下文。

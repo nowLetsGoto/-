@@ -663,6 +663,29 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/builds/{id}/local-pull": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 重新把包从对象存储下载到本机
+         * @description 与 sync-to-r2 方向相反：那个把本机副本推上云端，这个把云端对象拉回本机。
+         *     用于失败后的主动重试。自动重试要等下一轮巡检（最长 2 小时）， 管理员看到红色失败提示时，若只能干等，这个提示就成了信息死路。
+         *     异步执行：整包可能上百 MB，同步等待会被 Cloudflare 的 100 秒代理超时切断。 响应立刻返回已置为重新排队的包，前端后续轮询 localPulledBytes 看进度。
+         *     不可重试的情况：对象不在桶里（非 synced）、本机已有副本、正在下载中。
+         */
+        post: operations["retryLocalPull"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/builds/{id}/sync-to-r2": {
         parameters: {
             query?: never;
@@ -3034,6 +3057,7 @@ export interface operations {
                     "application/json": {
                         uploadToken?: string;
                         putUrl?: string;
+                        /** @description PUT 时必须显式设置的请求头（参与签名）。Content-Length 也参与签名， 但由浏览器按文件大小自动发送，不在此列表中——手动设置会被浏览器拒绝。 */
                         header?: {
                             [key: string]: string;
                         };
@@ -3270,6 +3294,45 @@ export interface operations {
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
             500: components["responses"]["InternalError"];
+        };
+    };
+    retryLocalPull: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 已受理并重新排队 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        code: number;
+                        data: components["schemas"]["Build"];
+                    };
+                };
+            };
+            /** @description 状态不允许重试（不在 R2 / 已有副本 / 正在下载） */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description 包不存在或无权访问 */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
         };
     };
     syncBuildToR2: {

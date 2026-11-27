@@ -1286,6 +1286,9 @@ paths:
                     type: string
                   header:
                     type: object
+                    description: >
+                      PUT 时必须显式设置的请求头（参与签名）。Content-Length 也参与签名，
+                      但由浏览器按文件大小自动发送，不在此列表中——手动设置会被浏览器拒绝。
                     additionalProperties:
                       type: string
                   expiresInSeconds:

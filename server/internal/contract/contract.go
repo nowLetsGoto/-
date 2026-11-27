@@ -1319,8 +1319,9 @@ type UploadTicketInput struct {
 type UploadTicket struct {
 	UploadToken string `json:"uploadToken"`
 	PutURL      string `json:"putUrl"`
-	// Header 是 PUT 时必须原样带上的请求头。签名里包含 content-type 与 length，
-	// 少带或不一致会被 R2 拒绝。
+	// Header 是 PUT 时必须显式设置的请求头：content-type、cache-control、content-disposition。
+	// Content-Length 也参与签名，但由浏览器按文件大小自动发送，不能也不必由前端设置
+	// （手动 setRequestHeader 会被浏览器拒绝并报 unsafe header）。
 	Header map[string]string `json:"header"`
 	// ExpiresInSeconds 告知前端签名有效期，便于在失败时提示"请重新选择文件"。
 	ExpiresInSeconds int `json:"expiresInSeconds"`
