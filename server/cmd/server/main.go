@@ -66,11 +66,21 @@ import (
 func main() {
 	// 子命令：把本机已有安装包补齐到 R2。跑完即退出，不启动 HTTP 服务。
 	// 放在配置加载之前分派，避免同步工具被建表/监听逻辑牵连。
-	if len(os.Args) > 1 && os.Args[1] == "r2sync" {
-		if err := runR2Sync(os.Args[2:]); err != nil {
-			log.Fatalf("R2 同步失败: %v", err)
+	if len(os.Args) > 1 {
+		switch os.Args[1] {
+		case "r2sync":
+			if err := runR2Sync(os.Args[2:]); err != nil {
+				log.Fatalf("R2 同步失败: %v", err)
+			}
+			return
+		case "r2check":
+			// 只读检测：报告哪些公司的 R2 密文因 AUTH_SECRET 变更而失效。
+			// 失败时退出码非零，便于定时任务发现异常。
+			if err := runR2Check(os.Args[2:]); err != nil {
+				log.Fatalf("R2 凭据检测失败: %v", err)
+			}
+			return
 		}
-		return
 	}
 	if err := run(); err != nil {
 		log.Fatalf("Dandelion 启动失败: %v", err)
