@@ -14,12 +14,17 @@ export type WebhookConfig = Schemas['WebhookConfig'];
 export type WebhookProvider = Schemas['WebhookProvider'];
 export type WebhookField = Schemas['WebhookField'];
 export type WebhookTestResult = Schemas['WebhookTestResult'];
+export type R2Config = Schemas['R2Config'];
+export type R2UpdateRequest = Schemas['R2UpdateRequest'];
+export type R2TestResult = Schemas['R2TestResult'];
 
 /** 契约路径的前端唯一镜像。 */
 const ROUTES = {
   settings: '/api/v1/settings',
   testWebhook: '/api/v1/settings/webhook/test',
   rotateApiKey: '/api/v1/settings/api-key/rotate',
+  r2: '/api/v1/settings/r2',
+  testR2: '/api/v1/settings/r2/test',
 } as const;
 
 export function getSettings(): Promise<Settings> {
@@ -38,4 +43,24 @@ export function rotateApiKey(): Promise<{ apiKey: string }> {
 /** 测试投递：目标不可达也是 200，结果看 delivered / statusCode / message。 */
 export function testWebhook(): Promise<WebhookTestResult> {
   return postJSON<WebhookTestResult>(ROUTES.testWebhook, {});
+}
+
+/** 读取 R2 配置：不含密钥明文，secretConfigured 只表达「配没配过」。 */
+export function getR2(): Promise<R2Config> {
+  return get<R2Config>(ROUTES.r2);
+}
+
+/** 保存 R2 配置；保存即热生效，无需重启进程。 */
+export function updateR2(input: R2UpdateRequest): Promise<R2Config> {
+  return putJSON<R2Config>(ROUTES.r2, input);
+}
+
+/**
+ * 测试 R2 连通性。
+ *
+ * 测的是**已保存的配置**而不是表单里的值：页面应先保存再测试，
+ * 否则会出现「测通了，但保存的不是测的那份」。
+ */
+export function testR2(): Promise<R2TestResult> {
+  return postJSON<R2TestResult>(ROUTES.testR2, {});
 }

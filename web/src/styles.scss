@@ -4993,6 +4993,12 @@ code {
   color: var(--color-faint);
 }
 
+/* 检查项失败的红色变体：与 status-online 成对，用于「测试连接」这类需要
+   一眼区分通过与失败、且失败要引导修复的场景。 */
+.status-failed {
+  color: var(--color-danger);
+}
+
 .chip-self {
   margin-left: 6px;
   background: var(--color-primary-soft);

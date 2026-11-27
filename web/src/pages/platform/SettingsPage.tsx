@@ -1,16 +1,33 @@
 /**
  * 平台集成页：按公司范围与 settings.read/write 权限读取、维护通知和上传凭证。
- * 职责：配置 Webhook（开关 / 地址 / 签名密钥 / 推送字段）并测试投递；展示外部上传接口、轮换 API Key。
- * 输入：GET /api/v1/settings、当前项目 key（仅用于外部接口示例的占位值）；
+ * 职责：配置 Webhook（开关 / 地址 / 签名密钥 / 推送字段）并测试投递；
+ *       配置 R2 对象存储并测试连通性；展示外部上传接口、轮换 API Key。
+ * 输入：GET /api/v1/settings、GET /api/v1/settings/r2、当前项目 key（仅用于外部接口示例的占位值）；
  *       输出：PUT 保存、POST 测试、POST 轮换 Key、复制 API Key 与调用示例。
  * 边界：不做字段合法性判断（服务端校验）、不缓存设置副本；
  *       切换 Tab 不重复取数，只有保存后以服务端返回的值为准；
  *       配置归属由登录身份决定，超管维护平台兜底；当前项目只用于调用示例。
  */
 import { useEffect, useState } from 'react';
-import type { Settings, WebhookConfig, WebhookField, WebhookTestResult } from '../../api/settings';
+import type {
+  R2Config,
+  R2TestResult,
+  R2UpdateRequest,
+  Settings,
+  WebhookConfig,
+  WebhookField,
+  WebhookTestResult,
+} from '../../api/settings';
 import type { WebhookProvider } from '../../api/settings';
-import { getSettings, rotateApiKey, testWebhook, updateWebhook } from '../../api/settings';
+import {
+  getR2,
+  getSettings,
+  rotateApiKey,
+  testR2,
+  testWebhook,
+  updateR2,
+  updateWebhook,
+} from '../../api/settings';
 import { errorMessage } from '../../api/client';
 import { useCurrentProject } from '../../hooks/useProjects';
 import { useCopyText } from '../../hooks/useCopyText';
@@ -20,8 +37,9 @@ import { WEBHOOK_PROVIDERS } from '../../utils/format';
 import { Button, Checkbox, Input, Segmented } from '../../components/Controls';
 import { ConfirmDialog } from '../../components/ConfirmDialog';
 import { ErrorState, Loading } from '../../components/States';
+import { R2Panel } from './R2Panel';
 
-type Tab = 'webhook' | 'api';
+type Tab = 'webhook' | 'r2' | 'api';
 
 export function SettingsPage(): JSX.Element {
   const copyText = useCopyText();
@@ -39,6 +57,17 @@ export function SettingsPage(): JSX.Element {
   const [testing, setTesting] = useState(false);
   const [notice, setNotice] = useState('');
   const [testResult, setTestResult] = useState<WebhookTestResult | null>(null);
+  // R2 配置单独持有：它与 Webhook 是两套配置，接口也是两条，
+  // 合并在一个状态对象里会让「哪个字段属于哪条接口」变得靠记忆。
+  const [r2, setR2] = useState<R2Config | null>(null);
+  const [r2Saving, setR2Saving] = useState(false);
+  const [r2Testing, setR2Testing] = useState(false);
+  const [r2Notice, setR2Notice] = useState('');
+  const [r2TestResult, setR2TestResult] = useState<R2TestResult | null>(null);
+  // 保存成功后自增，用作面板的 key 触发重挂载：
+  // 重挂载会把「是否正在替换密钥」这类本地状态复位，
+  // 否则保存完仍停在输入框里，看起来像没生效。
+  const [r2Revision, setR2Revision] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
@@ -60,6 +89,63 @@ export function SettingsPage(): JSX.Element {
       cancelled = true;
     };
   }, []);
+
+  /**
+   * 首次切到「对象存储」时才取 R2 配置。
+   *
+   * 不在页面初始化时一起取：R2 是可选项，多数访问平台集成的人只为改 Webhook，
+   * 为它多发一次请求没有意义。
+   */
+  useEffect(() => {
+    if (tab !== 'r2' || r2) {
+      return;
+    }
+    let cancelled = false;
+    getR2()
+      .then((config) => {
+        if (!cancelled) setR2(config);
+      })
+      .catch((err: unknown) => {
+        if (!cancelled) setR2Notice(errorMessage(err));
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [tab, r2]);
+
+  const saveR2 = async (input: R2UpdateRequest): Promise<void> => {
+    if (r2Saving || !canWrite) {
+      return;
+    }
+    setR2Saving(true);
+    setR2Notice('');
+    setR2TestResult(null);
+    try {
+      // 以服务端返回值为准：密钥是否已配置只有库知道，本地猜不出来。
+      setR2(await updateR2(input));
+      setR2Revision((n) => n + 1);
+      setR2Notice('已保存并生效');
+    } catch (err) {
+      setR2Notice(errorMessage(err));
+    } finally {
+      setR2Saving(false);
+    }
+  };
+
+  const runR2Test = async (): Promise<void> => {
+    if (r2Testing || !canWrite) {
+      return;
+    }
+    setR2Testing(true);
+    setR2TestResult(null);
+    try {
+      setR2TestResult(await testR2());
+    } catch (err) {
+      setR2Notice(errorMessage(err));
+    } finally {
+      setR2Testing(false);
+    }
+  };
 
   /** 用服务端返回的权威值覆盖本地副本，避免保存后界面与库里不一致。 */
   const applySettings = (settings: Settings): void => {
@@ -173,6 +259,7 @@ export function SettingsPage(): JSX.Element {
           value={tab}
           options={[
             { value: 'webhook', label: 'Webhook' },
+            { value: 'r2', label: '对象存储' },
             { value: 'api', label: '外部 API' },
           ]}
           onChange={setTab}
@@ -193,6 +280,22 @@ export function SettingsPage(): JSX.Element {
           onSave={() => void save()}
           onTest={() => void runTest()}
         />
+      ) : tab === 'r2' ? (
+        r2 ? (
+          <R2Panel
+            key={r2Revision}
+            data={r2}
+            saving={r2Saving}
+            testing={r2Testing}
+            notice={r2Notice}
+            testResult={r2TestResult}
+            canWrite={canWrite}
+            onSave={(input) => void saveR2(input)}
+            onTest={() => void runR2Test()}
+          />
+        ) : (
+          <Loading text="正在读取存储配置…" />
+        )
       ) : (
         <ApiPanel
           configured={data.apiKeyConfigured}
