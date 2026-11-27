@@ -209,7 +209,18 @@ func (s *BuildService) pullPendingLocal(ctx context.Context, mode contract.Sessi
 
 	for _, row := range rows {
 		// 单个失败不中断整批：一个包搬不动不该让其余包继续缺副本。
-		s.PullLocal(ctx, mode, row.ID)
+		// panic 也收在这里，理由同上——批量任务里一个坏数据不该让整批失效。
+		s.pullOneSafely(ctx, mode, row.ID)
 	}
 	return len(rows), nil
+}
+
+// pullOneSafely 给单个包的拉回加上 panic 保护。
+func (s *BuildService) pullOneSafely(ctx context.Context, mode contract.SessionMode, id string) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("拉回 panic，跳过该包 id=%s err=%v", id, r)
+		}
+	}()
+	s.PullLocal(ctx, mode, id)
 }

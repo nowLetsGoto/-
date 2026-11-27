@@ -165,6 +165,10 @@ BEGIN
     -- （普通上传的包也可能早已镜像到 R2，直传包则从未落过盘），
     -- 而 SQL 看不到文件系统。真实值由巡检核对文件后修正。
     EXECUTE format($q$ALTER TABLE %I.builds ADD COLUMN IF NOT EXISTS local_state TEXT NOT NULL DEFAULT 'absent'$q$, s);
+    -- 拉取开始时刻：用来回收「卡在 pulling」的包。
+    -- pulling 是中间态，进程若在下载中途被杀（部署重启、崩溃），状态会永远停在 pulling，
+    -- 而巡检原先只捞 absent/failed，这些包再也不会被重试（实测卡过 18 小时）。
+    EXECUTE format('ALTER TABLE %I.builds ADD COLUMN IF NOT EXISTS local_pulling_at TIMESTAMPTZ', s);
     -- 存量回填：已有 r2_key 的包，其对象就在桶里，用 file_size 作为占用估值为起点。
     -- 只填 r2_bytes=0 的行，重复执行不会覆盖 Worker 后续测得的精确值。
     EXECUTE format($q$

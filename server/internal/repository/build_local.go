@@ -10,6 +10,7 @@ package repository
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"dandelion/server/internal/contract"
 )
@@ -46,22 +47,42 @@ func (r *BuildRepository) GetLocalTarget(ctx context.Context, id string) (LocalT
 	return row, nil
 }
 
+// localPullStaleAfter 是判定 pulling 已卡死的阈值。
+//
+// 给 30 分钟：119MB 的包在正常家宽上几分钟内完成，即便慢到 10 分钟也够。
+// 超过这个时长几乎只可能是进程中途被杀（部署重启、崩溃），
+// 而 pulling 是中间态，不主动回收就会永远停在那里（实测卡过 18 小时）。
+const localPullStaleAfter = 30 * time.Minute
+
 // ListLocalPending 读出一个租户下需要拉回本机的包，供巡检补拉。
 //
 // 筛选条件是「R2 有对象、本机还没有」：
 //   - r2_state = synced：对象确实在桶里，拉得动；
-//   - local_state 在 absent / failed：没拉过或上次失败。
+//   - local_state 在 absent / failed：没拉过或上次失败；
+//   - local_state 是 pulling 但已超时：上次拉取中途进程死了，需要重新捞起来。
 //
-// 不含 pulling：那是「正在拉」的中间态，重复取出来会导致同一对象被并发下载两份。
+// 不纳入「刚进 pulling」的包：那是正在拉，重复取出来会让同一对象被下载两份。
+// 用时间区分「正在拉」与「卡死的拉」，比只看状态更接近事实。
 func (r *BuildRepository) ListLocalPending(ctx context.Context, tenantID string) ([]LocalPendingRow, error) {
 	query := `SELECT b.id, b.r2_key, b.relative_path, b.file_size
 FROM ` + r.table + ` b
 JOIN ` + r.project + ` p ON p.id = b.project_id
-WHERE p.tenant_id = $1 AND b.r2_state = $2 AND b.local_state = ANY($3)
+WHERE p.tenant_id = $1
+  AND b.r2_state = $2
+  AND (
+        b.local_state = ANY($3)
+     -- COALESCE 不能省：老记录的 local_pulling_at 是 NULL（字段是后加的），
+     -- 而 NULL < 时间戳 结果是 NULL 而非 true，只写比较会把这类包永久漏掉。
+     -- 实测正是这个原因，4 个包卡在 pulling 18 小时、巡检补拉一直是 0。
+     OR (b.local_state = $4 AND COALESCE(b.local_pulling_at, to_timestamp(0)) < $5)
+  )
 ORDER BY b.created_at`
 
+	staleBefore := time.Now().Add(-localPullStaleAfter)
 	rows, err := r.db.QueryContext(ctx, query, tenantID,
-		contract.R2StateSynced, []string{contract.LocalAbsent, contract.LocalFailed})
+		contract.R2StateSynced,
+		[]string{contract.LocalAbsent, contract.LocalFailed},
+		contract.LocalPulling, staleBefore)
 	if err != nil {
 		return nil, fmt.Errorf("查询待拉回包失败: %w", err)
 	}
@@ -82,13 +103,21 @@ ORDER BY b.created_at`
 //
 // 用条件更新的影响行数做互斥，而不是先查再写：
 // 先查后写之间存在窗口，两个 goroutine 会同时判定「该我拉」，
-// 于是同一个对象被下载两份、并发写同一个文件。
-// 一条 UPDATE ... WHERE local_state <> 'pulling' 天然是原子的，
+// 于是同一个对象被下载两份、并发写同一个文件。一条 UPDATE 天然是原子的，
 // 影响 0 行说明别人已经抢到，本次直接放弃。
+//
+// 允许抢「卡死的 pulling」：这与 ListLocalPending 的筛选必须一致。
+// 若这里只写 local_state <> 'pulling'，被捞出来的卡死记录会因为状态已是 pulling
+// 而抢不到，于是「捞出来又立刻让路」，表现为巡检补拉数一直不为 0、状态却永远不动
+// ——这个不一致实测导致 4 个包卡了 18 小时。
 func (r *BuildRepository) ClaimLocalPull(ctx context.Context, id string) (bool, error) {
+	staleBefore := time.Now().Add(-localPullStaleAfter)
 	result, err := r.db.ExecContext(ctx,
-		`UPDATE `+r.table+` SET local_state = $2 WHERE id = $1 AND local_state <> $2`,
-		id, contract.LocalPulling)
+		`UPDATE `+r.table+`
+SET local_state = $2, local_pulling_at = now()
+WHERE id = $1
+  AND (local_state <> $2 OR COALESCE(local_pulling_at, to_timestamp(0)) < $3)`,
+		id, contract.LocalPulling, staleBefore)
 	if err != nil {
 		return false, fmt.Errorf("抢占拉回失败: %w", err)
 	}
@@ -104,8 +133,11 @@ func (r *BuildRepository) ClaimLocalPull(ctx context.Context, id string) (bool, 
 // 只写这一个字段：文件的存在与否是 service 的判断结果，
 // 仓储不该顺带修改 r2_state 或字节数——那两个字段描述的是另一件事。
 func (r *BuildRepository) SetLocalState(ctx context.Context, id, state string) error {
+	// 一并清掉拉取时间戳：它只在拉取期间有意义。
+	// 留着会让下一次被误判为「刚拉过」（或反之），也与事实不符。
 	if _, err := r.db.ExecContext(ctx,
-		`UPDATE `+r.table+` SET local_state = $2 WHERE id = $1`, id, state); err != nil {
+		`UPDATE `+r.table+` SET local_state = $2, local_pulling_at = NULL WHERE id = $1`,
+		id, state); err != nil {
 		return fmt.Errorf("更新本机状态失败: %w", err)
 	}
 	return nil

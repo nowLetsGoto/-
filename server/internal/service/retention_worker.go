@@ -47,7 +47,17 @@ func (s *BuildService) RunRetentionWorker(ctx context.Context, tenants retention
 	}
 
 	go func() {
-		s.sweepOnce(ctx, tenants)
+		// panic 必须兜住：这个 goroutine 一旦意外退出，巡检就永久停了，
+		// 而且不会有任何日志——排查时只能看到「服务在跑但什么都没发生」，
+		// 极难定位。恢复后继续下一轮，让故障表现为「某轮失败」而非「功能消失」。
+		defer func() {
+			if r := recover(); r != nil {
+				log.Printf("巡检 goroutine 发生 panic，已恢复（下一轮继续）：%v", r)
+			}
+		}()
+
+		log.Printf("巡检循环已启动，间隔 %s", RetentionInterval)
+		s.sweepOnceSafely(ctx, tenants)
 
 		ticker := time.NewTicker(RetentionInterval)
 		defer ticker.Stop()
@@ -57,7 +67,7 @@ func (s *BuildService) RunRetentionWorker(ctx context.Context, tenants retention
 				log.Printf("淘汰巡检已停止")
 				return
 			case <-ticker.C:
-				s.sweepOnce(ctx, tenants)
+				s.sweepOnceSafely(ctx, tenants)
 			}
 		}
 	}()
@@ -65,6 +75,19 @@ func (s *BuildService) RunRetentionWorker(ctx context.Context, tenants retention
 
 // sweepOnce 对所有租户的每个分区各执行一次「补拉 + 淘汰」。
 //
+// sweepOnceSafely 给一轮巡检加上 panic 保护。
+//
+// 单个租户或单个包出问题不该让整轮巡检失效：把 panic 收在这一层，
+// 保证「某轮失败」能被日志看到，而不是 goroutine 静默退出、功能永久消失。
+func (s *BuildService) sweepOnceSafely(ctx context.Context, tenants retentionTenantLister) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("巡检本轮 panic，已恢复（下轮继续）：%v", r)
+		}
+	}()
+	s.sweepOnce(ctx, tenants)
+}
+
 // 为什么要遍历两个分区：同一个租户在 team 与 solo 里都可能有项目
 // （实测默认公司既有 2 个团队项目也有 1 个单人项目）。只扫一个分区
 // 会让另一边的包永远超额而无人处理。

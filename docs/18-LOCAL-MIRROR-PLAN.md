@@ -74,7 +74,12 @@ ALTER TABLE solo.builds ADD COLUMN IF NOT EXISTS local_state TEXT NOT NULL DEFAU
 | 层 | 时机 | 作用 |
 | --- | --- | --- |
 | 即时 | 提交成功后立即起 goroutine | 用户无需等待，几秒到几十秒内完成 |
-| 兜底 | 2 小时巡检扫描 `local_state IN ('absent','failed')` | 服务重启丢失 goroutine 时补上 |
+| 兜底 | 2 小时巡检扫描 `local_state IN ('absent','failed')` 和卡死的 `pulling` | 服务重启丢失 goroutine、或下载中途被杀时补上 |
+
+`pulling` 是中间态，进程在下载中途被杀后状态会永远停在那里（实测卡过 18 小时）。
+抢占时写 `local_pulling_at`，巡检把超过 30 分钟、或时间戳为空的存量 `pulling`
+当成卡死重新入队；筛选条件与抢占条件必须一致，否则会出现「捞出来却抢不到」的空转。
+巡检的单包与整轮还各有 panic 保护：一个坏数据只影响本轮，不会让 goroutine 静默消失。
 
 不引入 Redis / Celery：单机部署、任务是「下载一个文件」，
 一个 goroutine 加巡检兜底已经足够可靠，引入队列只会让部署与排障更复杂。

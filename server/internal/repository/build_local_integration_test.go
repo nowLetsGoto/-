@@ -48,8 +48,9 @@ func TestClaimLocalPullIsExclusive(t *testing.T) {
 
 // TestListLocalPendingSkipsPullingAndPresent 验证候选筛选。
 //
-// 含 pulling 会导致同一对象被反复取出、并发下载；
+// 含「正在拉的 pulling」会导致同一对象被反复取出、并发下载；
 // 含 present 会让巡检每轮重搬已经归档好的包，白耗带宽。
+// 卡死已久的 pulling 不在排除之列，那是回收路径，见 TestClaimLocalPullReclaimsStale。
 func TestListLocalPendingSkipsPullingAndPresent(t *testing.T) {
 	db, skip := openTestDB(t)
 	if skip != "" {
@@ -61,6 +62,13 @@ func TestListLocalPendingSkipsPullingAndPresent(t *testing.T) {
 	failedID := insertLocalProbe(t, db, contract.R2StateSynced, contract.LocalFailed)
 	pullingID := insertLocalProbe(t, db, contract.R2StateSynced, contract.LocalPulling)
 	presentID := insertLocalProbe(t, db, contract.R2StateSynced, contract.LocalPresent)
+
+	// 新拉回会在抢占时写时间戳；有时间戳且未超时的才是「正在拉」。
+	// 时间戳为空的旧记录一律视为卡死，应该进入待拉回被回收。
+	if _, err := db.ExecContext(ctx,
+		`UPDATE team.builds SET local_pulling_at = now() WHERE id = $1`, pullingID); err != nil {
+		t.Fatalf("设置拉取时间戳失败: %v", err)
+	}
 
 	var tenantID string
 	db.QueryRowContext(ctx, `SELECT p.tenant_id::text FROM team.builds b
@@ -87,6 +95,41 @@ func TestListLocalPendingSkipsPullingAndPresent(t *testing.T) {
 	}
 	if seen[presentID] {
 		t.Error("present 的包不应进入待拉回（已经归档好了）")
+	}
+}
+
+// TestListLocalPendingReclaimsStalePulling 验证卡死的 pulling 会被巡检重新捞出。
+//
+// 筛选与抢占必须一致：这里捞不出来，ClaimLocalPull 允许重抢也毫无意义。
+// NULL 时间戳同样要覆盖——字段是后加的，存量记录都是 NULL（实测卡过 18 小时）。
+func TestListLocalPendingReclaimsStalePulling(t *testing.T) {
+	db, skip := openTestDB(t)
+	if skip != "" {
+		t.Skip(skip)
+	}
+	ctx := context.Background()
+
+	staleID := insertLocalProbe(t, db, contract.R2StateSynced, contract.LocalPulling)
+	nullID := insertLocalProbe(t, db, contract.R2StateSynced, contract.LocalPulling)
+	db.ExecContext(ctx,
+		`UPDATE team.builds SET local_pulling_at = now() - interval '2 hours' WHERE id = $1`, staleID)
+	db.ExecContext(ctx,
+		`UPDATE team.builds SET local_pulling_at = NULL WHERE id = $1`, nullID)
+
+	var tenantID string
+	db.QueryRowContext(ctx, `SELECT p.tenant_id::text FROM team.builds b
+		JOIN team.projects p ON p.id = b.project_id WHERE b.id = $1`, staleID).Scan(&tenantID)
+
+	rows, err := newBuildRepository(db, PartitionTeam, false).ListLocalPending(ctx, tenantID)
+	if err != nil {
+		t.Fatalf("查询待拉回失败: %v", err)
+	}
+	seen := make(map[string]bool, len(rows))
+	for _, row := range rows {
+		seen[row.ID] = true
+	}
+	if !seen[staleID] || !seen[nullID] {
+		t.Errorf("卡死的 pulling 应进入待拉回，got stale=%v null=%v", seen[staleID], seen[nullID])
 	}
 }
 
@@ -148,4 +191,81 @@ func insertLocalProbe(t *testing.T, db *sql.DB, r2State, localState string) stri
 		db.ExecContext(context.Background(), `DELETE FROM team.builds WHERE id = $1`, id)
 	})
 	return id
+}
+
+// TestClaimLocalPullReclaimsStale 验证卡死的 pulling 能被重新抢到。
+//
+// 这条与 ListLocalPending 的筛选必须一致：巡检把它捞出来，PullLocal 就该抢到它。
+// 若 ClaimLocalPull 只写 local_state <> 'pulling'，被捞出来的卡死记录会因为
+// 状态已是 pulling 而抢不到——表现为「巡检补拉数不为 0、状态却永远不动」。
+// 实测这个不一致让 4 个包卡了 18 小时。
+func TestClaimLocalPullReclaimsStale(t *testing.T) {
+	db, skip := openTestDB(t)
+	if skip != "" {
+		t.Skip(skip)
+	}
+	ctx := context.Background()
+
+	// 卡死：pulling 且时间戳很远（或没有时间戳，存量记录就是 NULL）。
+	staleID := insertLocalProbe(t, db, contract.R2StateSynced, contract.LocalPulling)
+	db.ExecContext(ctx,
+		`UPDATE team.builds SET local_pulling_at = now() - interval '2 hours' WHERE id = $1`, staleID)
+
+	nullID := insertLocalProbe(t, db, contract.R2StateSynced, contract.LocalPulling)
+	db.ExecContext(ctx, `UPDATE team.builds SET local_pulling_at = NULL WHERE id = $1`, nullID)
+
+	// 正在拉：刚写入时间戳，不能被抢。
+	freshID := insertLocalProbe(t, db, contract.R2StateSynced, contract.LocalPulling)
+	db.ExecContext(ctx, `UPDATE team.builds SET local_pulling_at = now() WHERE id = $1`, freshID)
+
+	repo := newBuildRepository(db, PartitionTeam, false)
+
+	for _, c := range []struct {
+		name string
+		id   string
+		want bool
+	}{
+		{"超时的 pulling 应能重抢", staleID, true},
+		{"无时间戳的 pulling 应能重抢（存量记录）", nullID, true},
+		{"刚进 pulling 的不该被抢", freshID, false},
+	} {
+		got, err := repo.ClaimLocalPull(ctx, c.id)
+		if err != nil {
+			t.Fatalf("%s: 抢占出错 %v", c.name, err)
+		}
+		if got != c.want {
+			t.Errorf("%s: got=%v want=%v", c.name, got, c.want)
+		}
+	}
+}
+
+// TestClaimLocalPullStampsTime 验证抢占写时间戳、收尾清时间戳。
+func TestClaimLocalPullStampsTime(t *testing.T) {
+	db, skip := openTestDB(t)
+	if skip != "" {
+		t.Skip(skip)
+	}
+	ctx := context.Background()
+	id := insertLocalProbe(t, db, contract.R2StateSynced, contract.LocalAbsent)
+
+	repo := newBuildRepository(db, PartitionTeam, false)
+	if _, err := repo.ClaimLocalPull(ctx, id); err != nil {
+		t.Fatalf("抢占失败: %v", err)
+	}
+
+	var stamped sql.NullTime
+	db.QueryRowContext(ctx,
+		`SELECT local_pulling_at FROM team.builds WHERE id = $1`, id).Scan(&stamped)
+	if !stamped.Valid {
+		t.Fatal("抢占必须写下 local_pulling_at，否则无法判断拉取是否已卡死")
+	}
+
+	if err := repo.SetLocalState(ctx, id, contract.LocalPresent); err != nil {
+		t.Fatalf("更新状态失败: %v", err)
+	}
+	db.QueryRowContext(ctx,
+		`SELECT local_pulling_at FROM team.builds WHERE id = $1`, id).Scan(&stamped)
+	if stamped.Valid {
+		t.Fatal("离开 pulling 后应清空 local_pulling_at")
+	}
 }
