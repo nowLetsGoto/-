@@ -137,7 +137,8 @@ func allowedMethodsFor(req *http.Request) string {
 	case path == contract.RouteStage, path == contract.RouteUploadTicket,
 		path == contract.RouteStageFromR2, path == contract.RouteUploadAbort:
 		return "POST"
-	case strings.HasSuffix(path, "/sync-to-r2"), strings.HasSuffix(path, "/local-pull"):
+	case strings.HasSuffix(path, "/sync-to-r2"), strings.HasSuffix(path, "/local-pull"),
+		strings.HasSuffix(path, "/settings/r2"), strings.HasSuffix(path, "/settings/r2/test"):
 		// 必须排在下面的通用前缀判断之前：重推是写操作，
 		// 落到默认的 GET 会让 405 响应给出错误的 Allow 头。
 		return "POST"
@@ -307,6 +308,16 @@ func NewRouter(d Deps) http.Handler {
 				Post("/settings/webhook/test", middleware.Wrap(d.Settings.Test))
 			settings.With(authzmw.RequirePermission(d.Authz, contract.PermissionSettingsWrite)).
 				Post("/settings/api-key/rotate", middleware.Wrap(d.Settings.RotateAPIKey))
+
+			// R2 对象存储配置：与 Webhook 同为平台集成的一部分，权限点一致。
+			// 测试接口挂写权限而非读权限——它会真实发起网络请求，
+			// 不该让只有查看权的账号反复触发。
+			settings.With(authzmw.RequirePermission(d.Authz, contract.PermissionSettingsRead)).
+				Get("/settings/r2", middleware.Wrap(d.Settings.GetR2))
+			settings.With(authzmw.RequirePermission(d.Authz, contract.PermissionSettingsWrite)).
+				Put("/settings/r2", middleware.Wrap(d.Settings.UpdateR2))
+			settings.With(authzmw.RequirePermission(d.Authz, contract.PermissionSettingsWrite)).
+				Post("/settings/r2/test", middleware.Wrap(d.Settings.TestR2))
 		})
 
 		// 角色管理：三个权限点分别守读、写、删。

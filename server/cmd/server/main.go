@@ -46,6 +46,7 @@ import (
 	teamsRepo "dandelion/server/internal/repository/teams"
 	tenantRepo "dandelion/server/internal/repository/tenant"
 	userRepo "dandelion/server/internal/repository/user"
+	"dandelion/server/internal/secret"
 	"dandelion/server/internal/service"
 	auditsvc "dandelion/server/internal/service/audit"
 	authzsvc "dandelion/server/internal/service/authz"
@@ -173,6 +174,24 @@ func run() error {
 	settingsService := settingssvc.NewService(settingsRepo)
 	webhookService := webhooksvc.NewService(settingsRepo)
 
+	// 凭据加密：密钥由 AUTH_SECRET 经 HKDF 派生，与令牌签名使用不同子密钥。
+	// 构造失败即 fail-fast —— 没有它就无法读写 R2 密钥，
+	// 而带着一个"半可用"的加密能力启动服务，故障会推迟到管理员保存配置时才暴露。
+	credentialCipher, err := secret.New(cfg.AuthSecret)
+	if err != nil {
+		return fmt.Errorf("初始化凭据加密失败: %w", err)
+	}
+	// fallback 用启动配置里的 R2 参数：换机器部署时，这些值原本只在 .env / plist 里，
+	// 设置页打开一片空白，管理员得从别处抄一遍。传进去让页面能预填。
+	// 一旦有人在页面上保存过，就以库里为准（判定在 service 的 stored）。
+	r2SettingsService := settingssvc.NewR2Service(settingsRepo, credentialCipher, storage.R2Config{
+		AccountID:     cfg.R2AccountID,
+		AccessKeyID:   cfg.R2AccessKeyID,
+		SecretKey:     cfg.R2SecretKey,
+		Bucket:        cfg.R2Bucket,
+		PublicBaseURL: cfg.R2PublicBaseURL,
+	})
+
 	svc := service.NewBuildService(cfg, paths, r2, uploadSessions, buildRepos, projectRepos, webhookService, repository.NewBuildSharePartitioned(db), authzService)
 	if err := svc.PurgeTmp(); err != nil {
 		return err
@@ -217,7 +236,7 @@ func run() error {
 	userHandler := userhandler.NewHandler(userService, auditService)
 	auditHandler := audithandler.NewHandler(auditService)
 	roleHandler := rolehandler.NewHandler(roleService, auditService)
-	settingsHandler := settingshandler.NewHandler(settingsService, webhookService, auditService)
+	settingsHandler := settingshandler.NewHandler(settingsService, r2SettingsService, webhookService, auditService)
 	health := handler.NewHealthHandler(buildRepos.For(contract.ModeTeam), paths)
 	public, err := fs.Sub(staticfs.PublicFiles, "public")
 	if err != nil {

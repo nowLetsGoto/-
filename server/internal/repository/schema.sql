@@ -665,3 +665,23 @@ CREATE TABLE IF NOT EXISTS public.upload_sessions (
 CREATE INDEX IF NOT EXISTS idx_upload_sessions_pending
     ON public.upload_sessions (expires_at)
     WHERE state IN ('pending', 'uploaded');
+
+-- ---------------------------------------------------------------------------
+-- R2 对象存储配置（每公司一份，与 system_settings 同行）
+--
+-- 为什么加在 system_settings 而不是新表：一家公司一份配置，与 Webhook 是
+-- 同一个粒度。另起一张表会引入 1:1 关联，每次读取都要多一次 JOIN 或两次查询，
+-- 而这个配置在下载热路径上会被频繁读取。
+--
+-- r2_secret_key 存的是 AES-GCM 密文（带 v1: 前缀），不是明文也不是摘要：
+-- 签名请求必须还原原文，摘要无能为力。加密与派生在 internal/secret，
+-- AUTH_SECRET 变更会导致旧密文解不开，那时需要管理员重新填写。
+--
+-- 五列全空 = 未启用 R2，下载走本机磁盘，与改造前一致。
+-- 不加 NOT NULL 约束的理由同 webhook_*：默认值已表达"未配置"，
+-- 再加约束会让存量行迁移时被迫填一个假值。
+ALTER TABLE system_settings ADD COLUMN IF NOT EXISTS r2_account_id      TEXT NOT NULL DEFAULT '';
+ALTER TABLE system_settings ADD COLUMN IF NOT EXISTS r2_access_key_id   TEXT NOT NULL DEFAULT '';
+ALTER TABLE system_settings ADD COLUMN IF NOT EXISTS r2_secret_key      TEXT NOT NULL DEFAULT '';
+ALTER TABLE system_settings ADD COLUMN IF NOT EXISTS r2_bucket          TEXT NOT NULL DEFAULT '';
+ALTER TABLE system_settings ADD COLUMN IF NOT EXISTS r2_public_base_url TEXT NOT NULL DEFAULT '';

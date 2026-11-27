@@ -1064,6 +1064,111 @@ paths:
         '500':
           $ref: '#/components/responses/InternalError'
 
+  /settings/r2:
+    get:
+      operationId: getR2Settings
+      summary: 读取 R2 对象存储配置
+      description: >
+        返回除密钥外的全部字段，密钥只以 secretConfigured 表达「配没配过」。
+
+        响应不含密钥明文，也不含密文：密文对前端无用（无法解密），
+        而一旦进入响应体就会落到浏览器缓存、代理日志与抓包记录里。
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: 当前 R2 配置
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [code, data]
+                properties:
+                  code:
+                    type: integer
+                  data:
+                    $ref: '#/components/schemas/R2Config'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+    put:
+      operationId: updateR2Settings
+      summary: 保存 R2 对象存储配置
+      description: >
+        整体覆盖保存，保存后立即热生效，无需重启进程。
+
+        changeSecret 的三种意图：
+
+        - false：沿用已有密钥，忽略 secret 入参（页面未点「替换」时的常态）
+
+        - true 且 secret 非空：换成新密钥
+
+        - true 且 secret 为空：清除密钥
+
+        用独立布尔而不是让空串兼任多种含义，否则无法区分「不想改」与「要删掉」。
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/R2UpdateRequest'
+      responses:
+        '200':
+          description: 保存后的配置
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [code, data]
+                properties:
+                  code:
+                    type: integer
+                  data:
+                    $ref: '#/components/schemas/R2Config'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /settings/r2/test:
+    post:
+      operationId: testR2Settings
+      summary: 测试 R2 连通性
+      description: >
+        用已保存的配置做只读探测，不改配置、不上传、不删除。
+
+        三项分别对应一次真实故障，页面按项展示而不是笼统报「连接失败」：
+
+        - credentialsOk：密钥能否签名（错则上传下载全部 401）
+
+        - bucketOk：桶是否存在且可访问
+
+        - publicUrlOk：自定义域名能否真的取到对象——
+          这一项才防住「页面显示正常、用户下载 404」
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: 测试结果（目标不可达也返回 200，用各布尔项表达）
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [code, data]
+                properties:
+                  code:
+                    type: integer
+                  data:
+                    $ref: '#/components/schemas/R2TestResult'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
   /settings/webhook/test:
     post:
       operationId: testWebhook
@@ -1997,6 +2102,75 @@ components:
       description: 通用 JSON Webhook 或飞书自定义机器人；存量配置默认 generic。
       enum: [generic, feishu]
       default: generic
+
+    R2Config:
+      type: object
+      description: >
+        R2 通道的可见形态。**不含密钥明文，也不含密文**——
+        页面只需要知道「配没配过」，因此用 secretConfigured 表达。
+      required: [accountId, accessKeyId, bucket, publicBaseUrl, secretConfigured]
+      properties:
+        accountId:
+          type: string
+          description: Cloudflare 账号 ID（32 位十六进制）。非敏感。
+        accessKeyId:
+          type: string
+          description: R2 访问密钥 ID。单独泄露无法签名，视为非敏感。
+        bucket:
+          type: string
+          description: 桶名。
+        publicBaseUrl:
+          type: string
+          description: >
+            自定义域名，形如 https://download.example.com。
+            配置后下载直连 CDN 不经过本机；留空则用 R2 签名直链。
+        secretConfigured:
+          type: boolean
+          description: 密钥是否已配置。仅表达有无，不暴露内容。
+    R2UpdateRequest:
+      type: object
+      description: >
+        保存 R2 配置的请求体。secret 与 changeSecret 成对出现，
+        用独立布尔而不是让空串兼任「未改」与「删除」两种含义。
+      required: [accountId, accessKeyId, bucket, publicBaseUrl, changeSecret]
+      properties:
+        accountId:
+          type: string
+        accessKeyId:
+          type: string
+        bucket:
+          type: string
+        publicBaseUrl:
+          type: string
+        secret:
+          type: string
+          description: 新的 Secret Access Key；仅 changeSecret 为 true 时生效。
+        changeSecret:
+          type: boolean
+          description: >
+            false 沿用已有密钥并忽略 secret；true 且 secret 非空则替换；
+            true 且 secret 为空则清除。
+    R2TestResult:
+      type: object
+      description: >
+        连通性测试结果。三项分开表达，页面据此给出可执行的修复建议，
+        而不是笼统的「连接失败」。
+      required: [credentialsOk, bucketOk, publicUrlOk, message]
+      properties:
+        credentialsOk:
+          type: boolean
+          description: 密钥能否完成签名与鉴权。失败通常意味着 key/secret 不匹配。
+        bucketOk:
+          type: boolean
+          description: 桶是否存在且可访问。失败通常是桶名拼错或权限不足。
+        publicUrlOk:
+          type: boolean
+          description: >
+            自定义域名能否取到对象。未配置该域名时恒为 false，不代表故障。
+            这一项防的是「页面显示正常、用户下载 404」。
+        message:
+          type: string
+          description: 汇总说明，含可据以行动的修复提示。
 
     WebhookConfig:
       type: object

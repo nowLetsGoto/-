@@ -21,12 +21,15 @@ import (
 // 测试投递属于「设置页的动作」，所以放在这里，而不是再开一个 webhook 接口组。
 type Handler struct {
 	settings *settingssvc.Service
-	webhook  *webhooksvc.Service
-	audit    *auditsvc.Service
+	// r2 是对象存储配置的独立业务入口，与 settings 无耦合：
+	// 前者管「文件存哪」，后者管「发布后通知谁」，两个变化原因互不相干。
+	r2      *settingssvc.R2Service
+	webhook *webhooksvc.Service
+	audit   *auditsvc.Service
 }
 
-func NewHandler(settings *settingssvc.Service, webhook *webhooksvc.Service, audit *auditsvc.Service) *Handler {
-	return &Handler{settings: settings, webhook: webhook, audit: audit}
+func NewHandler(settings *settingssvc.Service, r2 *settingssvc.R2Service, webhook *webhooksvc.Service, audit *auditsvc.Service) *Handler {
+	return &Handler{settings: settings, r2: r2, webhook: webhook, audit: audit}
 }
 
 // Get 返回 Webhook 配置、API Key 与可选字段目录。

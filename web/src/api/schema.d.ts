@@ -437,6 +437,61 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/settings/r2": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 读取 R2 对象存储配置
+         * @description 返回除密钥外的全部字段，密钥只以 secretConfigured 表达「配没配过」。
+         *     响应不含密钥明文，也不含密文：密文对前端无用（无法解密）， 而一旦进入响应体就会落到浏览器缓存、代理日志与抓包记录里。
+         */
+        get: operations["getR2Settings"];
+        /**
+         * 保存 R2 对象存储配置
+         * @description 整体覆盖保存，保存后立即热生效，无需重启进程。
+         *     changeSecret 的三种意图：
+         *     - false：沿用已有密钥，忽略 secret 入参（页面未点「替换」时的常态）
+         *     - true 且 secret 非空：换成新密钥
+         *     - true 且 secret 为空：清除密钥
+         *     用独立布尔而不是让空串兼任多种含义，否则无法区分「不想改」与「要删掉」。
+         */
+        put: operations["updateR2Settings"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/settings/r2/test": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 测试 R2 连通性
+         * @description 用已保存的配置做只读探测，不改配置、不上传、不删除。
+         *     三项分别对应一次真实故障，页面按项展示而不是笼统报「连接失败」：
+         *     - credentialsOk：密钥能否签名（错则上传下载全部 401）
+         *     - bucketOk：桶是否存在且可访问
+         *     - publicUrlOk：自定义域名能否真的取到对象——
+         *       这一项才防住「页面显示正常、用户下载 404」
+         */
+        post: operations["testR2Settings"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/settings/webhook/test": {
         parameters: {
             query?: never;
@@ -904,6 +959,41 @@ export interface components {
          * @enum {string}
          */
         WebhookProvider: "generic" | "feishu";
+        /** @description R2 通道的可见形态。**不含密钥明文，也不含密文**—— 页面只需要知道「配没配过」，因此用 secretConfigured 表达。 */
+        R2Config: {
+            /** @description Cloudflare 账号 ID（32 位十六进制）。非敏感。 */
+            accountId: string;
+            /** @description R2 访问密钥 ID。单独泄露无法签名，视为非敏感。 */
+            accessKeyId: string;
+            /** @description 桶名。 */
+            bucket: string;
+            /** @description 自定义域名，形如 https://download.example.com。 配置后下载直连 CDN 不经过本机；留空则用 R2 签名直链。 */
+            publicBaseUrl: string;
+            /** @description 密钥是否已配置。仅表达有无，不暴露内容。 */
+            secretConfigured: boolean;
+        };
+        /** @description 保存 R2 配置的请求体。secret 与 changeSecret 成对出现， 用独立布尔而不是让空串兼任「未改」与「删除」两种含义。 */
+        R2UpdateRequest: {
+            accountId: string;
+            accessKeyId: string;
+            bucket: string;
+            publicBaseUrl: string;
+            /** @description 新的 Secret Access Key；仅 changeSecret 为 true 时生效。 */
+            secret?: string;
+            /** @description false 沿用已有密钥并忽略 secret；true 且 secret 非空则替换； true 且 secret 为空则清除。 */
+            changeSecret: boolean;
+        };
+        /** @description 连通性测试结果。三项分开表达，页面据此给出可执行的修复建议， 而不是笼统的「连接失败」。 */
+        R2TestResult: {
+            /** @description 密钥能否完成签名与鉴权。失败通常意味着 key/secret 不匹配。 */
+            credentialsOk: boolean;
+            /** @description 桶是否存在且可访问。失败通常是桶名拼错或权限不足。 */
+            bucketOk: boolean;
+            /** @description 自定义域名能否取到对象。未配置该域名时恒为 false，不代表故障。 这一项防的是「页面显示正常、用户下载 404」。 */
+            publicUrlOk: boolean;
+            /** @description 汇总说明，含可据以行动的修复提示。 */
+            message: string;
+        };
         /** @description Webhook 配置。enabled=true 时 url 必填且必须是 http(s) 绝对地址； provider 省略时按 generic 处理。generic 的 secret 用于请求头 X-Dandelion-Signature； feishu 的 secret 为飞书机器人签名密钥，用于请求体 timestamp/sign。 飞书地址须为官方 HTTPS 自定义机器人地址，fields 必须包含 downloadPageUrl。 */
         WebhookConfig: {
             provider?: components["schemas"]["WebhookProvider"];
@@ -2942,6 +3032,86 @@ export interface operations {
             400: components["responses"]["BadRequest"];
             401: components["responses"]["Unauthorized"];
             500: components["responses"]["InternalError"];
+        };
+    };
+    getR2Settings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 当前 R2 配置 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        code: number;
+                        data: components["schemas"]["R2Config"];
+                    };
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    updateR2Settings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["R2UpdateRequest"];
+            };
+        };
+        responses: {
+            /** @description 保存后的配置 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        code: number;
+                        data: components["schemas"]["R2Config"];
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    testR2Settings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 测试结果（目标不可达也返回 200，用各布尔项表达） */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        code: number;
+                        data: components["schemas"]["R2TestResult"];
+                    };
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
         };
     };
     testWebhook: {

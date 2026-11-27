@@ -273,11 +273,14 @@ const (
 	// RoutePlatformTenantStatus 启停公司；与 ByID 分开是因为它是"改状态"而非"改资料"。
 	RoutePlatformTenantStatus = APIPrefix + "/platform/tenants/{id}/status"
 	RouteSettings             = APIPrefix + "/settings"
+	// RouteSettingsR2 读写 R2 对象存储配置；测试接口单独一条，因为它会发起网络请求。
+	RouteSettingsR2     = APIPrefix + "/settings/r2"
+	RouteSettingsR2Test = APIPrefix + "/settings/r2/test"
 	// RouteStorageUsage 返回当前租户的存储用量，供「应用」页头部容量条使用。
 	RouteStorageUsage = APIPrefix + "/storage/usage"
 	RouteWebhookTest  = APIPrefix + "/settings/webhook/test"
 	RouteAPIKeyRotate = APIPrefix + "/settings/api-key/rotate"
-	RouteOpenBuilds = APIPrefix + "/open/builds"
+	RouteOpenBuilds   = APIPrefix + "/open/builds"
 	// 外部系统的大包直传：先取票据、CI 直接 PUT 到 R2，再提交元信息完成发布。
 	// 与页面上传共用 service，只把「字节从哪来」改成外部调用方。
 	RouteOpenUploadTicket = APIPrefix + "/open/builds/upload-ticket"
@@ -354,7 +357,7 @@ var APIRoutes = []string{
 	RouteProjects, RouteProjectByKey,
 	RoutePeople, RoutePersonByID, RouteTeams, RouteTeamByID,
 	RoutePermissions, RouteMenus, RouteRoles, RouteRoleByID,
-	RouteSettings, RouteWebhookTest, RouteAPIKeyRotate, RouteOpenBuilds, RouteOpenUploadTicket, RouteOpenStageFromR2, RouteStorageUsage,
+	RouteSettings, RouteSettingsR2, RouteSettingsR2Test, RouteWebhookTest, RouteAPIKeyRotate, RouteOpenBuilds, RouteOpenUploadTicket, RouteOpenStageFromR2, RouteStorageUsage,
 	RouteStage, RouteUploadTicket, RouteStageFromR2, RouteUploadAbort, RouteBuilds, RouteBuildByID, RouteBuildVersions, RouteBuildFile, RouteBuildSyncToR2, RouteBuildLocalPull, RouteBuildSyncProgress, RouteSharedBuild, RouteSharedBuildVersions, RouteSharedBuildFile, RouteSharedDownloadCount, RouteHealth,
 }
 
@@ -522,6 +525,50 @@ type WebhookTestResult struct {
 	Delivered  bool   `json:"delivered"`
 	StatusCode int    `json:"statusCode"`
 	Message    string `json:"message"`
+}
+
+// R2Config 是 R2 通道在设置页的可见形态。
+//
+// **不含密钥明文，也不含密钥密文**：密文对前端毫无用处（无法解密），
+// 而一旦进入响应体就会落到浏览器缓存、代理日志与抓包记录里。
+// 页面只需要知道「配没配过」，因此用 SecretConfigured 表达。
+type R2Config struct {
+	AccountID        string `json:"accountId"`
+	AccessKeyID      string `json:"accessKeyId"`
+	Bucket           string `json:"bucket"`
+	PublicBaseURL    string `json:"publicBaseUrl"`
+	SecretConfigured bool   `json:"secretConfigured"`
+}
+
+// R2UpdateRequest 是保存 R2 配置的请求体。
+//
+// secret 单独成字段并用 changeSecret 区分意图，而不是让空串兼任三种含义：
+//   - changeSecret=false：沿用已有密钥（页面未点「替换」时的常态）
+//   - changeSecret=true 且 secret 非空：换成新密钥
+//   - changeSecret=true 且 secret 为空：清除密钥
+//
+// 若只用一个空串表达，就无法区分「我不想改」与「我要删掉」——
+// 前者是绝大多数保存操作，后者是偶尔为之，混在一起必然误删。
+type R2UpdateRequest struct {
+	AccountID     string `json:"accountId"`
+	AccessKeyID   string `json:"accessKeyId"`
+	Bucket        string `json:"bucket"`
+	PublicBaseURL string `json:"publicBaseUrl"`
+	Secret        string `json:"secret"`
+	ChangeSecret  bool   `json:"changeSecret"`
+}
+
+// R2TestResult 是连接测试结果。
+//
+// 三项分别对应一次真实故障，页面按项展示而不是笼统报"连接失败"：
+//   - CredentialsOK：密钥能否签名（错则上传/下载全部 401）
+//   - BucketOK：桶是否存在且可写（错则是桶名或权限问题）
+//   - PublicURL 则验证自定义域名能否真的取到对象（错则页面正常但下载 404）
+type R2TestResult struct {
+	CredentialsOK bool   `json:"credentialsOk"`
+	BucketOK      bool   `json:"bucketOk"`
+	PublicURLOK   bool   `json:"publicUrlOk"`
+	Message       string `json:"message"`
 }
 
 // IsValidWebhookField 判断字段键是否在允许集合内。
